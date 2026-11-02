@@ -519,9 +519,11 @@ the Go goldens and exporter uses. The departures:
   its own hits, special attacks included; any other item on the wearer's landed melee and ranged
   hits; spells never. A damage over time the proc puts on alone rolls the magic hit as it goes on
   where it is magic and its ticks deal their amount, one around the wielder goes on every target,
-  and one a missile carries goes on as the hit lands, its flight not modelled.
-  `docs/forever-chance-on-hit.md` lists the items by kind and those left out with the reason
-  (crowd control, threat, mana, heals, debuffs only a tank feels).
+  and one a missile carries goes on as the hit lands, its flight not modelled. A buff that changes
+  the wearer's stats is a stat aura, so its stats act and a tank's swing rolls are read under it;
+  on a tank, Quel'Serrar's Sanctuary (22850) also carries the +13 Defense its row states, which the
+  item entry's stats leave out. `docs/forever-chance-on-hit.md` lists the items by kind and those
+  left out with the reason (crowd control, threat, mana, heals, debuffs only a tank feels).
 - Forever's Engineering ammo, from the Wowhead Forever tooltips: Swiftfeather Arrow (274387) and
   Swiftstrike Shot (274388), item level 65 and requiring level 60, each "Adds 24.5 damage per
   second". The reference's ammo stops at Miniature Cannon Balls, so the request schema adds them

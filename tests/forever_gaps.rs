@@ -12,7 +12,10 @@ use std::{fs, path::Path};
 mod paladin_113554;
 
 /// The paladin requests recorded with push 113554's talent tree.
-const RECORDED_IN_113554: &[&str] = &["retribution-paladin-swap-dark-iron-sunderer"];
+const RECORDED_IN_113554: &[&str] = &[
+    "retribution-paladin-swap-dark-iron-sunderer",
+    "protection-paladin-quel-serrar",
+];
 
 fn request(name: &str) -> Value {
     let path = Path::new(concat!(
@@ -924,4 +927,49 @@ fn a_rogues_own_cooldowns_cast_at_the_player() {
     for spell in [1856, 13750, 13877] {
         assert!(action(&player, spell, 0).0 >= 50.0, "spell {spell}");
     }
+}
+
+/// Quel'Serrar on a Protection Paladin tank (production sims 0f6efd63, 338079ed, eadd22f1 and
+/// 1524d32a, 1 to 2 November 2026): its chance on hit's Sanctuary (22850) grants 13 Defense, 300
+/// armor and 30 attack power for 10 sec, which changes the target's swings at the tank. The buff
+/// is a stat aura, so the target's rolls are read with it up, carrying the Defense its row states
+/// beside the item entry's armor and attack power.
+#[test]
+fn quel_serrars_sanctuary_changes_the_targets_swings() {
+    let (value, player) = run("protection-paladin-quel-serrar");
+    let stat_auras = effects(&value, "stat_auras");
+    let auras = stat_auras[0]["auras"].as_array().unwrap();
+    let bit = auras
+        .iter()
+        .position(|aura| aura == "Quel'Serrar Proc")
+        .unwrap();
+    assert!(stat_auras[0]["stacks"].is_null());
+    let combos = stat_auras[0]["combos"].as_array().unwrap();
+    assert_eq!(
+        combos[1 << bit]["AttackPower"].as_f64().unwrap()
+            - combos[0]["AttackPower"].as_f64().unwrap(),
+        30.0
+    );
+    let rolls = value["enemy"]["rolls"].as_array().unwrap();
+    assert_eq!(rolls.len(), combos.len());
+    let (down, up) = (&rolls[0], &rolls[1 << bit]);
+    let moved = |key: &str| up[key].as_f64().unwrap() - down[key].as_f64().unwrap();
+    // 13 Defense: 0.04% a point more misses, dodges, parries and blocks, and fewer crits.
+    for key in [
+        "miss_chance",
+        "dodge_chance",
+        "parry_chance",
+        "block_chance",
+    ] {
+        assert!((moved(key) - 0.0052).abs() < 1e-9, "{key}: {}", moved(key));
+    }
+    assert!((moved("crit_chance") + 0.0052).abs() < 1e-9);
+    // 300 armor.
+    assert!(moved("armor_multiplier") < 0.0);
+    assert!(value["enemy"]["changing_auras"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|aura| aura != "player:Quel'Serrar Proc"));
+    assert!(aura_uptime(&player, 22850) > 0.0);
 }

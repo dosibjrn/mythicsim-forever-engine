@@ -131,6 +131,13 @@ pub(crate) fn character_stat_auras(env: &Environment) -> Vec<String> {
     );
     // classic items_trinkets.go Jom Gabbar's stacking aura.
     candidates.push("Jom Gabbar".to_string());
+    // Under Forever's rules, the stat buffs of the chance on hit items the reference leaves
+    // unregistered.
+    for label in super::export_items::chance_on_hit_stat_auras(env) {
+        if !candidates.contains(&label) {
+            candidates.push(label);
+        }
+    }
     // item_swaps.go: the auras a swap switches and its own equipment stats.
     for label in super::item_swap::item_swap_stat_auras(env) {
         if !candidates.contains(&label) {

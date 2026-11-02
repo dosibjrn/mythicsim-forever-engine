@@ -19,6 +19,7 @@ use crate::contracts::request::Message;
 use crate::data::spells::Spell;
 
 use super::aura_helpers::{HitOutcome, ProcTrigger, StackingStatAura, StatBuffAura};
+use super::character::constants::DEFENSE_RATING_PER_DEFENSE_LEVEL;
 use super::dbcenums;
 use super::env::Environment;
 use super::item_swap::{ManagerChance, ManagerMask};
@@ -30,6 +31,7 @@ use super::resolve_spell::{self, spell_config, SpellOpt};
 use super::sim::{AuraConfig, AuraId, Cooldown, Duration, Sim, SpellId, UnitId};
 use super::spell::{school, DefenseType, ProcMask, SpellConfig, SpellFlag};
 use super::spelldata::{proc_chance_source, store::must_find};
+use super::stats::Stat;
 
 /// Go `ItemVariant`: one item that carries the effect.
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +59,9 @@ pub(crate) struct SpellDataProc {
     /// unregistered. Under Forever's rules it rolls [`CHANCE_ON_HIT_PPM`].
     pub rateless: bool,
 }
+
+/// The client's Defense skill line, which an `A_MOD_SKILL` effect names in its misc value.
+const DEFENSE_SKILL: i32 = 95;
 
 /// The rate MythicSim assumes for a chance on hit the client states no rate for: Classic servers
 /// roll a `ProcChance` of 101 at 1.8% per second of the hitting weapon's speed, which is 1.08
@@ -606,7 +611,20 @@ fn spell_data_proc_aura(
     let label_opt: AuraOpt = label(format!("{} Proc", cfg.name));
     let mut aura = aura_config(buff, &[label_opt]);
     aura.duration = proc_buff_duration(cfg, trigger, buff);
-    let buff_stats = effect_stats(effect);
+    let mut buff_stats = effect_stats(effect);
+    // Under Forever's rules, the Defense of a chance on hit's buff on a tank, a skill bonus on
+    // its row that the item effect's stats leave out: Quel'Serrar's Sanctuary (22850) states +13
+    // Defense beside the armor and attack power its entry carries. Defense acts on the hits the
+    // wearer takes, so a tank's swing rolls read it under the buff; on anyone else only a Goblin
+    // Sapper Charge's half would, whose crit taken the runtime holds fixed.
+    if cfg.rateless && env.sim.rules == super::sim::Rules::Forever && env.tanking() {
+        for row_effect in buff.effects.iter().filter(|row_effect| {
+            row_effect.aura == dbcenums::A_MOD_SKILL && row_effect.misc == DEFENSE_SKILL
+        }) {
+            buff_stats[Stat::DefenseRating] +=
+                row_effect.base_value() * DEFENSE_RATING_PER_DEFENSE_LEVEL;
+        }
+    }
 
     // The client states the count on whichever of the two rows carries the aura, and the item
     // effect entry takes the higher of them, so this does too.
