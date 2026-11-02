@@ -26,7 +26,7 @@ impl MightRage {
         if !result.landed() || result.damage == 0.0 {
             return;
         }
-        if self.proc_chance != 1.0 && fight.random(&self.rng_label) > self.proc_chance {
+        if self.proc_chance != 1.0 && !fight.proc(self.proc_chance, &self.rng_label) {
             return;
         }
         fight.schedule_delayed_proc(aura, spell, *result);

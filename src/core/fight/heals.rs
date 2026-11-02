@@ -254,7 +254,7 @@ impl HealBook {
         let window = party.injured_window as f64 / NS_PER_SECOND as f64;
         let mut injured = 0;
         for &rate in &party.hit_rates[1..] {
-            if fight.random("Party Hit") < 1.0 - (-rate * window).exp() {
+            if fight.proc(1.0 - (-rate * window).exp(), "Party Hit") {
                 injured += 1;
             }
         }
@@ -479,7 +479,7 @@ impl<A: Agent> Fight<A> {
         }
         // Forever's ticks roll the healing crit the direct heal does: spell crit and the spell's
         // bonus, less what a dot's tick does not take, at the heal's crit multiplier.
-        let crit = can_crit && self.random("Healing Crit Roll") < self.heal_tick_crit_chance(spell);
+        let crit = can_crit && self.proc(self.heal_tick_crit_chance(spell), "Healing Crit Roll");
         if crit {
             amount *= self.heal_crit_multiplier(spell);
         }

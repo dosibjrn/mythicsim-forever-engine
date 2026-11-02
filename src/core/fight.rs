@@ -10,6 +10,7 @@
 //! The runtime is built from a validated prepared v2 input. Static modifiers are already
 //! applied there and are never applied again here.
 
+pub(crate) mod world_bridge;
 mod absorb;
 mod aura;
 mod blade_of_hanna;
@@ -5507,6 +5508,9 @@ impl<A: Agent> Fight<A> {
             self.apply_enemy_slow_priorities();
         }
         let started = crate::core::stopwatch::Stopwatch::start();
+        if world_bridge::enabled() {
+            self.config.iterations = world_bridge::requested_iterations(self.config.iterations);
+        }
         let iterations = self.config.iterations;
         let mut total_duration = 0i64;
         let mut first_duration = 0i64;
@@ -5517,6 +5521,7 @@ impl<A: Agent> Fight<A> {
             // Go keeps one buffer: every iteration with debug, otherwise only the first.
             let logged = self.config.debug || (iteration == 0 && self.config.debug_first_iteration);
             self.log = logged.then(Vec::new);
+            if world_bridge::enabled() { world_bridge::begin_iteration(iteration as u32); }
             self.run_once();
             if let Some(lines) = self.log.take() {
                 logs.extend(lines);
@@ -5570,6 +5575,7 @@ impl<A: Agent> Fight<A> {
         }
         self.schedule(0, PRIORITY_PREPULL + count + 1, Action::EncounterStart);
         while self.step() {}
+        if world_bridge::enabled() { world_bridge::finish(self.duration, self.encounter_damage_taken); }
         self.cleanup();
     }
 
@@ -5807,6 +5813,28 @@ impl<A: Agent> Fight<A> {
 
     /// Go `Simulation.Step`. Returns false when the fight is over.
     fn step(&mut self) -> bool {
+        if world_bridge::enabled() {
+            let next_native = self.queue.peek_time().unwrap_or(NEVER_EXPIRES)
+                .min(self.autos.min_time).min(self.min_task_time)
+                .min(self.end_of_combat);
+            if let Some(boundary) = world_bridge::due(next_native, self.end_of_combat) {
+                if boundary > self.now { self.advance_to(boundary); }
+                let (distance, front) = world_bridge::exchange(
+                    boundary, self.duration, self.encounter_damage_taken);
+                if distance != self.config.distance {
+                    self.config.distance = distance;
+                    self.changed(reads::CASTS);
+                }
+                // Facing can invalidate cached APL FrontOfTarget conditions
+                // even when the distance is unchanged. Mirror range's
+                // production invalidation at the native scheduler boundary.
+                if self.config.melee.in_front_of_target != front {
+                    self.config.melee.in_front_of_target = front;
+                    self.changed(reads::CASTS);
+                }
+                return true;
+            }
+        }
         // Go runs due weapon swings before the next pending action, ties included.
         let next = self.queue.peek_time().unwrap_or(NEVER_EXPIRES);
         if self.due_weapon_attack(next) && self.autos.min_time <= self.min_task_time {
@@ -6155,7 +6183,7 @@ impl<A: Agent> Fight<A> {
     fn fixed_uptime_roll(&mut self, index: usize, first: bool) {
         let fixed = self.fixed_uptime[index];
         if first {
-            if self.random("FixedAura") < fixed.uptime {
+            if self.proc(fixed.uptime, "FixedAura") {
                 let span = (fixed.duration - fixed.tick_length) as f64;
                 let random = fixed.tick_length + (span * self.random("FixedAuraDur")) as i64;
                 self.aura_mut(fixed.aura).duration = random;
@@ -6164,7 +6192,7 @@ impl<A: Agent> Fight<A> {
             }
             return;
         }
-        if self.random("FixedAura") < fixed.chance_per_tick {
+        if self.proc(fixed.chance_per_tick, "FixedAura") {
             self.activate_aura(fixed.aura);
             if self.aura(fixed.aura).max_stacks > 0 {
                 self.add_stack(fixed.aura);

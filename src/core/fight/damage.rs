@@ -727,7 +727,7 @@ impl<A: Agent> Fight<A> {
         let target = result.target.index();
         if self.proc(1.0 - miss, "Magical Hit Roll") {
             let partial = result.outcome & OUTCOME_PARTIAL != 0;
-            if can_crit && self.random("Magical Crit Roll") < self.spell_crit_chance(spell) {
+            if can_crit && self.proc(self.spell_crit_chance(spell), "Magical Crit Roll") {
                 result.outcome = OUTCOME_CRIT;
                 result.damage *= self.crit_multiplier(spell);
                 let metrics = &mut self.spells[spell].metrics[target];
@@ -757,7 +757,7 @@ impl<A: Agent> Fight<A> {
     fn outcome_magic_crit(&mut self, spell: SpellId, result: &mut SpellResult) {
         let partial = result.outcome & OUTCOME_PARTIAL != 0;
         let target = result.target.index();
-        if self.random("Magical Crit Roll") < self.spell_crit_chance(spell) {
+        if self.proc(self.spell_crit_chance(spell), "Magical Crit Roll") {
             result.outcome = OUTCOME_CRIT;
             result.damage *= self.crit_multiplier(spell);
             let metrics = &mut self.spells[spell].metrics[target];
@@ -792,7 +792,7 @@ impl<A: Agent> Fight<A> {
     fn outcome_tick(&mut self, spell: SpellId, result: &mut SpellResult, can_crit: bool) {
         let partial = result.outcome & OUTCOME_PARTIAL != 0;
         let target = result.target.index();
-        if can_crit && self.random("Magical Crit Roll") < self.tick_crit_chance(spell) {
+        if can_crit && self.proc(self.tick_crit_chance(spell), "Magical Crit Roll") {
             result.outcome = OUTCOME_CRIT;
             result.damage *= self.crit_multiplier(spell);
             let metrics = &mut self.spells[spell].metrics[target];
@@ -849,7 +849,7 @@ impl<A: Agent> Fight<A> {
     pub(crate) fn outcome_tick_physical_crit(&mut self, spell: SpellId, result: &mut SpellResult) {
         let partial = result.outcome & OUTCOME_PARTIAL != 0;
         let target = result.target.index();
-        if self.random("Physical Crit Roll") < self.physical_crit_chance(spell) {
+        if self.proc(self.physical_crit_chance(spell), "Physical Crit Roll") {
             result.outcome = OUTCOME_CRIT;
             result.damage *= self.crit_multiplier(spell);
             let metrics = &mut self.spells[spell].metrics[target];
@@ -1231,6 +1231,24 @@ impl<A: Agent> Fight<A> {
         }
         if result.target == Side::Target {
             self.encounter_damage_taken += result.damage;
+            if result.damage > 0.0 {
+                // Pre-pull source hits are genuine target damage. Keep their
+                // negative native clock; gsim applies them at the first t=0
+                // boundary, before the next native combat decision.
+                // Source-native Fight owns spell caster; the gsim world
+                // must not misattribute a real pet hit to its player.
+                let caster = self.caster(spell);
+                let (caster_type, caster_index, caster_label) = match caster {
+                    Side::Player => ("", 0, String::new()),
+                    Side::Pet(index) => ("pet", index as u32, self.label_of(caster)),
+                    _ => panic!("RUST_WORLD_UNSUPPORTED_DAMAGE_CASTER"),
+                };
+                super::world_bridge::record_damage(
+                    self.now, result.damage, result.crit(), result.landed(), periodic,
+                    format!("{:?}", self.spells[spell].id), self.label_of(result.target),
+                    caster_type, caster_index, caster_label,
+                );
+            }
         }
         if self.log.is_some() && !self.spells[spell].flags.no_logs {
             let label = self.label_of(result.target);

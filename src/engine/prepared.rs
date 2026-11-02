@@ -352,6 +352,9 @@ pub fn simulate_gated(prepared: &PreparedV2) -> Result<Gated, PreparedError> {
 
 /// Simulate an input that is valid and that the gate supports.
 fn run(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> {
+    if crate::core::fight::world_bridge::enabled() {
+        crate::core::fight::world_bridge::start(&prepared.request_sha256);
+    }
     let report = classes::run_prepared(prepared).map_err(PreparedError::Invalid)?;
     let elapsed_ns = report.elapsed_ns;
     let presentation = report.presentation.clone();
