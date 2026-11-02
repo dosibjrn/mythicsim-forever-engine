@@ -68,6 +68,7 @@ pub(crate) fn deadly_poison<A: Agent>(
         return;
     }
     let dot = fight.spells[spell].dot.expect("Deadly Poison has a dot");
+    let dot = fight.dot_on(dot, target);
     let aura = fight.dots[dot].aura;
     if fight.aura(aura).active {
         fight.refresh_aura(aura);
@@ -98,6 +99,7 @@ pub(crate) fn wound_poison<A: Agent>(
     if !result.landed() {
         return;
     }
+    let debuff = fight.aura_on(debuff, target);
     if !fight.aura(debuff).active {
         fight.activate_aura(debuff);
         fight.set_stacks(debuff, 1);

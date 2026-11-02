@@ -13,13 +13,18 @@ use serde_json::{json, Value};
 const FROST_BLAST: i64 = 1326055;
 const FINGERS_OF_FROST: &str = "{SpellID: 400669}";
 
-/// The Frost fixture casting nothing but Frost Blast, with Fingers of Frost talented.
-fn request() -> Vec<u8> {
+/// The Frost fixture casting nothing but Frost Blast, with Fingers of Frost talented: the talents
+/// in Go's order for the reference, in client 1.60.1.70707's for Forever's rules (Arcane Focus's
+/// points on Improved Channeling, which takes its square).
+fn request(rules: Rules) -> Vec<u8> {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/classes/mage/prepare/frost.request.json");
     let mut request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let player = &mut request["raid"]["parties"][0]["players"][0];
-    player["talentsString"] = json!("050220500300030053--0535020001013012");
+    player["talentsString"] = json!(match rules {
+        Rules::Forever => "05020520300030053--0535020001013012",
+        Rules::GoReference => "050220500300030053--0535020001013012",
+    });
     player["rotation"] = json!({
         "type": "TypeAPL",
         "priorityList": [{"action": {"castSpell": {"spellId": {"spellId": FROST_BLAST}}}}],
@@ -40,11 +45,16 @@ fn frost_blast(prepared: &Value) -> &Value {
 
 #[test]
 fn frost_blast_is_described_under_forever_rules_only() {
-    let go =
-        forever_engine::prepare_json_with(&request(), "frost-blast", Rules::GoReference).unwrap();
+    let go = forever_engine::prepare_json_with(
+        &request(Rules::GoReference),
+        "frost-blast",
+        Rules::GoReference,
+    )
+    .unwrap();
     assert!(frost_blast(&go)["damage_effect"].is_null());
     let forever =
-        forever_engine::prepare_json_with(&request(), "frost-blast", Rules::Forever).unwrap();
+        forever_engine::prepare_json_with(&request(Rules::Forever), "frost-blast", Rules::Forever)
+            .unwrap();
     assert!(
         frost_blast(&forever)["damage_effect"]["average"]
             .as_f64()
@@ -58,7 +68,8 @@ fn frost_blast_is_described_under_forever_rules_only() {
 #[test]
 fn frost_blast_spends_fingers_of_frost_charges() {
     let forever =
-        forever_engine::prepare_json_with(&request(), "frost-blast", Rules::Forever).unwrap();
+        forever_engine::prepare_json_with(&request(Rules::Forever), "frost-blast", Rules::Forever)
+            .unwrap();
     let prepared: PreparedV2 = serde_json::from_value(forever).unwrap();
     let report = forever_engine::simulate_prepared(&prepared).unwrap();
     let logs = report.result["logs"].as_str().unwrap();

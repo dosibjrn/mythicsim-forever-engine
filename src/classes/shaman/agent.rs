@@ -24,7 +24,7 @@ use super::{
         rockbiter_threat::RockbiterThreat,
         searing_totem::{self, SearingTotem},
         stormstrike::{self, Stormstrike},
-        totems::{self, Expirations, StrengthOfEarth},
+        totems::{self, Expirations, ManaTide, StrengthOfEarth},
         water_shield::WaterShield,
         weapon_imbues, weapon_sync,
         windfury_totem::{self, WindfuryTotem},
@@ -64,6 +64,8 @@ pub(crate) enum ShamanSpell {
     WaterShield,
     GraceOfAirTotem,
     ManaSpringTotem,
+    /// The Restoration shaman's own Mana Tide Totem (Forever's rules).
+    ManaTideTotem,
     WindfuryTotem,
     FlametongueTotem,
     FlametongueTotemAttack,
@@ -170,6 +172,9 @@ pub(crate) struct ShamanAgent {
     water_shield_ready: i64,
     grace_of_air: Option<StrengthOfEarth>,
     mana_spring: Option<StrengthOfEarth>,
+    /// The Restoration shaman's Mana Tide Totem (Forever's rules): its aura and the Healing
+    /// Stream Totem spells it shares the water slot with.
+    mana_tide: Option<ManaTide>,
     flametongue_totem: Option<totems::FlametongueTotem>,
     windfury_weapon: Option<WindfuryWeapon>,
     windfury_totem: Option<WindfuryTotem>,
@@ -426,6 +431,14 @@ impl ShamanAgent {
                 }) =>
             {
                 Some(ShamanSpell::ManaSpringTotem)
+            }
+            "basic_totem"
+                if prepared.effects.iter().any(|effect| {
+                    matches!(effect, Effect::ManaTideTotem { spell_id, .. }
+                        if *spell_id == id.spell_id && id.tag == 0)
+                }) =>
+            {
+                Some(ShamanSpell::ManaTideTotem)
             }
             "basic_totem"
                 if prepared.effects.iter().any(|effect| {
@@ -891,6 +904,29 @@ impl ShamanAgent {
                     fight.agent.weapon_sync =
                         Some((weapon_sync::SyncType::parse(sync)?, *flurry_icd_ns));
                 }
+                Effect::ManaTideTotem {
+                    aura,
+                    duration_ns,
+                    healing_stream_totems,
+                    ..
+                } => {
+                    let streams = fight
+                        .spells
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, spell)| {
+                            spell.id.tag == 0 && healing_stream_totems.contains(&spell.id.spell_id)
+                        })
+                        .map(|(position, _)| position)
+                        .collect();
+                    fight.agent.mana_tide = Some(ManaTide {
+                        totem: StrengthOfEarth {
+                            aura: fight.player_aura(aura)?,
+                            duration: *duration_ns,
+                        },
+                        streams,
+                    });
+                }
                 Effect::ManaSpringTotem {
                     aura, duration_ns, ..
                 } => {
@@ -1176,6 +1212,12 @@ impl Agent for ShamanAgent {
                 let rank = book
                     .rank_of(spell)
                     .expect("a heal is one of the bound ranks");
+                // A Healing Stream Totem takes the water slot back from a Mana Tide Totem.
+                if let Some(tide) = fight.agent.mana_tide.clone() {
+                    if tide.streams.contains(&spell) {
+                        fight.deactivate_aura(tide.totem.aura);
+                    }
+                }
                 book.cast(fight, rank);
             }
             ShamanSpell::LightningBolt | ShamanSpell::LightningBoltOverload => {
@@ -1293,6 +1335,23 @@ impl Agent for ShamanAgent {
                 // The only water totem in scope is this one, so the previous aura is its own.
                 let totem = fight.agent.mana_spring.expect("Mana Spring Totem is bound");
                 let expires = totems::strength_of_earth(fight, totem);
+                fight.agent.totems.set(Totem::Water, expires);
+            }
+            ShamanSpell::ManaTideTotem => {
+                // The water slot's Healing Stream Totem ends, and its heals over time with it.
+                let tide = fight
+                    .agent
+                    .mana_tide
+                    .clone()
+                    .expect("Mana Tide Totem is bound");
+                let book = fight.agent.heals.clone().expect("the heals are bound");
+                for heal in &book.heals {
+                    if let (true, Some(dot)) = (tide.streams.contains(&heal.spell), heal.dot) {
+                        let aura = fight.dots[dot].aura;
+                        fight.deactivate_aura(aura);
+                    }
+                }
+                let expires = totems::strength_of_earth(fight, tide.totem);
                 fight.agent.totems.set(Totem::Water, expires);
             }
             ShamanSpell::FlametongueHit(hand) => {

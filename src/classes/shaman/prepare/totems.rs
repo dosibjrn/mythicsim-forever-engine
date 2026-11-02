@@ -8,14 +8,15 @@ use crate::prepare::buffs::flametongue::{
     flametongue_totem_trigger, join_flametongue_totem, windfury_totem_disables_flametongue_totem,
 };
 use crate::prepare::buffs::generated::{
-    GRACE_OF_AIR_TOTEM, MANA_SPRING_TOTEM, STRENGTH_OF_EARTH_TOTEM, WINDFURY_TOTEM,
+    GRACE_OF_AIR_TOTEM, MANA_SPRING_TOTEM, MANA_TIDE_TOTEMS, STRENGTH_OF_EARTH_TOTEM,
+    WINDFURY_TOTEM,
 };
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
 use crate::prepare::parse_effects::exclusive_stat_category;
 use crate::prepare::periodic_action::PeriodicActionOptions;
 use crate::prepare::resolve_proc::{chance, proc_trigger};
-use crate::prepare::sim::{AuraConfig, EffectId, Sim, UnitId, NEVER_EXPIRES, SECOND};
+use crate::prepare::sim::{AuraConfig, Cooldown, EffectId, Sim, UnitId, NEVER_EXPIRES, SECOND};
 use crate::prepare::spell::{DefenseType, SpellConfig, SpellFlag};
 use crate::prepare::spelldata::Spell as Row;
 use crate::prepare::stats::{Stat, Stats};
@@ -23,6 +24,14 @@ use crate::prepare::stats::{Stat, Stats};
 use super::spell_data::spell_data;
 use super::spells::{default_cast, flat_cost, spell_action};
 use super::{flags, flametongue_traits, masks, Shaman};
+
+/// The aura of the shaman's own Mana Tide Totem.
+pub(super) const MANA_TIDE_TOTEM_AURA: &str = "Mana Tide Totem (Self)";
+
+/// The category of its MP5. It is not the raid's external Mana Tide Totem's ("ManaTideTotem"),
+/// whose aura refuses a category that anything else joins: the two stack, as two shamans' totems
+/// would if they did not replace each other.
+const MANA_TIDE_TOTEM_CATEGORY: &str = "ManaTideTotemSelf";
 
 /// Go `Duration.Seconds`.
 fn duration_seconds(duration: i64) -> f64 {
@@ -205,7 +214,7 @@ impl Shaman {
     /// Go `registerStrengthOfEarthTotemSpell`.
     pub(super) fn register_strength_of_earth_totem_spell(&self, sim: &mut Sim, unit: UnitId) {
         let data = spell_data();
-        let rank = data.strength_of_earth_totem.highest();
+        let rank = data.strength_of_earth_totem.highest_for(sim.rules);
         let buff = data.strength_of_earth_totem_triggered.highest();
         let duration = rank.duration();
         // Forever drops Enhancing Totems, so the buff's own value is the whole value.
@@ -233,7 +242,7 @@ impl Shaman {
     /// Go `registerGraceOfAirTotemSpell`.
     pub(super) fn register_grace_of_air_totem_spell(&self, sim: &mut Sim, unit: UnitId) {
         let data = spell_data();
-        let rank = data.grace_of_air_totem.highest();
+        let rank = data.grace_of_air_totem.highest_for(sim.rules);
         let buff = data.grace_of_air_totem_triggered.highest();
         let duration = rank.duration();
         let value = buff.effect_n(1).average(CHARACTER_LEVEL);
@@ -277,6 +286,38 @@ impl Shaman {
             },
         );
         stat_exclusive_effect(sim, aura, MANA_SPRING_TOTEM.category, Stat::MP5, value);
+        sim.register_spell(unit, config);
+    }
+
+    /// Mana Tide Totem (16190, rank 4 at level 60 is 1325256), the Restoration shaman's own cast
+    /// under Forever's rules (Rust only; the reference never casts it). The totem stands for 13 sec
+    /// on a 5 minute cooldown, costs the row's 60 mana and gives 290 mana every 3 sec to its
+    /// group (the rank's Mana Tide row, 1325257). The sim models only the shaman's own mana, and
+    /// as Mana Spring Totem's ticks and the raid's external Mana Tide Totem are, the ticks are
+    /// the form MP5 takes: 290 every 3 sec is 483.3 MP5 for the 13 sec, 1,257 mana against the
+    /// 1,160 of four whole ticks. It stands in the water totem slot, so it ends a Healing Stream
+    /// Totem and a Healing Stream Totem cast ends it (`ManaTideTotem`'s runtime).
+    pub(super) fn register_mana_tide_totem_spell(&self, sim: &mut Sim, unit: UnitId) {
+        let data = spell_data();
+        let rank = data.mana_tide_totem.highest();
+        let duration = rank.duration();
+        // The raid's external Mana Tide Totem reads the same row, so it is the same MP5 to the bit.
+        let value = MANA_TIDE_TOTEMS.value(0);
+        let mut config = rank_totem_config(rank, masks::BASIC_TOTEM);
+        config.cast.cd = Cooldown {
+            timer: Some(sim.new_timer(unit)),
+            duration: rank.category_cooldown(),
+        };
+        let aura = sim.register_aura(
+            unit,
+            AuraConfig {
+                label: MANA_TIDE_TOTEM_AURA.to_string(),
+                action_id: Some(config.action_id.clone()),
+                duration,
+                ..AuraConfig::default()
+            },
+        );
+        stat_exclusive_effect(sim, aura, MANA_TIDE_TOTEM_CATEGORY, Stat::MP5, value);
         sim.register_spell(unit, config);
     }
 

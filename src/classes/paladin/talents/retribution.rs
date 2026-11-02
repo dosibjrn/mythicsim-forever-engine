@@ -69,7 +69,8 @@ impl Vengeance {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Vindication {
     pub(crate) chance: f64,
-    pub(crate) aura: AuraRef,
+    /// The paladin's attack power aura, which push 113554 removes under Forever's rules.
+    pub(crate) aura: Option<AuraRef>,
     pub(crate) target_aura: AuraRef,
 }
 
@@ -95,7 +96,9 @@ impl Vindication {
 
     pub(crate) fn on_delayed_proc(self, fight: &mut Fight<PaladinAgent>) {
         fight.activate_aura(self.target_aura);
-        fight.activate_aura(self.aura);
+        if let Some(aura) = self.aura {
+            fight.activate_aura(aura);
+        }
     }
 }
 

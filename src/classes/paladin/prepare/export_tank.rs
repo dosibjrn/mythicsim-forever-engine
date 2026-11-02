@@ -8,10 +8,11 @@ use crate::prepare::dbcenums;
 use crate::prepare::env::Environment;
 use crate::prepare::export::action_id;
 use crate::prepare::rotation::rotation_spells;
-use crate::prepare::sim::{Sim, UnitId, NEVER_EXPIRES};
+use crate::prepare::sim::{Rules, Sim, UnitId, NEVER_EXPIRES};
 use crate::prepare::spelldata::Spell as Row;
 
 use super::export::{heal_modifiers, GREATER_BLESSING_OF_LIGHT_CATEGORY};
+use super::hotfix_113554 as hotfix;
 use super::spell_data::spell_data;
 use super::talent_spells::HOLY_SHOCK_RANKS;
 use super::util::{spell_action, tagged_action};
@@ -43,8 +44,18 @@ impl Paladin {
                     .fraction_at(law),
             });
         }
+        if sim.rules == Rules::Forever {
+            // Push 113554's effect 1367626: +33% to all threat while the aura holds.
+            righteous_fury["all_threat_multiplier"] =
+                json!(1.0 + hotfix::RIGHTEOUS_FURY_ALL_THREAT);
+        }
         effects.push(righteous_fury);
-        if talents.bool("swift_judgement") {
+        if talents.bool("swift_judgement") && sim.rules == Rules::Forever {
+            // Push 113554: a second Judgement on its own cooldown.
+            effects.push(json!({
+                "kind": "second_judgement", "spell_id": data.swift_judgement.highest().id,
+            }));
+        } else if talents.bool("swift_judgement") {
             // swift_judgement.go
             let rank = data.swift_judgement.highest();
             effects.push(json!({
@@ -79,7 +90,7 @@ impl Paladin {
             effects.push(json!({
                 "kind": "shield_specialization",
                 "trigger_aura": format!("Shield Specialization{label}"),
-                "proc_chance": data.shield_specialization.effect_at(2).fraction_at(shield_specialization),
+                "proc_chance": Self::shield_specialization_chance(sim, shield_specialization),
                 // The 16 October 2026 beta notes cut it from 6% to 4%; the row still says 6.
                 "mana_share": 0.04,
                 "metrics_action_id": action_id(Some(&spell_action(share.id))),
@@ -129,18 +140,14 @@ impl Paladin {
         if improved_righteous_fury > 0 {
             damage_taken.push(json!({
                 "aura": "Righteous Fury", "stat": "damage_taken",
-                "multiplier": data.improved_righteous_fury
-                    .effect(dbcenums::A_ADD_FLAT_MODIFIER, dbcenums::SPELLMOD_EFFECT2)
-                    .multiplier_at(improved_righteous_fury),
+                "multiplier": Self::improved_righteous_fury_multiplier(sim, improved_righteous_fury),
             }));
         }
         let iron_creed = talents.i32("iron_creed");
         if iron_creed > 0 {
             damage_taken.push(json!({
                 "aura": format!("Iron Creed{label}"), "stat": "damage_taken",
-                "multiplier": 1.0 - data.iron_creed
-                    .effect(dbcenums::A_PROC_TRIGGER_SPELL_WITH_VALUE, 0)
-                    .fraction_at(iron_creed),
+                "multiplier": Self::iron_creed_multiplier(sim, iron_creed),
             }));
         }
         if !damage_taken.is_empty() {
@@ -175,7 +182,7 @@ impl Paladin {
                     "spell_id": rank.id, "proc_spell": proc_spell,
                     "aura": format!("Holy Shield{label} Rank {}", rank.rank_number()),
                     "charges": i32::from(rank.proc_charges),
-                    "damage": rank.effect(dbcenums::A_PROC_TRIGGER_DAMAGE, 0).average(CHARACTER_LEVEL),
+                    "damage": Self::holy_shield_damage(sim, rank),
                 }));
             });
             effects.push(json!({
@@ -184,7 +191,26 @@ impl Paladin {
                 "can_block": sim.unit(unit).pseudo_stats.can_block,
             }));
         }
+        if self.new_talent("shieldsworn") > 0 {
+            // Push 113554's Shieldsworn: a landed Holy Strike triggers Holy Shield and Shield
+            // Specialization (upstream #772's holy_shield.go and talents_protection.go).
+            effects.push(json!({"kind": "shieldsworn"}));
+        }
         effects
+    }
+
+    /// A Holy Shield rank's damage: push 113554's under Forever's rules, where each rank has
+    /// the damage of the rank below (hotfix_113554.rs), the row's in the reference.
+    pub(super) fn holy_shield_damage(sim: &Sim, rank: &Row) -> f64 {
+        if sim.rules == Rules::Forever {
+            if let Some(&(_, damage, _)) =
+                hotfix::HOLY_SHIELD.iter().find(|(id, _, _)| *id == rank.id)
+            {
+                return damage;
+            }
+        }
+        rank.effect(dbcenums::A_PROC_TRIGGER_DAMAGE, 0)
+            .average(CHARACTER_LEVEL)
     }
 
     /// Go `paladinHealEffect`: every heal rank's roll, the Libram of Light's Flash of Light

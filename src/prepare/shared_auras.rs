@@ -242,7 +242,16 @@ pub(crate) fn apply_spell_data_debuff_proc(env: &mut Environment, cfg: &SpellDat
     let unit = env.player;
     let source = cfg.source();
     let (trigger, debuff) = cfg.rows();
-    enemy_debuff_auras(env, debuff, debuff.duration(), &debuff.debuff_effects());
+    let auras = enemy_debuff_auras(env, debuff, debuff.duration(), &debuff.debuff_effects());
+    // A Forever chance on hit's armor debuff that does not stack is one stack, which the
+    // runtime's armor debuff proc counts its armor by (export_items.rs).
+    if cfg.rateless && env.sim.rules == super::sim::Rules::Forever {
+        for aura in auras.into_iter().flatten() {
+            if env.sim.aura(aura).max_stacks == 0 {
+                env.sim.aura_mut(aura).max_stacks = 1;
+            }
+        }
+    }
 
     let mut config = spell_data_proc_listener(&env.sim, unit, cfg, source, trigger, None);
     config.trigger_immediately = true;

@@ -12,6 +12,7 @@ use crate::prepare::dbcenums::{
     A_ADD_FLAT_MODIFIER, A_ADD_PCT_MODIFIER, A_MOD_DECREASE_SPEED, A_MOD_DODGE_PERCENT,
     SPELLMOD_COOLDOWN, SPELLMOD_CRIT_DAMAGE_BONUS, SPELLMOD_DAMAGE,
 };
+use crate::prepare::hotfix_113554;
 use crate::prepare::major_cooldown::COOLDOWN_PRIORITY_DEFAULT;
 use crate::prepare::sim::{
     AuraConfig, Cooldown, EventCallbacks, Sim, MILLISECOND, NEVER_EXPIRES, SECOND,
@@ -230,7 +231,8 @@ impl Druid {
             return;
         }
         let unit = self.unit;
-        let rank = Ladder::ranked(&[1322605]).highest();
+        // Hotfix push 113531 halves the cooldown to 8 sec under Forever's rules.
+        let rank = hotfix_113554::row(sim.rules, 1322605);
         let mana = rank.mana_cost();
         let timer = sim.new_timer(unit);
         let spell = self.register_spell(

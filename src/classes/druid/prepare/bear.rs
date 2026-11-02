@@ -10,8 +10,9 @@ use crate::prepare::buffs::generated::DEMORALIZING_ROAR;
 use crate::prepare::character::constants::{CHARACTER_LEVEL, MAX_MELEE_RANGE};
 use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums::A_MOD_DAMAGE_PERCENT_TAKEN;
+use crate::prepare::hotfix_113554;
 use crate::prepare::major_cooldown::COOLDOWN_PRIORITY_DEFAULT;
-use crate::prepare::sim::{AuraConfig, Cooldown, Duration, Sim, MILLISECOND};
+use crate::prepare::sim::{AuraConfig, Cooldown, Duration, Rules, Sim, MILLISECOND};
 use crate::prepare::spell::{
     school, Cast, CastConfig, CostOptions, DefenseType, DotConfig, ProcMask, SpellConfig, SpellFlag,
 };
@@ -26,6 +27,16 @@ const LACERATE_RANKS: [i32; 3] = [414644, 1235826, 1235827];
 const PRIMAL_BITE_RANKS: [i32; 4] = [407995, 1238069, 1238070, 1238073];
 const MAUL_RANKS: [i32; 7] = [6807, 6808, 6809, 8972, 9745, 9880, 9881];
 const SWIPE_RANKS: [i32; 5] = [779, 780, 769, 9754, 9908];
+
+/// The Primal Bite rank a level 60 druid casts: rank 4 (1238073) in the frozen data, rank 3
+/// (1238070) under Forever's rules, where hotfix push 113531 removes rank 4 and gives rank 3 its
+/// level and its 77 flat damage.
+pub(super) fn primal_bite_rank(rules: Rules) -> &'static Spell {
+    match rules {
+        Rules::Forever => hotfix_113554::row(rules, 1238070),
+        Rules::GoReference => Ladder::ranked(&PRIMAL_BITE_RANKS).highest(),
+    }
+}
 
 /// Go `LacerateMaxStacks`.
 pub(crate) const LACERATE_MAX_STACKS: i32 = 5;
@@ -271,8 +282,13 @@ impl Druid {
         );
     }
 
-    /// Go `registerLacerateSpell`.
+    /// Go `registerLacerateSpell`. Hotfix push 113531 makes Lacerate a talent (1328617), so under
+    /// Forever's rules a druid without it has no Lacerate. Its two new low ranks leave the level
+    /// 60 rank 1235827 as it was.
     fn register_lacerate_spell(&mut self, sim: &mut Sim) {
+        if sim.rules == Rules::Forever && !self.tal.lacerate {
+            return;
+        }
         let rank = Ladder::ranked(&LACERATE_RANKS).highest();
         let tick = rank.periodic_effect();
         let spell = self.register_spell(
@@ -314,7 +330,7 @@ impl Druid {
             return;
         }
         let unit = self.unit;
-        let rank = Ladder::ranked(&PRIMAL_BITE_RANKS).highest();
+        let rank = primal_bite_rank(sim.rules);
         let timer = sim.new_timer(unit);
         let mut cast = gcd_cast(rank);
         cast.cd = Cooldown {

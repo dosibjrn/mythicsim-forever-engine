@@ -111,7 +111,7 @@ impl Hunter {
         // serpent_sting.go: a ranged hit roll, then after travel a dot whose ticks add a share
         // of ranged attack power.
         if let Some(spell) = self.serpent_sting {
-            let rank = data.serpent_sting.highest();
+            let rank = data.serpent_sting.highest_for(sim.rules);
             effects.push(json!({
                 "kind": "serpent_sting", "spell_id": spell_id_of(sim, spell),
                 "tick_base": rank.periodic_effect().average(CHARACTER_LEVEL),
@@ -515,6 +515,14 @@ impl Hunter {
                 "kind": "wing_clip", "spell_id": spell_id_of(sim, spell),
                 "base_damage": data.wing_clip.highest().effect_n(2).average(CHARACTER_LEVEL),
             }));
+        }
+        // traps.go: Freezing Trap deals nothing. Go's exporter has no effect for it, so only
+        // Forever's rules describe it.
+        if let Some(spell) = self
+            .freezing_trap
+            .filter(|_| sim.rules == crate::prepare::sim::Rules::Forever)
+        {
+            effects.push(json!({"kind": "freezing_trap", "spell_id": spell_id_of(sim, spell)}));
         }
         // traps.go: a magic hit roll without a hit count, dealt, then the dot when it landed.
         if let Some(spell) = self.immolation_trap {

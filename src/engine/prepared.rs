@@ -303,6 +303,10 @@ pub struct PreparedReport {
     /// [`PreparedReport::add_rotation_stats`] adds it.
     #[serde(skip)]
     presentation: Option<crate::core::fight::rotation_checks::Presentation>,
+    /// The logged fight's queued strikes that went out on an extra attack, kept out of the
+    /// result unless [`PreparedReport::add_rotation_stats`] adds them.
+    #[serde(skip)]
+    extra_attack_strikes: Vec<serde_json::Value>,
 }
 
 impl PreparedReport {
@@ -318,6 +322,12 @@ impl PreparedReport {
             return false;
         };
         presentation.add_to(player);
+        // Each queued strike, such as Heroic Strike, that went out on a Windfury Totem or
+        // Weaponmaster extra attack in the logged fight, so the timeline can say so.
+        player.insert(
+            "extraAttackStrikes".into(),
+            serde_json::Value::Array(self.extra_attack_strikes.clone()),
+        );
         true
     }
 }
@@ -358,6 +368,7 @@ fn run(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> {
     let report = classes::run_prepared(prepared).map_err(PreparedError::Invalid)?;
     let elapsed_ns = report.elapsed_ns;
     let presentation = report.presentation.clone();
+    let extra_attack_strikes = report.extra_attack_strikes.clone();
     Ok(PreparedReport {
         engine: format!("forever-rust-{}", env!("CARGO_PKG_VERSION")),
         schema_version: SCHEMA_VERSION,
@@ -369,5 +380,6 @@ fn run(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> {
         result: serde_json::to_value(&report)
             .map_err(|err| PreparedError::Invalid(err.to_string()))?,
         presentation,
+        extra_attack_strikes,
     })
 }

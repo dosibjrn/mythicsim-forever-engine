@@ -1,5 +1,10 @@
 //! `sim --rotation-stats` against Go goldens: the rotation the application shows and Go's
 //! validation messages of each of its lines (fixtures/rotation-stats/README.md).
+//!
+//! The golden comparison runs under the Go reference's rules (`--go-rules`), as the goldens do:
+//! Forever's rules read a rotation's Ahn'Qiraj 20 book ranks (Corruption VII, Serpent Sting IX
+//! and the like) as the rank below and the fixtures' talents in the 70707 client's order, so the
+//! rotation they show names other spell ids than Go's.
 
 use serde_json::Value;
 use std::{fs, path::Path, process::Command};
@@ -27,7 +32,7 @@ const KEYS: [&str; 3] = [
     "rotationPresentationVersion",
 ];
 
-fn run(name: &str, rotation_stats: bool) -> Value {
+fn run(name: &str, rotation_stats: bool, go_rules: bool) -> Value {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
     let own = root.join(format!("rotation-stats/{name}.request.json"));
     let request = if own.exists() {
@@ -54,6 +59,9 @@ fn run(name: &str, rotation_stats: bool) -> Value {
     if rotation_stats {
         command.arg("--rotation-stats");
     }
+    if go_rules {
+        command.arg("--go-rules");
+    }
     let done = command.output().unwrap();
     assert!(
         done.status.success(),
@@ -74,7 +82,7 @@ fn rotation_line_checks_match_go() {
             .join(format!("fixtures/rotation-stats/{name}.go.json"));
         let golden: Value =
             serde_json::from_str(&fs::read_to_string(golden_file).unwrap()).unwrap();
-        let player = run(name, true);
+        let player = run(name, true, true);
         for key in KEYS {
             if player[key] != golden[key] {
                 failures.push(format!(
@@ -89,7 +97,7 @@ fn rotation_line_checks_match_go() {
 
 #[test]
 fn line_checks_are_reported_only_on_request() {
-    let player = run("apl-shadow-cooldown-reads", false);
+    let player = run("apl-shadow-cooldown-reads", false, false);
     for key in KEYS {
         assert!(player.get(key).is_none(), "{key} without --rotation-stats");
     }

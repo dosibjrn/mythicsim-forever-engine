@@ -13,7 +13,7 @@ use crate::prepare::dbcenums::{
     SPELLMOD_CASTING_TIME, SPELLMOD_COST, SPELLMOD_CRITICAL_CHANCE, SPELLMOD_CRIT_DAMAGE_BONUS,
     SPELLMOD_DAMAGE, SPELLMOD_DOT, SPELLMOD_GLOBAL_COOLDOWN, SPELLMOD_RANGE,
 };
-use crate::prepare::sim::{AuraConfig, EventCallbacks, Sim, MILLISECOND};
+use crate::prepare::sim::{AuraConfig, EventCallbacks, Rules, Sim, MILLISECOND};
 use crate::prepare::spell::{
     Cast, CastConfig, CostOptions, DotConfig, ProcMask, SpellConfig, SpellFlag,
 };
@@ -22,7 +22,7 @@ use crate::prepare::spelldata::{Ladder, Spell};
 use crate::prepare::stats::{SchoolIndex, Stat};
 
 use super::baseline::{aura_array_to_map, new_enemy_aura_array};
-use super::{masks, Druid};
+use super::{masks, Druid, Spec};
 
 const STARFIRE_RANKS: [i32; 7] = [2912, 8949, 8950, 8951, 9875, 9876, 25298];
 const WRATH_RANKS: [i32; 8] = [5176, 5177, 5178, 5179, 5180, 6780, 8905, 9912];
@@ -554,12 +554,17 @@ impl Druid {
         );
     }
 
-    /// Genesis, new in Forever: +1% periodic damage and healing a rank.
+    /// Genesis, new in Forever: +1% periodic damage and healing a rank, +2% under Forever's rules
+    /// since hotfix push 113531.
     fn apply_genesis(&mut self, sim: &mut Sim) {
         if self.tal.genesis == 0 {
             return;
         }
         // Client 1223081's mask includes the bleeds (Rake, Rip, Lacerate) and not Lifebloom.
+        // Its first effect also names Wild Growth, and its second, a direct healing mod, names
+        // Swiftmend, which MythicSim's healer sim casts: the Restoration druid's alone.
+        let healer = self.spec == Spec::Restoration && sim.rules == Rules::Forever;
+        let wild_growth = if healer { masks::WILD_GROWTH } else { 0 };
         sim.add_static_mod(
             self.unit,
             SpellModConfig {
@@ -568,14 +573,28 @@ impl Druid {
                     | masks::RIP
                     | masks::LACERATE
                     | masks::REJUVENATION
-                    | masks::REGROWTH,
+                    | masks::REGROWTH
+                    | wild_growth,
                 kind: SpellModType::DotDamageDonePct,
-                float_value: Ladder::talent(1223081, 5)
+                float_value: super::talents::genesis(sim.rules)
                     .effect(A_ADD_PCT_MODIFIER, SPELLMOD_DOT)
                     .fraction_at(self.tal.genesis),
                 ..SpellModConfig::default()
             },
         );
+        if healer {
+            sim.add_static_mod(
+                self.unit,
+                SpellModConfig {
+                    class_mask: masks::SWIFTMEND,
+                    kind: SpellModType::DamageDoneFlat,
+                    float_value: super::talents::genesis(sim.rules)
+                        .effect(A_ADD_PCT_MODIFIER, SPELLMOD_DAMAGE)
+                        .fraction_at(self.tal.genesis),
+                    ..SpellModConfig::default()
+                },
+            );
+        }
     }
 
     /// Nature's Majesty, new in Forever: +2% critical strike chance a rank.

@@ -387,6 +387,12 @@ fn production_mind_flay(rules: forever_engine::Rules) -> (Value, Value) {
             .join("fixtures/mage/prepared-v2/production-shadow-priest.request.json"),
     )
     .unwrap();
+    // The production priest is Undead, whose Touch of the Grave differs between the rules since the
+    // 27 October racial additions, which would part the rolls; a Night Elf's racials are the same
+    // under both.
+    let mut request: Value = serde_json::from_slice(&request).unwrap();
+    request["raid"]["parties"][0]["players"][0]["race"] = json!("RaceNightElf");
+    let request = serde_json::to_vec(&request).unwrap();
     let mut prepared = forever_engine::prepare_json_with(&request, "x", rules).unwrap();
     prepared["sim"]["iterations"] = json!(20);
     let effect = prepared["effects"]

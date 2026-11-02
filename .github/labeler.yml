@@ -1,0 +1,111 @@
+# Labels for pull requests from the paths they change. Priority, size, bug and
+# enhancement need a person and stay manual.
+
+"class: druid":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/druid.rs
+          - src/classes/druid/**
+          - tests/classes/druid.rs
+          - tests/classes/druid/**
+
+"class: hunter":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/hunter.rs
+          - src/classes/hunter/**
+          - tests/classes/hunter.rs
+          - tests/classes/hunter/**
+
+"class: mage":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/mage.rs
+          - src/classes/mage/**
+          - tests/classes/mage.rs
+          - tests/classes/mage/**
+
+"class: paladin":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/paladin.rs
+          - src/classes/paladin/**
+          - tests/classes/paladin.rs
+          - tests/classes/paladin/**
+
+"class: priest":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/priest.rs
+          - src/classes/priest/**
+          - tests/classes/priest.rs
+          - tests/classes/priest/**
+
+"class: rogue":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/rogue.rs
+          - src/classes/rogue/**
+          - tests/classes/rogue.rs
+          - tests/classes/rogue/**
+
+"class: shaman":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/shaman.rs
+          - src/classes/shaman/**
+          - tests/classes/shaman.rs
+          - tests/classes/shaman/**
+
+"class: warlock":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/warlock.rs
+          - src/classes/warlock/**
+          - tests/classes/warlock.rs
+          - tests/classes/warlock/**
+
+"class: warrior":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/classes/warrior.rs
+          - src/classes/warrior/**
+          - tests/classes/warrior.rs
+          - tests/classes/warrior/**
+
+"area: core":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/core.rs
+          - src/core/**
+          - src/mechanics.rs
+          - src/mechanics/**
+          - src/engine.rs
+          - src/engine/**
+
+"area: exporter":
+  - changed-files:
+      - any-glob-to-any-file:
+          - tools/oracle-v2/**
+
+"area: routing":
+  - changed-files:
+      - any-glob-to-any-file:
+          - tools/route.py
+          - tools/route_test.py
+          - tools/shadow.py
+          - tools/shadow_test.py
+          - docs/routing.md
+          - docs/shadow-sims.md
+
+"area: tools":
+  - changed-files:
+      - any-glob-to-any-file:
+          - tools/*.py
+          - validation/**
+          - .github/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**

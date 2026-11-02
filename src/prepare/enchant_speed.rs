@@ -114,6 +114,11 @@ impl Sim {
             aura = self.make_permanent(aura);
         }
         self.attach_haste_pseudo_stats(aura, pseudo_stats);
+        let multiplier = |percent: f64| 1.0 + percent / 100.0;
+        self.speed_auras.push((
+            aura,
+            [multiplier(melee), multiplier(ranged), multiplier(cast)],
+        ));
         if kind == "Item" {
             self.register_item_proc_with_slots(unit, id, aura, vec![slot]);
         } else {

@@ -412,6 +412,7 @@ impl<A: Agent> Fight<A> {
     pub(crate) fn heal_crit_chance(&self, spell: SpellId) -> f64 {
         let state = &self.spells[spell];
         (self.unit(state.caster).powers.spell_crit_percent + state.bonus_crit_percent) / 100.0
+            + self.heal_crit_bonus
     }
 
     /// [`Self::heal_crit_chance`] for a heal over time's tick under Forever's rules, less the crit

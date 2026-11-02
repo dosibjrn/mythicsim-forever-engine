@@ -277,10 +277,16 @@ fn defias_leather_5(env: &mut Environment, aura: AuraId) {
 // item_sets_classic.go: crafted, PvP and dungeon sets.
 // ---------------------------------------------------------------------------------------------
 
-set_stats!(
-    black_dragon_mail_2,
-    Stats::from_pairs(&[(Stat::PhysicalHitPercent, 1.0)])
-);
+/// Increased Hit Chance 01 (15464). Client 1.60.1.70707 gives the row a spell hit effect beside
+/// its melee hit (SpellEffect 1366108, aura 55, 1%), as every "Increased Hit Chance" row; the Go
+/// reference keeps melee hit alone.
+fn black_dragon_mail_2(env: &mut Environment, aura: AuraId) {
+    let stats = match env.sim.rules {
+        super::sim::Rules::Forever => set_hit_percent(1.0),
+        super::sim::Rules::GoReference => Stats::from_pairs(&[(Stat::PhysicalHitPercent, 1.0)]),
+    };
+    env.sim.attach_stats_buff(aura, stats);
+}
 set_stats!(
     black_dragon_mail_3,
     Stats::from_pairs(&[(Stat::PhysicalCritPercent, 2.0)])
@@ -291,7 +297,8 @@ set_stats!(
 );
 set_stats!(blue_dragon_mail_2, set_resistances(4.0));
 set_stats!(blue_dragon_mail_3, set_spell_power(28.0));
-set_stats!(bloodsoul_embrace_2, Stats::from_pairs(&[(Stat::MP5, 12.0)]));
+// Forever gives the bonus at 3 pieces (client ItemSetSpell 443: 21636 at 3), not Era's 2.
+set_stats!(bloodsoul_embrace_3, Stats::from_pairs(&[(Stat::MP5, 12.0)]));
 set_stats!(
     bloodvine_garb_3,
     Stats::from_pairs(&[(Stat::SpellCritPercent, 2.0)])
@@ -344,8 +351,9 @@ fn stormshroud_armor_3(env: &mut Environment, aura: AuraId) {
 }
 
 set_stats!(stormshroud_armor_4, set_attack_power(14.0));
+// Forever gives the bonus at 3 pieces (client ItemSetSpell 444: 21416 at 3), not Era's 2.
 set_stats!(
-    the_darksoul_2,
+    the_darksoul_3,
     Stats::from_pairs(&[(Stat::DefenseRating, 20.0 * DEFENSE_RATING_PER_DEFENSE_LEVEL)])
 );
 
@@ -703,7 +711,7 @@ pub(crate) static ITEM_SETS: &[ItemSet] = &[
         "Blue Dragon Mail",
         &[(2, blue_dragon_mail_2), (3, blue_dragon_mail_3)]
     ),
-    set!(0, "Bloodsoul Embrace", &[(2, bloodsoul_embrace_2)]),
+    set!(0, "Bloodsoul Embrace", &[(3, bloodsoul_embrace_3)]),
     ItemSet {
         id: 0,
         name: "Bloodvine Garb",
@@ -711,7 +719,13 @@ pub(crate) static ITEM_SETS: &[ItemSet] = &[
         bonuses: &[(3, bloodvine_garb_3)],
         required_profession: "Tailoring",
     },
-    set!(0, "Blood Tiger Harness", &[(2, blood_tiger_harness_2)]),
+    ItemSet {
+        id: 0,
+        name: "Blood Tiger Harness",
+        alternative_name: "",
+        bonuses: &[(2, blood_tiger_harness_2)],
+        required_profession: "Leatherworking",
+    },
     set!(143, "Devilsaur Armor", &[(2, devilsaur_armor_2)]),
     set!(
         490,
@@ -728,7 +742,13 @@ pub(crate) static ITEM_SETS: &[ItemSet] = &[
             (4, stormshroud_armor_4),
         ]
     ),
-    set!(0, "The Darksoul", &[(2, the_darksoul_2)]),
+    ItemSet {
+        id: 0,
+        name: "The Darksoul",
+        alternative_name: "",
+        bonuses: &[(3, the_darksoul_3)],
+        required_profession: "Blacksmithing",
+    },
     set!(141, "Volcanic Armor", &[(3, volcanic_armor_3)]),
     set!(
         0,
@@ -931,6 +951,33 @@ mod tests {
                 .unwrap_or_else(|| panic!("Go registers no set {} ({})", set.name, set.id));
             let ours: Vec<i32> = set.bonuses.iter().map(|(pieces, _)| *pieces).collect();
             assert_eq!(ours, go.bonus_pieces, "{}", set.name);
+        }
+    }
+
+    #[test]
+    fn the_zul_gurub_crafted_sets_follow_the_client() {
+        // Client ItemSet RequiredSkill at rank 300: 197 Tailoring, 165 Leatherworking,
+        // 164 Blacksmithing, 0 for Bloodsoul Embrace. Pieces from ItemSetSpell.
+        let expected = [
+            ("Bloodvine Garb", 421, "Tailoring"),
+            ("Blood Tiger Harness", 442, "Leatherworking"),
+            ("Bloodsoul Embrace", 443, ""),
+            ("The Darksoul", 444, "Blacksmithing"),
+        ];
+        for (name, client_id, profession) in expected {
+            let set = ITEM_SETS
+                .iter()
+                .find(|set| set.name == name)
+                .unwrap_or_else(|| panic!("no set {name}"));
+            assert_eq!(set.required_profession, profession, "{name}");
+            let mut client: Vec<i32> = super::super::forever_set_spells_generated::SET_BONUSES
+                .iter()
+                .filter(|(id, _, _)| *id == client_id)
+                .map(|(_, pieces, _)| *pieces)
+                .collect();
+            client.dedup();
+            let ours: Vec<i32> = set.bonuses.iter().map(|(pieces, _)| *pieces).collect();
+            assert_eq!(ours, client, "{name}");
         }
     }
 

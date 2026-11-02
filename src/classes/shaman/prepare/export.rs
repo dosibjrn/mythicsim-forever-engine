@@ -130,7 +130,9 @@ impl Shaman {
         let mut effects: Vec<Value> = Vec::new();
         // MythicSim's healer sims (Rust only): the Restoration shaman's heals.
         if !self.heals.is_empty() {
-            effects.push(crate::prepare::heals::heals_effect(env, &self.heals));
+            let mut heals = crate::prepare::heals::heals_effect(env, &self.heals);
+            self.riptide_chain_heal_bonus(env, &mut heals);
+            effects.push(heals);
         }
 
         // lightning_bolt.go: the overload rolls on landing, before the bolt deals its damage.
@@ -188,7 +190,7 @@ impl Shaman {
         // totems.go registerStrengthOfEarthTotemSpell: the earth totem's aura; its Strength
         // reaches the fight through the class's stat auras.
         if let Some(aura) = sim.get_aura(player, "Strength Of Earth Totem (Self)") {
-            let row = data.strength_of_earth_totem.highest();
+            let row = data.strength_of_earth_totem.highest_for(env.rules);
             effects.push(json!({
                 "kind": "strength_of_earth_totem", "spell_id": row.id,
                 "aura": sim.aura(aura).label, "duration_ns": nanos(row.duration()),
@@ -447,7 +449,7 @@ impl Shaman {
         // registerGraceOfAirTotemSpell: the air totem's aura, whose Agility is a class stat
         // aura.
         if let Some(aura) = sim.get_aura(player, "Grace Of Air Totem (Self)") {
-            let row = data.grace_of_air_totem.highest();
+            let row = data.grace_of_air_totem.highest_for(env.rules);
             effects.push(json!({
                 "kind": "grace_of_air_totem", "spell_id": row.id, "aura": sim.aura(aura).label,
                 "duration_ns": nanos(row.duration()),
@@ -536,6 +538,15 @@ impl Shaman {
             effects.push(json!({
                 "kind": "mana_spring_totem", "spell_id": row.id, "aura": sim.aura(aura).label,
                 "duration_ns": nanos(row.duration()),
+            }));
+        }
+        // Mana Tide Totem (Forever's rules, Restoration): the aura's MP5, the water totem slot.
+        if let Some(aura) = sim.get_aura(player, super::totems::MANA_TIDE_TOTEM_AURA) {
+            let row = data.mana_tide_totem.highest();
+            effects.push(json!({
+                "kind": "mana_tide_totem", "spell_id": row.id, "aura": sim.aura(aura).label,
+                "duration_ns": nanos(row.duration()),
+                "healing_stream_totems": super::heals::healing_stream_totems(),
             }));
         }
         // registerFlametongueTotemSpell and buffs/flametongue_totem.go: the totem's aura turns

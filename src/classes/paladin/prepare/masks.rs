@@ -53,6 +53,20 @@ pub const FIRE_RESISTANCE_AURA: i64 = 1 << 43;
 pub const FROST_RESISTANCE_AURA: i64 = 1 << 44;
 pub const SHADOW_RESISTANCE_AURA: i64 = 1 << 45;
 
+/// Swift Judgement under Forever's rules since push 113554: a second Judgement, which carries
+/// Swift Judgement's bit as well for the mods that name it (Sentinel's Libram). Go has no such
+/// bit; it is Rust's, past the reference's.
+pub const SECOND_JUDGEMENT: i64 = 1 << 46;
+
+/// Oath of Light (1328548, push 113554, Forever's rules). Go has no such bit; it is Rust's, past
+/// the reference's.
+pub const OATH_OF_LIGHT: i64 = 1 << 47;
+
+/// Light's Vigil on an ally (push 113554, Forever's rules): the cast, and the party heal the next
+/// Holy Shock heal triggers. Rust's bits, past the reference's.
+pub const LIGHTS_VIGIL_ALLY: i64 = 1 << 48;
+pub const LIGHTS_VIGIL_HEAL: i64 = 1 << 49;
+
 pub const ALL_SEALS: i64 = SEAL_OF_RIGHTEOUSNESS
     | SEAL_OF_COMMAND
     | SEAL_OF_LIGHT

@@ -70,6 +70,11 @@ fn ley_line_log(rules: Rules, condition: Value) -> (Value, Vec<String>) {
     request["simOptions"]["debugFirstIteration"] = true.into();
     request["simOptions"]["iterations"] = 1.into();
     let player = player(&mut request);
+    if rules == Rules::Forever {
+        // The fixture's talents in client 1.60.1.70707's order: Arcane Focus's points on
+        // Improved Channeling, which takes its square, and Critical Mass at its 3 ranks.
+        player["talentsString"] = "230205-35520201030133031-003".into();
+    }
     player["buffs"]["innervates"] = 1.into();
     for entry in player["rotation"]["priorityList"].as_array_mut().unwrap() {
         let action = &mut entry["action"];

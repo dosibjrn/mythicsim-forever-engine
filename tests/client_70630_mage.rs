@@ -10,10 +10,13 @@ use serde_json::{json, Value};
 use std::{fs, path::Path};
 
 const FROSTBOLT: i64 = 25304;
+/// The Frostbolt a Forever mage casts for 25304: rank X, as rank XI is an Ahn'Qiraj 20 book.
+const FROSTBOLT_KNOWN: i64 = 10181;
 const CONE_OF_COLD: i64 = 10161;
 const ICE_LANCE: i64 = 1240047;
 const WINTERS_CHILL: i64 = 12579;
 const FINGERS_OF_FROST: i64 = 400669;
+const FIREBALL: i64 = 25306;
 
 fn request(name: &str) -> Value {
     let path = Path::new(concat!(
@@ -51,6 +54,11 @@ fn log(rules: Rules, rotation: Vec<Value>, seconds: f64) -> (Value, Vec<String>)
     request["encounter"]["duration"] = seconds.into();
     request["encounter"]["durationVariation"] = 0.into();
     let player = &mut request["raid"]["parties"][0]["players"][0];
+    if rules == Rules::Forever {
+        // The fixture's talents in client 1.60.1.70707's order: Arcane Focus's points on
+        // Improved Channeling, which takes its square.
+        player["talentsString"] = json!("050205103-3-053500000101331251");
+    }
     player["rotation"] = json!({"type": "TypeAPL", "priorityList": rotation});
     // Cone of Cold is a point blank spell.
     player["distanceFromTarget"] = 5.into();
@@ -122,8 +130,9 @@ fn forever_prepares_the_next_cone_of_cold_rule_and_the_reference_does_not() {
     assert_eq!(effect["cone_of_cold_consumes"], true);
     let share = effect["spell_power_per_stack"].as_f64().unwrap();
     assert!((share - 0.07).abs() < 1e-12, "{share}");
-    // The 5% per stack of 70425 (12579 effect 1, 70630 base 5) stays.
-    assert!((effect["damage_per_stack"].as_f64().unwrap() - 0.05).abs() < 1e-12);
+    // The 5% per stack of 70425 (12579 effect 1, 70630 base 5) is 20% since hotfix push 113531
+    // (SpellEffect 688253).
+    assert!((effect["damage_per_stack"].as_f64().unwrap() - 0.2).abs() < 1e-12);
 
     let (go, _) = log(Rules::GoReference, cone_rotation(), 30.0);
     let effect = winters_chill_effect(&go);
@@ -209,10 +218,17 @@ fn the_stacks_begin_again_after_the_cone_of_cold() {
 
 #[test]
 fn only_frostbolt_frost_blast_and_an_empowered_ice_lance_apply_winters_chill() {
-    // Ice Lance whenever Fingers of Frost is up, Frostbolt otherwise; never a Cone of Cold.
+    // Ice Lance whenever Fingers of Frost is up, Frostbolt below five stacks, Fireball (which
+    // applies none) otherwise, so the stacks fade and build again; never a Cone of Cold. Since
+    // hotfix push 113531 Ice Lance has an 8 sec cooldown, and Frostbolt alone would hold the
+    // stacks at five for the whole fight.
     let rotation = vec![
         cast(ICE_LANCE, Some(aura_active(FINGERS_OF_FROST))),
-        cast(FROSTBOLT, None),
+        cast(
+            FROSTBOLT,
+            Some(json!({"not": {"val": stacks_at_least(WINTERS_CHILL, 5)}})),
+        ),
+        cast(FIREBALL, None),
     ];
     let (_, lines) = log(Rules::Forever, rotation, 600.0);
     let gains: Vec<f64> = stack_changes(&lines)
@@ -231,7 +247,7 @@ fn only_frostbolt_frost_blast_and_an_empowered_ice_lance_apply_winters_chill() {
     };
     let mut lance = 0;
     for gain in &gains {
-        let bolt = at(*gain, "Hit for", FROSTBOLT) || at(*gain, "Crit for", FROSTBOLT);
+        let bolt = at(*gain, "Hit for", FROSTBOLT_KNOWN) || at(*gain, "Crit for", FROSTBOLT_KNOWN);
         let empowered_lance = at(*gain, "Completed cast", ICE_LANCE);
         assert!(
             bolt || empowered_lance,

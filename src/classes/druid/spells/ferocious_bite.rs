@@ -1,7 +1,8 @@
 //! Ferocious Bite (31018), from Go sim/druid/ferocious_bite.go: a finisher that rolls the
 //! rank's damage effect and adds damage and attack power per combo point and damage per point
 //! of the energy left after its cost. A landed bite spends that energy and the combo points;
-//! one that does not land refunds its share of the cost.
+//! one that does not land refunds its share of the cost. With Predatory Discipline (hotfix push
+//! 113531, Forever's rules) a landed bite keeps that energy and still deals its damage.
 
 use crate::core::fight::{melee::PhysicalOutcome, Fight, Side, SpellId};
 
@@ -12,6 +13,8 @@ pub(crate) struct FerociousBite {
     pub(crate) damage_per_energy: f64,
     pub(crate) damage_per_combo_point: f64,
     pub(crate) attack_power_per_combo_point: f64,
+    /// Predatory Discipline: a landed bite does not spend the energy left after its cost.
+    pub(crate) keeps_energy: bool,
 }
 
 impl FerociousBite {
@@ -40,7 +43,9 @@ impl FerociousBite {
         fight.deal_damage(spell, result, false);
         if result.landed() {
             let (energy, combo) = fight.spells[spell].energy_metrics.expect("energy cost");
-            fight.spend_energy(excess_energy, energy);
+            if !self.keeps_energy {
+                fight.spend_energy(excess_energy, energy);
+            }
             fight.spend_combo_points(combo);
         } else {
             fight.issue_refund(spell);

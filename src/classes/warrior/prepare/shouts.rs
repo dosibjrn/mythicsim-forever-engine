@@ -62,7 +62,7 @@ fn add_generated_flat_bonus(sim: &mut Sim, aura: AuraId, stat: Stat, base: f64, 
 impl Warrior {
     /// Go `registerBattleShout`.
     pub(super) fn register_battle_shout(&self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().battle_shout.highest();
+        let rank = spell_data().battle_shout.highest_for(sim.rules);
         // A warrior that shouts builds a copy of its own; one that shouts nothing gets the
         // isPlayer=false constructor, whose aura is the party's external copy.
         let casts_own_shout = self.inputs.use_battle_shout;

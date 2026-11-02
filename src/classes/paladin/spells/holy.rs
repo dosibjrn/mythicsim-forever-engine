@@ -31,6 +31,58 @@ pub(crate) fn lights_vigil(fight: &mut Fight<PaladinAgent>, spell: SpellId, rank
     fight.activate_aura(aura);
 }
 
+/// Light's Vigil on an ally (push 113554, the Holy Paladin healer sim): one rank's vigil aura on
+/// the player, who stands for the heal target, and the party heal it triggers.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VigilAlly {
+    pub(crate) aura: AuraRef,
+    /// The party heal's spell.
+    pub(crate) heal: SpellId,
+    pub(crate) average: f64,
+    pub(crate) variance: f64,
+    pub(crate) players: u32,
+}
+
+/// The cast: one vigil per paladin, so a new one replaces any that is up.
+pub(crate) fn swear_vigil(fight: &mut Fight<PaladinAgent>, rank: usize) {
+    for other in 0..fight.agent.vigil_allies.len() {
+        let aura = fight.agent.vigil_allies[other].aura;
+        if fight.aura(aura).active {
+            fight.deactivate_aura(aura);
+        }
+    }
+    let aura = fight.agent.vigil_allies[rank].aura;
+    fight.activate_aura(aura);
+}
+
+/// A Holy Shock heal on the player: a vigil on them is spent, the Holy Shock triggers no
+/// cooldown and heals the player and the rest of their party, each with a roll and a crit of its
+/// own. `healing` and `bonus_healing_taken` are the player's, as the Holy Shock heal's.
+pub(crate) fn vigil_party_heal(
+    fight: &mut Fight<PaladinAgent>,
+    holy_shock: SpellId,
+    healing: crate::core::fight::healing::Healing,
+    bonus_healing_taken: f64,
+) {
+    let Some(vigil) = fight
+        .agent
+        .vigil_allies
+        .iter()
+        .copied()
+        .find(|vigil| fight.aura(vigil.aura).active)
+    else {
+        return;
+    };
+    fight.deactivate_aura(vigil.aura);
+    if let Some((timer, _)) = fight.spells[holy_shock].cd {
+        fight.timers[timer] = crate::core::time::STARTING_CD_TIME;
+    }
+    for _ in 0..vigil.players {
+        let base = fight.effect_roll(vigil.average, vigil.variance);
+        fight.calc_and_deal_healing(vigil.heal, Side::Player, base, healing, bonus_healing_taken);
+    }
+}
+
 /// Light's Vigil's strike: the rolled damage, a magic hit and crit.
 pub(crate) fn vigil_strike(fight: &mut Fight<PaladinAgent>, spell: SpellId, target: Side) {
     let base = fight.roll_damage_effect(spell);

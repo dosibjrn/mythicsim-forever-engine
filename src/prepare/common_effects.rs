@@ -18,6 +18,7 @@ pub(crate) fn common_effects(env: &mut Environment, unrepresented: &mut Vec<Stri
     effects.extend(racial_effects(env, unrepresented));
     effects.extend(battle_shout_effect(env));
     effects.extend(sunder_armor_effect(env, unrepresented));
+    effects.extend(super::buffs::external_expose_armor_effect(env));
     effects.extend(racial_defensive_effects(env));
     effects.extend(item_use_effects(env, unrepresented));
     effects.extend(super::external_cooldowns::external_cooldown_effects(
@@ -104,7 +105,19 @@ fn player_movement_effect(env: &Environment) -> Option<Value> {
             speed_auras.push(a.label.clone());
         }
     }
-    if !moves && speed_auras.is_empty() {
+    // Under Forever's rules a rotation that reaches the Warrior's Charge or Intercept runs
+    // without a move in it, so a speed other than the base one is described too.
+    let unit = env.sim.unit(player);
+    let faster = env.sim.rules == crate::prepare::sim::Rules::Forever
+        && (unit.pseudo_stats.movement_speed_multiplier != 1.0
+            || unit.initial_pseudo_stats.movement_speed_multiplier != 1.0)
+        && {
+            let reached = super::rotation::rotation_spells(&env.sim, player);
+            crate::classes::warrior::prepare::RUN_SPELLS
+                .iter()
+                .any(|id| reached.contains(&i64::from(*id)))
+        };
+    if !moves && !faster && speed_auras.is_empty() {
         return None;
     }
     Some(json!({
@@ -262,6 +275,19 @@ fn racial_defensive_effects(env: &Environment) -> Vec<Value> {
     if let Some(aura) = env.sim.get_aura(player, "Stoneform") {
         effects.push(json!({"kind": "stoneform", "spell_id": spell_id(aura), "aura": env.sim.aura(aura).label,
             "school_damage_taken_multiplier": 0.9, "schools": ["physical"]}));
+    }
+    // core/racials.go Windshaper Skyborne: Skysight's cast activates Elemental Blessing, which
+    // multiplies the movement speed while up.
+    if let Some(aura) = env.sim.get_aura(player, "Elemental Blessing") {
+        for spell in &env.sim.unit(player).spellbook {
+            if env.sim.spell(*spell).related_self_buff == Some(aura) {
+                let (speed, _) = super::racials::skysight_speed_and_duration(env.sim.rules);
+                effects.push(
+                    json!({"kind": "skysight", "spell_id": env.sim.spell(*spell).action_id.spell_id,
+                    "aura": env.sim.aura(aura).label, "speed_multiplier": speed}),
+                );
+            }
+        }
     }
     if let Some(aura) = env.sim.get_aura(player, "Energized") {
         for spell in &env.sim.unit(player).spellbook {

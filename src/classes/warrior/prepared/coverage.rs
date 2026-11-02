@@ -15,6 +15,7 @@ pub(crate) const GATE: ClassGate = ClassGate {
     several_targets: Some(crate::engine::coverage::no_limits),
     tanks_several_targets: true,
     other_target_casts: Some(crate::engine::coverage::no_limits),
+    self_spells: &[],
 };
 
 /// Warrior effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -63,6 +64,11 @@ const EFFECTS: &[&str] = &[
     "warrior_stances",
     "weaponmaster_sword",
     "whirlwind",
+    "mocking_blow",
+    "shield_bash",
+    "victory_rush",
+    "warrior_disarm",
+    "warrior_intercept",
 ];
 
 /// The effect kind whose implementation executes a Warrior spell.
@@ -76,6 +82,11 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "execute" => Some("execute"),
         "hamstring" => Some("hamstring"),
         "pummel" => Some("pummel"),
+        "shield_bash" => Some("shield_bash"),
+        "mocking_blow" => Some("mocking_blow"),
+        "disarm" => Some("warrior_disarm"),
+        "victory_rush" => Some("victory_rush"),
+        "intercept" => Some("warrior_intercept"),
         "berserker_rage" => Some("berserker_rage"),
         "death_wish" => Some("death_wish"),
         "recklessness" => Some("recklessness"),
@@ -127,13 +138,17 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         } => vec![("player", trigger_aura), ("player", aura)],
         Effect::Retaliation { aura, .. }
         | Effect::WarriorCharge { aura, .. }
+        | Effect::WarriorIntercept { aura, .. }
+        | Effect::VictoryRush { aura, .. }
         | Effect::ShieldWall { aura, .. }
         | Effect::ShieldBlock { aura, .. }
         | Effect::LastStand { aura, .. }
         | Effect::SweepingStrikes { aura, .. } => {
             vec![("player", aura)]
         }
-        Effect::ThunderClap { aura, .. } | Effect::DemoralizingShout { aura, .. } => {
+        Effect::ThunderClap { aura, .. }
+        | Effect::DemoralizingShout { aura, .. }
+        | Effect::WarriorDisarm { aura, .. } => {
             vec![("target", aura)]
         }
         Effect::RageOnAvoid { triggers, .. } => triggers

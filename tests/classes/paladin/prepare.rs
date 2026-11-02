@@ -196,6 +196,8 @@ fn a_paladin_without_its_options_is_refused() {
 #[test]
 fn the_justice_battlegear_four_piece_is_refused() {
     let mut value = request_value("retribution");
+    // The talents read in push 113554's tree, which Forever's rules prepare.
+    crate::paladin_113554::forever_request(&mut value);
     let items = value["raid"]["parties"][0]["players"][0]["equipment"]["items"]
         .as_array_mut()
         .unwrap();
@@ -210,6 +212,7 @@ fn the_justice_battlegear_four_piece_is_refused() {
 #[test]
 fn a_paladin_tanking_the_target_is_prepared_with_its_swing() {
     let mut value = request_value("protection");
+    crate::paladin_113554::forever_request(&mut value);
     value["raid"]["tanks"] = serde_json::json!([{"type": "Player", "index": 0}]);
     value["encounter"]["targets"][0]["tankIndex"] = serde_json::json!(0);
     let prepared = forever_engine::prepare_json(&serde_json::to_vec(&value).unwrap(), "x")

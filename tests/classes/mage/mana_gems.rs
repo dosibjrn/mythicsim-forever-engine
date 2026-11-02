@@ -20,7 +20,14 @@ fn arcane(rules: Rules) -> Value {
             .join("fixtures/mage/prepared-v2/arcane-reference.request.json"),
     )
     .unwrap();
-    forever_engine::prepare_json_with(&request, "gems", rules).unwrap()
+    let mut request: Value = serde_json::from_slice(&request).unwrap();
+    if rules == Rules::Forever {
+        // The fixture's talents in client 1.60.1.70707's order, Arcane Focus's points dropped.
+        request["raid"]["parties"][0]["players"][0]["talentsString"] =
+            json!("050205103100301531-305000012-003");
+    }
+    forever_engine::prepare_json_with(&serde_json::to_vec(&request).unwrap(), "gems", rules)
+        .unwrap()
 }
 
 fn item_spell(prepared: &Value, item: i64) -> &Value {
@@ -101,11 +108,19 @@ fn a_gem_blocks_the_rune_for_two_minutes() {
     }
 }
 
-/// The rune first, used once (its own cooldown set past the fight): with the reference's rules
-/// a gem follows at once; with Forever's, not for 2 minutes.
+/// The rune first, used once at 1 second (its own cooldown set past the fight): with the
+/// reference's rules a gem follows as soon as the mana is down; with Forever's, not for 2
+/// minutes. The rune is timed rather than waiting on the mana deficit, so how fast the ranks a
+/// player knows spend mana does not decide which comes first.
 fn rune_first(rules: Rules) -> Vec<(f64, i64)> {
     let mut prepared = arcane(rules);
     set_priority(&mut prepared, DEMONIC_RUNE, 10_000);
+    prepared["player"]["major_cooldowns"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|cooldown| cooldown["action_id"]["item_id"] == DEMONIC_RUNE)
+        .unwrap()["timings_ns"] = json!([1_000_000_000_i64]);
     let spells = prepared["player"]["spells"].as_array_mut().unwrap();
     let rune = spells
         .iter_mut()

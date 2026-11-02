@@ -12,6 +12,7 @@ use crate::contracts::request::Message;
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
 use crate::prepare::export::action_id;
+use crate::prepare::hotfix_113554;
 use crate::prepare::sim::{Duration, Rules, Sim, SpellId, UnitId, MILLISECOND, SECOND};
 use crate::prepare::spell::DefenseType;
 use crate::prepare::spelldata::{Ladder, Spell as Row};
@@ -179,7 +180,7 @@ pub(super) fn effects(talents: &Message, sim: &Sim, unit: UnitId) -> Vec<Value> 
     // talents_frost.go registerWinterChill
     let winters_chill = talents.i32("winters_chill");
     if winters_chill > 0 {
-        let trigger = data.winters_chill_triggered.highest();
+        let trigger = hotfix_113554::row(sim.rules, data.winters_chill_triggered.highest().id);
         let mut effect = json!({
             "kind": "winters_chill", "talent_rank": winters_chill,
             "proc_chance": data.winters_chill.effect_at(2).fraction_at(winters_chill),
@@ -202,9 +203,16 @@ pub(super) fn effects(talents: &Message, sim: &Sim, unit: UnitId) -> Vec<Value> 
     }
     // ice_lance.go
     if talents.bool("ice_lance") {
+        // Hotfix push 113531 raises the Frozen bonus to 300% (the rank's second effect) under
+        // Forever's rules, so a frozen hit deals 4 times an unfrozen one.
+        let id = data.ice_lance.highest().id;
+        let frozen_multiplier = match hotfix_113554::hotfixed(id) {
+            Some(row) if sim.rules == Rules::Forever => 1.0 + row.effect_n(2).percent(),
+            _ => ICE_LANCE_FROZEN_MULTIPLIER,
+        };
         effects.push(json!({
-            "kind": "ice_lance", "spell_id": data.ice_lance.highest().id,
-            "frozen_multiplier": ICE_LANCE_FROZEN_MULTIPLIER,
+            "kind": "ice_lance", "spell_id": id,
+            "frozen_multiplier": frozen_multiplier,
         }));
     }
     // cold_snap.go
@@ -214,8 +222,8 @@ pub(super) fn effects(talents: &Message, sim: &Sim, unit: UnitId) -> Vec<Value> 
     // ice_barrier.go (the fork's patch 187): the shield's absorb, read when it is cast, and the
     // Frost damage both auras attach in Piercing Ice's old shape.
     if talents.bool("ice_barrier") {
-        let rank = data.ice_barrier.highest();
-        let frigid = data.ice_barrier_triggered.by_id(1326891);
+        let rank = hotfix_113554::row(sim.rules, data.ice_barrier.highest().id);
+        let frigid = hotfix_113554::row(sim.rules, data.ice_barrier_triggered.by_id(1326891).id);
         let pct = |row: &Row, misc: i32| {
             row.effect(dbcenums::A_ADD_PCT_MODIFIER, misc)
                 .average(CHARACTER_LEVEL)
@@ -256,7 +264,7 @@ pub(super) fn effects(talents: &Message, sim: &Sim, unit: UnitId) -> Vec<Value> 
     effects.push(json!({"kind": "frostbolt"}));
     // arcane_blast.go and arcane_charge.go: the stacks' spell damage from Intellect is a stat aura.
     if talents.bool("arcane_blast") {
-        let buff = data.arcane_blast_triggered.highest();
+        let buff = hotfix_113554::row(sim.rules, data.arcane_blast_triggered.highest().id);
         effects.push(json!({
             "kind": "arcane_blast", "spell_id": data.arcane_blast.highest().id,
             "aura": "Arcane Blast",

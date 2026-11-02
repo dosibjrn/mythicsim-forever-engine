@@ -39,6 +39,9 @@ pub(crate) struct RighteousFury {
     /// Instrument of Law's first gain each fight is its reset activation, whose threat the
     /// prepared value already holds.
     pub(crate) law_at_reset: bool,
+    /// Push 113554 under Forever's rules: the multiplier on all the paladin's threat while the
+    /// aura holds, 1 otherwise.
+    pub(crate) all_threat: f64,
 }
 
 impl RighteousFury {
@@ -73,12 +76,16 @@ impl RighteousFury {
             stat_bit: stat_bit(effects, fight, aura),
             law,
             law_at_reset: true,
+            all_threat: 1.0,
         })
     }
 
     pub(crate) fn on_gain(&self, fight: &mut Fight<PaladinAgent>) {
         fight.activate_mod(self.threat_mod);
         toggle_stats(fight, self.stat_bit, true);
+        if self.all_threat != 1.0 {
+            fight.player.threat_multiplier *= self.all_threat;
+        }
         if let Some((law, _)) = self.law {
             fight.deactivate_aura(law);
         }
@@ -87,6 +94,9 @@ impl RighteousFury {
     pub(crate) fn on_expire(&self, fight: &mut Fight<PaladinAgent>) {
         fight.deactivate_mod(self.threat_mod);
         toggle_stats(fight, self.stat_bit, false);
+        if self.all_threat != 1.0 {
+            fight.player.threat_multiplier /= self.all_threat;
+        }
         if let Some((law, _)) = self.law {
             fight.activate_aura(law);
         }

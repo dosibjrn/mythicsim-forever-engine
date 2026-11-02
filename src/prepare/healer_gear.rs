@@ -910,23 +910,6 @@ pub(crate) fn export_effects(env: &Environment, unrepresented: &mut Vec<String>)
             "changes": changes,
         }));
     }
-    // Water Shield (408510): three globes, each a crit direct heal spends for 2% of the maximum
-    // mana (408511), once per 3.5 sec. The globes the shaman's taken spell hits spend are not
-    // modelled: the healer takes no spell hits.
-    let water_shield = ActionId::spell(408510);
-    if book
-        .iter()
-        .any(|spell| env.sim.spell(*spell).action_id == water_shield)
-        && env.sim.get_aura(unit, "Water Shield").is_some()
-    {
-        let row = must_find(408510);
-        let globe = must_find(408511);
-        effects.push(json!({
-            "kind": "mana_globes", "spell_id": 408510, "aura": "Water Shield",
-            "mana_fraction": globe.effect_n(1).percent(),
-            "icd_ns": row.icd(), "metrics_action_id": ActionId::spell(408511),
-        }));
-    }
     // Vestments of Faith (8): Epiphany.
     if let (Some(trigger), Some(aura)) = (
         env.sim.get_aura(unit, "Vestments of Faith 8P"),

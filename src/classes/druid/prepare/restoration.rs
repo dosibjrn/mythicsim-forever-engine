@@ -57,8 +57,9 @@ impl Druid {
         if self.tal.naturalist == 0 {
             return;
         }
-        // Forever states the damage bonus against every school (mask 127), not physical only.
-        let multiplier = Ladder::talent(17069, 5)
+        // Forever states the damage bonus against every school (mask 127), not physical only,
+        // and hotfix push 113531 doubles it under Forever's rules (2% a rank).
+        let multiplier = super::talents::naturalist(sim.rules)
             .effect(A_MOD_DAMAGE_PERCENT_DONE, 127)
             .multiplier_at(self.tal.naturalist);
         sim.unit_mut(self.unit).pseudo_stats.damage_dealt_multiplier *= multiplier;

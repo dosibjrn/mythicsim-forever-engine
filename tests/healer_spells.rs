@@ -153,8 +153,10 @@ fn tranquility_heals_the_party_over_its_channel() {
 #[test]
 fn natures_swiftness_makes_the_next_heal_instant() {
     for (name, talents, swiftness, heal) in [
-        ("restoration-druid", RESTORATION_DRUID, 17116, 25297),
-        ("restoration-shaman", RESTORATION_SHAMAN, 16188, 25357),
+        // Healing Touch X (9889) and Healing Wave IX (10396): the ranks below the Ahn'Qiraj 20
+        // books (25297, 25357) that a Forever druid and shaman cast.
+        ("restoration-druid", RESTORATION_DRUID, 17116, 9889),
+        ("restoration-shaman", RESTORATION_SHAMAN, 16188, 10396),
     ] {
         let request = request(
             name,
@@ -187,9 +189,13 @@ fn water_shield_globes_restore_mana_on_crit_heals() {
         &[(408510, inactive(408510)), (10623, None)],
     );
     let prepared = prepared(&request);
-    let globes = effects(&prepared, "mana_globes");
+    // The class effect alone: a healer export carries no second globes effect that could bind
+    // beside it and double the mana.
+    assert!(effects(&prepared, "mana_globes").is_empty());
+    let globes = effects(&prepared, "water_shield");
     assert_eq!(globes.len(), 1);
-    assert_eq!(globes[0]["mana_fraction"], 0.02);
+    assert_eq!(globes[0]["mana_percent"], 2.0);
+    assert_eq!(globes[0]["globes"], 3);
     assert_eq!(globes[0]["icd_ns"], 3_500_000_000_i64);
     let result = simulate(&prepared);
     let mana = result["raidMetrics"]["parties"][0]["players"][0]["resources"]
@@ -207,4 +213,228 @@ fn water_shield_globes_restore_mana_on_crit_heals() {
     assert!(events <= 20.0 * (180.0 / 3.5 + 1.0), "{events} globes");
     assert!(sum(&result, 408510, "casts") >= events / 3.0);
     assert!(gain / events > 100.0, "{} mana a globe", gain / events);
+}
+
+/// The Holy build's talents (16/35/0) and the Discipline build's: Litany of Light 2 of 2 in the
+/// first, Renewed Hope 5 of 5 and Divine Aegis 3 of 3 in the second.
+const HOLY: &str = "00520101133-33505003030121531";
+const POWER_WORD_SHIELD: i64 = 10901;
+const FLASH_HEAL: i64 = 10917;
+// Greater Heal IV and Renew IX, the ranks a Forever priest casts: Greater Heal V (25314) and
+// Renew X (25315) are Ahn'Qiraj 20 book ranks, which Forever's rules leave out.
+const GREATER_HEAL: i64 = 10965;
+const RENEW: i64 = 10929;
+const PENANCE: i64 = 1316995;
+const DIVINE_AEGIS_ABSORB: i64 = 431624;
+const LITANY_OF_LIGHT: i64 = 1317006;
+const DESPERATE_PRAYER: i64 = 19243;
+
+/// The Discipline build with talents spent elsewhere: Soul Warding, Renewed Hope and Divine
+/// Aegis are the 14th, 16th and 17th digits of the Discipline tree.
+fn discipline_without(soul_warding: bool, renewed_hope: bool, divine_aegis: bool) -> String {
+    let mut tree: Vec<char> = DISCIPLINE.chars().collect();
+    for (digit, drop) in [(13, soul_warding), (15, renewed_hope), (16, divine_aegis)] {
+        if drop {
+            tree[digit] = '0';
+        }
+    }
+    tree.into_iter().collect()
+}
+
+/// Divine Aegis (431622) at 3 ranks shields 15% of each critical heal that is not a heal over
+/// time. Its first effect states the percent (5, 10, 15 over the ranks); its absorb aura 431624
+/// is the spell the shielding counts on. The share is taken from the heal before the overheal
+/// share comes off, and the absorb is full.
+#[test]
+fn divine_aegis_shields_a_share_of_a_critical_heal() {
+    let built = request("holy-priest", DISCIPLINE, &[(GREATER_HEAL, None)]);
+    let prepared = prepared(&built);
+    let absorb = &heal(&prepared, GREATER_HEAL)["crit_absorb"];
+    assert_eq!(absorb["share"], 0.15);
+    assert_eq!(absorb["spell_id"], DIVINE_AEGIS_ABSORB);
+    assert!(absorb.get("ticks").is_none());
+    // Penance's bolts are heals of their own; a heal over time and a shield are not.
+    assert_eq!(heal(&prepared, PENANCE)["crit_absorb"]["ticks"], true);
+    assert!(heal(&prepared, RENEW).get("crit_absorb").is_none());
+    assert!(heal(&prepared, POWER_WORD_SHIELD)
+        .get("crit_absorb")
+        .is_none());
+    let result = simulate(&prepared);
+    let crit_healing = sum(&result, GREATER_HEAL, "critHealing");
+    assert!(crit_healing > 0.0);
+    // Greater Heal's overhealing share is the pooled one for a heal on one player.
+    let overheal = 0.0537;
+    let expected = 0.15 * crit_healing / (1.0 - overheal);
+    let shielded = sum(&result, DIVINE_AEGIS_ABSORB, "shielding");
+    assert!(
+        (shielded - expected).abs() < expected * 1e-6,
+        "{shielded} shielded, {expected} from the crits"
+    );
+    // One absorb a crit, no more.
+    assert_eq!(
+        sum(&result, DIVINE_AEGIS_ABSORB, "hits"),
+        sum(&result, GREATER_HEAL, "crits")
+    );
+}
+
+/// A critical tick of a heal over time shields nothing, and a Discipline priest without the
+/// talent has no absorb spell at all.
+#[test]
+fn divine_aegis_leaves_heals_over_time_alone() {
+    let built = request("holy-priest", DISCIPLINE, &[(RENEW, None)]);
+    let result = simulate(&prepared(&built));
+    assert!(sum(&result, RENEW, "critTicks") > 0.0);
+    assert_eq!(sum(&result, DIVINE_AEGIS_ABSORB, "shielding"), 0.0);
+    let built = request(
+        "holy-priest",
+        &discipline_without(false, false, true),
+        &[(GREATER_HEAL, None)],
+    );
+    let prepared = prepared(&built);
+    assert!(heal(&prepared, GREATER_HEAL).get("crit_absorb").is_none());
+    let result = simulate(&prepared);
+    assert_eq!(sum(&result, DIVINE_AEGIS_ABSORB, "shielding"), 0.0);
+}
+
+/// Each of Penance's bolts, the one at the cast and the two ticks, is a heal that can crit and
+/// shield.
+#[test]
+fn divine_aegis_shields_penance_bolts() {
+    let built = request("holy-priest", DISCIPLINE, &[(PENANCE, None)]);
+    let result = simulate(&prepared(&built));
+    let crits = sum(&result, PENANCE, "crits") + sum(&result, PENANCE, "critTicks");
+    assert!(crits > 0.0);
+    assert_eq!(sum(&result, DIVINE_AEGIS_ABSORB, "hits"), crits);
+    let gross = sum(&result, PENANCE, "critHealing") / (1.0 - 0.0537);
+    let shielded = sum(&result, DIVINE_AEGIS_ABSORB, "shielding");
+    assert!((shielded - 0.15 * gross).abs() < gross * 1e-6);
+}
+
+/// Renewed Hope (425280) at 5 ranks: 10% crit on a Flash Heal, Heal, Greater Heal or Penance cast
+/// on a member with Weakened Soul (6788, 15 sec), which the heal cuts by 5 sec. A Discipline
+/// priest that shields and heals crits more often than the same priest without the talent, and
+/// one that never shields does not. Soul Warding is left out so the shield has its 4 sec
+/// cooldown and the rotation reaches the heal.
+#[test]
+fn renewed_hope_raises_the_crit_of_heals_on_shielded_members() {
+    let rate = |talents: &str, spells: &[(i64, Option<Value>)]| -> f64 {
+        let mut built = request("holy-priest", talents, spells);
+        built["simOptions"]["iterations"] = json!(100);
+        let result = simulate(&prepared(&built));
+        let crits = sum(&result, FLASH_HEAL, "crits");
+        crits / (crits + sum(&result, FLASH_HEAL, "hits"))
+    };
+    let shielding: &[(i64, Option<Value>)] = &[(POWER_WORD_SHIELD, None), (FLASH_HEAL, None)];
+    let with = rate(&discipline_without(true, false, false), shielding);
+    let without = rate(&discipline_without(true, true, false), shielding);
+    assert!(with > without + 0.03, "{with} with, {without} without");
+    let bare: &[(i64, Option<Value>)] = &[(FLASH_HEAL, None)];
+    let with = rate(&discipline_without(true, false, false), bare);
+    let without = rate(&discipline_without(true, true, false), bare);
+    assert!(
+        (with - without).abs() < 0.02,
+        "{with} with, {without} without"
+    );
+}
+
+/// The export states Renewed Hope's row: the crit and the cut over the ranks (2 to 10 points, 1
+/// to 5 sec), Weakened Soul's duration, and the heals and shields it reads.
+#[test]
+fn renewed_hope_exports_its_row() {
+    let built = request("holy-priest", DISCIPLINE, &[(FLASH_HEAL, None)]);
+    let prepared = prepared(&built);
+    let talents = effects(&prepared, "priest_heal_talents");
+    assert_eq!(talents.len(), 1);
+    let hope = &talents[0]["renewed_hope"];
+    assert_eq!(hope["crit_percent"], 10.0);
+    assert_eq!(hope["cut_ns"], 5_000_000_000_i64);
+    assert_eq!(hope["duration_ns"], 15_000_000_000_i64);
+    let heals = hope["heal_spell_ids"].as_array().unwrap();
+    assert!(heals.contains(&json!(FLASH_HEAL)) && heals.contains(&json!(PENANCE)));
+    assert!(!heals.contains(&json!(RENEW)));
+    assert!(hope["shield_spell_ids"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(POWER_WORD_SHIELD)));
+    assert!(talents[0]["litany_of_light"].is_null());
+}
+
+/// Litany of Light (1317006) at 2 ranks returns 10% of a heal's base mana cost when the heal
+/// before it was a different spell. A priest that casts one heal over and over gets it once, on
+/// the first; one that alternates Renew and Flash Heal gets it on every change.
+#[test]
+fn litany_of_light_returns_mana_when_the_heal_changes() {
+    let litany = |result: &Value| -> (f64, f64) {
+        let mana = result["raidMetrics"]["parties"][0]["players"][0]["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|resource| resource["id"]["spellId"] == LITANY_OF_LIGHT)
+            .map_or((0.0, 0.0), |mana| {
+                (
+                    mana["events"].as_f64().unwrap(),
+                    mana["gain"].as_f64().unwrap(),
+                )
+            });
+        mana
+    };
+    let prepared_same = prepared(&request("holy-priest", HOLY, &[(GREATER_HEAL, None)]));
+    let talents = effects(&prepared_same, "priest_heal_talents");
+    assert_eq!(talents[0]["litany_of_light"]["share"], 0.1);
+    assert!(talents[0]["renewed_hope"].is_null());
+    let (events, _) = litany(&simulate(&prepared_same));
+    assert_eq!(events, 20.0, "once a fight");
+    let alternating = request(
+        "holy-priest",
+        HOLY,
+        &[(RENEW, inactive(RENEW)), (FLASH_HEAL, None)],
+    );
+    let result = simulate(&prepared(&alternating));
+    let (events, gain) = litany(&result);
+    let renews = sum(&result, RENEW, "casts");
+    // A change into Renew and a change out of it, less those the fight's end cuts, and the
+    // first cast of each fight.
+    assert!(
+        events >= 2.0 * renews - 20.0 && events <= 2.0 * renews + 20.0,
+        "{events} returns, {renews} Renews"
+    );
+    // 10% of a base cost of a few hundred mana.
+    let each = gain / events;
+    assert!(each > 5.0 && each < 100.0, "{each} mana a return");
+}
+
+/// Desperate Prayer (19243) is a self heal at no cost on a ten minute cooldown: the rotation
+/// that names it casts it once in a fight, and a rotation that does not never does.
+#[test]
+fn desperate_prayer_heals_once_on_its_cooldown() {
+    let built = request(
+        "holy-priest",
+        DISCIPLINE,
+        &[(DESPERATE_PRAYER, None), (FLASH_HEAL, None)],
+    );
+    let with_prayer = prepared(&built);
+    let prayer = heal(&with_prayer, DESPERATE_PRAYER);
+    assert!(prayer["direct"]["average"].as_f64().unwrap() > 1000.0);
+    assert_eq!(prayer["targets"], 1);
+    let result = simulate(&with_prayer);
+    assert_eq!(sum(&result, DESPERATE_PRAYER, "casts"), 20.0);
+    assert!(sum(&result, DESPERATE_PRAYER, "healing") > 0.0);
+    let built = request("holy-priest", DISCIPLINE, &[(FLASH_HEAL, None)]);
+    let result = simulate(&prepared(&built));
+    assert_eq!(sum(&result, DESPERATE_PRAYER, "casts"), 0.0);
+}
+
+/// Go's rules have none of this: no absorb spell, no talent effect, no Desperate Prayer.
+#[test]
+fn the_reference_rules_leave_the_healer_priest_alone() {
+    let built = request("holy-priest", DISCIPLINE, &[(GREATER_HEAL, None)]);
+    let value =
+        prepare_json_with(built.to_string().as_bytes(), "rust", Rules::GoReference).unwrap();
+    let text = value.to_string();
+    assert!(!text.contains("crit_absorb"));
+    assert!(!text.contains("priest_heal_talents"));
+    assert!(effects(&value, "priest_heal_talents").is_empty());
+    for spell in [DIVINE_AEGIS_ABSORB, DESPERATE_PRAYER] {
+        assert!(!text.contains(&format!("\"spell_id\":{spell}")), "{spell}");
+    }
 }

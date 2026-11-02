@@ -167,6 +167,7 @@ impl Warrior {
             return;
         }
         let data = spell_data();
+        let forever = sim.rules == Rules::Forever;
         let buff = data.flurry_triggered.highest();
         let aura = sim.register_aura(
             unit,
@@ -187,7 +188,12 @@ impl Warrior {
                 proc_mask: ProcMask::MELEE,
                 trigger_immediately: true,
                 callback: CallbackMask::ON_SPELL_HIT_DEALT,
-                outcome: HitOutcome::LANDED,
+                // Under Forever's rules a missed, dodged or parried white swing spends a charge too.
+                outcome: if forever {
+                    HitOutcome::EMPTY
+                } else {
+                    HitOutcome::LANDED
+                },
                 ..ProcTrigger::default()
             },
         );

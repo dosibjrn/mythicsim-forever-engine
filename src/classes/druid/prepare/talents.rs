@@ -1,6 +1,44 @@
 //! The Druid talents proto (proto.DruidTalents) read as plain numbers.
 
+use std::sync::OnceLock;
+
 use crate::contracts::request::Message;
+use crate::prepare::sim::Rules;
+use crate::prepare::spelldata::Ladder;
+use crate::prepare::talent_layout::Extras;
+
+/// Genesis (1223081): 1% periodic damage and healing a rank in the frozen data, 2% under
+/// Forever's rules since hotfix push 113531 (both effects' curves double).
+pub(super) fn genesis(rules: Rules) -> &'static Ladder {
+    static REFERENCE: OnceLock<Ladder> = OnceLock::new();
+    static HOTFIX: OnceLock<Ladder> = OnceLock::new();
+    match rules {
+        Rules::GoReference => REFERENCE.get_or_init(|| Ladder::talent(1223081, 5)),
+        Rules::Forever => HOTFIX.get_or_init(|| {
+            let doubled = vec![2.0, 4.0, 6.0, 8.0, 10.0];
+            Ladder::talent_with_curve(1223081, &[doubled.clone(), doubled])
+        }),
+    }
+}
+
+/// Naturalist (17069): its damage done bonus (the second curve) is 1% a rank in the frozen data
+/// and 2% under Forever's rules since hotfix push 113531; the cast time curve stays.
+pub(super) fn naturalist(rules: Rules) -> &'static Ladder {
+    static REFERENCE: OnceLock<Ladder> = OnceLock::new();
+    static HOTFIX: OnceLock<Ladder> = OnceLock::new();
+    match rules {
+        Rules::GoReference => REFERENCE.get_or_init(|| Ladder::talent(17069, 5)),
+        Rules::Forever => HOTFIX.get_or_init(|| {
+            Ladder::talent_with_curve(
+                17069,
+                &[
+                    vec![-100.0, -200.0, -300.0, -400.0, -500.0],
+                    vec![2.0, 4.0, 6.0, 8.0, 10.0],
+                ],
+            )
+        }),
+    }
+}
 
 /// The talents the Druid package reads, by the proto's field names. The ones Go leaves
 /// unmodelled (Improved Entangling Roots, Overgrowth, Brutal Impact, Feral Charge, Nature's
@@ -45,10 +83,18 @@ pub(crate) struct Talents {
     pub natural_shapeshifter: i32,
     pub reflection: i32,
     pub living_spirit: i32,
+    /// Hotfix push 113531's new talents, which the pinned proto has no field for: Forever's
+    /// rules read them into the layout's extras, and the reference never sets them. Bloom
+    /// (1328621) is read the same way: a Restoration druid's heals over time heal their player
+    /// for the druid's Spirit when they end (`spells::bloom`).
+    pub lacerate: bool,
+    pub predatory_discipline: bool,
+    pub bloom: bool,
 }
 
 impl Talents {
-    pub(crate) fn from_message(m: &Message) -> Talents {
+    pub(crate) fn from_message(m: &Message, extras: &Extras) -> Talents {
+        let extra = |field: &str| extras.get(field).is_some_and(|&points| points == 1);
         Talents {
             improved_wrath: m.i32("improved_wrath"),
             genesis: m.i32("genesis"),
@@ -88,6 +134,9 @@ impl Talents {
             natural_shapeshifter: m.i32("natural_shapeshifter"),
             reflection: m.i32("reflection"),
             living_spirit: m.i32("living_spirit"),
+            lacerate: extra("lacerate"),
+            predatory_discipline: extra("predatory_discipline"),
+            bloom: extra("bloom"),
         }
     }
 }

@@ -74,7 +74,7 @@ impl Rogue {
 
     /// Go `registerBackstabSpell`.
     pub(super) fn register_backstab_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().backstab.highest();
+        let rank = spell_data().backstab.highest_for(sim.rules);
         let weapon_damage = rank.effect_n(2).average(CHARACTER_LEVEL) / 100.0;
         let spell = sim.register_spell(
             unit,

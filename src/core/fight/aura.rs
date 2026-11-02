@@ -64,6 +64,9 @@ pub(crate) enum AuraBehavior<K> {
     JudgementOfWisdom {
         chance: f64,
         mana: f64,
+        /// The judgement's action, which names the attacker's metrics at its first restore.
+        id: ActionId,
+        /// The player's metrics, shared by every Judgement of Wisdom.
         metrics: usize,
         delay: i64,
     },
@@ -87,6 +90,15 @@ pub(crate) enum AuraBehavior<K> {
     /// Go `AttachHastePseudoStats`: melee, ranged and cast speed multipliers, each attached only
     /// when it changes speed, in that order.
     MultiplySpeeds {
+        melee: f64,
+        ranged: f64,
+        cast: f64,
+    },
+    /// Go `MultiplyMovementSpeed` of the player while up, as Skysight's Elemental Blessing.
+    MultiplyMovementSpeed(f64),
+    /// An item or enchant speed aura an item swap gains and expires: as `MultiplySpeeds`, but
+    /// the reset's gain is already in the exported speeds.
+    SwapSpeed {
         melee: f64,
         ranged: f64,
         cast: f64,
@@ -193,8 +205,6 @@ pub(crate) enum AuraBehavior<K> {
     ShieldOnHeal(usize),
     /// A healer's instant cast aura, by its position in `Fight::instant_casts`.
     InstantCast(usize),
-    /// A self buff of globes the player's crit heals spend: [`super::healer_gear::ManaGlobes`].
-    ManaGlobes(usize),
     /// The aura of a dot or channel.
     Dot(DotId),
     /// Go movement.go's Movement aura, which marks its unit moving.
@@ -815,6 +825,7 @@ impl<A: Agent> Fight<A> {
             AuraBehavior::Dot(dot) => self.dot_on_gain(dot),
             AuraBehavior::RevelationBuff => self.revelation_buff_changed(true),
             AuraBehavior::Movement => self.movement_changed(aura.side, true),
+            AuraBehavior::MultiplyMovementSpeed(speed) => self.multiply_movement_speed(speed),
             AuraBehavior::Eureka => self.eureka_gain(),
             AuraBehavior::MultiplyAttackAndCastSpeed { attack, cast } => {
                 self.multiply_attack_speed(attack);
@@ -825,6 +836,15 @@ impl<A: Agent> Fight<A> {
                 ranged,
                 cast,
             } => self.multiply_speeds(melee, ranged, cast, false),
+            AuraBehavior::SwapSpeed {
+                melee,
+                ranged,
+                cast,
+            } => {
+                if !self.resetting_auras {
+                    self.multiply_speeds(melee, ranged, cast, false);
+                }
+            }
             AuraBehavior::MultiplySelfDamageTaken {
                 multiplier,
                 schools,
@@ -864,7 +884,6 @@ impl<A: Agent> Fight<A> {
             }
             AuraBehavior::StackingCdWindow(index) => self.stacking_cd_gained(index),
             AuraBehavior::InstantCast(index) => self.instant_cast_gained(index),
-            AuraBehavior::ManaGlobes(_) => self.mana_globes_gained(aura),
             AuraBehavior::ArmorIgnoreFactor(delta) => {
                 if !self.resetting_auras {
                     self.config.melee.armor_ignore_factor += delta;
@@ -891,12 +910,18 @@ impl<A: Agent> Fight<A> {
             }
             AuraBehavior::RevelationBuff => self.revelation_buff_changed(false),
             AuraBehavior::Movement => self.movement_changed(aura.side, false),
+            AuraBehavior::MultiplyMovementSpeed(speed) => self.multiply_movement_speed(1.0 / speed),
             AuraBehavior::Eureka => self.eureka_expire(),
             AuraBehavior::MultiplyAttackAndCastSpeed { attack, cast } => {
                 self.multiply_attack_speed(1.0 / attack);
                 self.multiply_cast_speed(1.0 / cast);
             }
             AuraBehavior::MultiplySpeeds {
+                melee,
+                ranged,
+                cast,
+            }
+            | AuraBehavior::SwapSpeed {
                 melee,
                 ranged,
                 cast,
@@ -1081,7 +1106,12 @@ impl<A: Agent> Fight<A> {
             }
             // Deactivation edits the list, so scan again from the start, as Go does.
             match expired {
-                Some(index) => self.deactivate_aura(AuraRef { side, index }),
+                Some(index) => {
+                    let aura = AuraRef { side, index };
+                    self.expiring_by_duration = Some(aura);
+                    self.deactivate_aura(aura);
+                    self.expiring_by_duration = None;
+                }
                 None => {
                     self.trackers[side.index()].min_expires = min;
                     return min;
@@ -1158,6 +1188,13 @@ impl<A: Agent> Fight<A> {
             self.timers[timer] = self.now + duration;
             self.changed(super::reads::TIMERS);
         }
+    }
+
+    /// Whether `aura` is fading now because its duration ran out, as against a deactivation
+    /// from outside: a dot recast, a consume, the iteration's end. Only true inside the aura's
+    /// own expiry callbacks.
+    pub(crate) fn fading_by_duration(&self, aura: AuraRef) -> bool {
+        self.expiring_by_duration == Some(aura)
     }
 
     /// Go `auraTracker.expireAll`: deactivate the active auras, first listed first.
@@ -1335,7 +1372,6 @@ impl<A: Agent> Fight<A> {
                     Some(result),
                 ),
                 AuraBehavior::ShieldOnHeal(index) => self.shield_on_heal(index, spell, result),
-                AuraBehavior::ManaGlobes(index) => self.mana_globes_on_heal(aura, index, result),
                 AuraBehavior::ManaOnCast(index) => {
                     self.mana_on_crit_callback(aura, index, spell, result)
                 }
@@ -1609,11 +1645,13 @@ impl<A: Agent> Fight<A> {
         }
         self.set_stacks(proc_aura, charges);
         // Go MaybeReplaceMHSwing: a queued Heroic Strike replaces the extra swing too.
-        let mut extra = extra.expect("a Windfury Totem a spell triggers has an extra attack");
+        let extra = extra.expect("a Windfury Totem a spell triggers has an extra attack");
+        let mut attack = extra;
         if self.config.melee.replace_main_hand_swing {
-            extra = A::replace_mh_swing(self, extra);
+            attack = A::replace_mh_swing(self, extra);
+            self.note_extra_attack_strike(extra, attack);
         }
-        self.cast(extra, result.target);
+        self.cast(attack, result.target);
     }
 
     /// Go `AttachProcTriggerCallback` for Crusader: a weapon proc on landed hits that rolls the
@@ -1698,9 +1736,22 @@ impl<A: Agent> Fight<A> {
             self.timers[timer] = self.now + duration;
         }
         // A Go literal trigger without TriggerImmediately: the handler casts the hit a delay
-        // later, on the unit the trigger's hit landed on.
-        if let (Some(delay), Some(spell)) = (self.damage_procs[proc].delay, spell) {
-            self.schedule_delayed_proc_at(self.now + delay, aura, spell, *result);
+        // later, on the unit the trigger's hit landed on, or for the target's swing on its
+        // attacker.
+        if let Some(delay) = self.damage_procs[proc].delay {
+            match spell {
+                Some(spell) => {
+                    self.schedule_delayed_proc_at(self.now + delay, aura, spell, *result)
+                }
+                None => {
+                    let target = self.damage_proc_target(None, result);
+                    self.schedule(
+                        self.now + delay,
+                        super::PRIORITY_DOT,
+                        super::Action::StruckDamageProc { proc, target },
+                    );
+                }
+            }
             return;
         }
         let target = self.damage_proc_target(spell, result);
@@ -1796,7 +1847,9 @@ impl<A: Agent> Fight<A> {
     /// The delayed half of a proc trigger.
     pub(crate) fn delayed_proc(&mut self, aura: AuraRef, spell: SpellId, result: SpellResult) {
         match self.aura(aura).behavior.clone() {
-            AuraBehavior::JudgementOfWisdom { mana, metrics, .. } => {
+            AuraBehavior::JudgementOfWisdom {
+                mana, metrics, id, ..
+            } => {
                 // Go: melee and ranged hits always pay; spells must land.
                 if !self.spells[spell].melee_or_ranged_proc
                     && result.outcome & super::OUTCOME_LANDED == 0
@@ -1811,18 +1864,21 @@ impl<A: Agent> Fight<A> {
                     return;
                 }
                 let metrics = match caster {
-                    Side::Pet(_) => {
-                        let id = self.resources[metrics].id.clone();
-                        match self.active_pet(caster).jow_metrics {
-                            Some(existing) => existing,
-                            None => {
-                                let created = self.new_mana_metrics_of(caster, id);
-                                self.active_pet_mut(caster).jow_metrics = Some(created);
-                                created
-                            }
+                    Side::Pet(_) => match self.active_pet(caster).jow_metrics {
+                        Some(existing) => existing,
+                        None => {
+                            let created = self.new_mana_metrics_of(caster, id);
+                            self.active_pet_mut(caster).jow_metrics = Some(created);
+                            created
                         }
+                    },
+                    _ => {
+                        if !self.jow_metrics_named {
+                            self.resources[metrics].id = id;
+                            self.jow_metrics_named = true;
+                        }
+                        metrics
                     }
-                    _ => metrics,
                 };
                 self.add_mana(mana, metrics);
             }

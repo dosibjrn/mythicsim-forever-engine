@@ -1,66 +1,76 @@
 {
   "actions": {
     "{\"spellId\":1238215}": {
-      "casts": 1640.0,
-      "crit_ticks": 11908.0,
+      "casts": 1800.0,
+      "crit_ticks": 11417.0,
       "crits": 0.0,
-      "healing": 5888329.130800941,
+      "healing": 6706997.140971194,
       "hits": 0.0,
-      "overhealing": 1919055.0256574906,
+      "overhealing": 2185865.6818492673,
       "shielding": 0.0,
-      "ticks": 48492.0
+      "ticks": 51583.0
+    },
+    "{\"spellId\":1328621}": {
+      "casts": 0.0,
+      "crit_ticks": 0.0,
+      "crits": 0.0,
+      "healing": 207523.58999999962,
+      "hits": 860.0,
+      "overhealing": 11776.410000000009,
+      "shielding": 0.0,
+      "ticks": 0.0
     },
     "{\"spellId\":18562}": {
-      "casts": 2859.0,
+      "casts": 2794.0,
       "crit_ticks": 0.0,
-      "crits": 514.0,
-      "healing": 5698390.010745679,
-      "hits": 2345.0,
-      "overhealing": 92656.748142206,
+      "crits": 438.0,
+      "healing": 5480324.939809677,
+      "hits": 2356.0,
+      "overhealing": 89110.97463105182,
       "shielding": 0.0,
       "ticks": 0.0
-    },
-    "{\"spellId\":25297}": {
-      "casts": 905.0,
-      "crit_ticks": 0.0,
-      "crits": 240.0,
-      "healing": 2809536.957436968,
-      "hits": 665.0,
-      "overhealing": 161003.28091888744,
-      "shielding": 0.0,
-      "ticks": 0.0
-    },
-    "{\"spellId\":25299}": {
-      "casts": 3306.0,
-      "crit_ticks": 1381.0,
-      "crits": 0.0,
-      "healing": 2411707.88084139,
-      "hits": 0.0,
-      "overhealing": 520816.293333452,
-      "shielding": 0.0,
-      "ticks": 6607.0
     },
     "{\"spellId\":6778}": {
-      "casts": 3001.0,
+      "casts": 2495.0,
       "crit_ticks": 0.0,
-      "crits": 469.0,
-      "healing": 3460376.5439088284,
-      "hits": 2532.0,
-      "overhealing": 198300.28407682249,
+      "crits": 407.0,
+      "healing": 2886349.8234059853,
+      "hits": 2088.0,
+      "overhealing": 165405.1178141305,
       "shielding": 0.0,
       "ticks": 0.0
+    },
+    "{\"spellId\":9841}": {
+      "casts": 3472.0,
+      "crit_ticks": 1397.0,
+      "crits": 0.0,
+      "healing": 2258101.5740635805,
+      "hits": 0.0,
+      "overhealing": 487644.503348361,
+      "shielding": 0.0,
+      "ticks": 6817.0
     },
     "{\"spellId\":9858}": {
       "casts": 300.0,
-      "crit_ticks": 1864.0,
-      "crits": 228.0,
-      "healing": 1057043.448880243,
-      "hits": 72.0,
-      "overhealing": 132650.92239746428,
+      "crit_ticks": 1820.0,
+      "crits": 242.0,
+      "healing": 1088944.6095458656,
+      "hits": 58.0,
+      "overhealing": 136654.27570553074,
       "shielding": 0.0,
-      "ticks": 836.0
+      "ticks": 880.0
+    },
+    "{\"spellId\":9889}": {
+      "casts": 953.0,
+      "crit_ticks": 0.0,
+      "crits": 183.0,
+      "healing": 2442089.2620215677,
+      "hits": 770.0,
+      "overhealing": 139946.3290352813,
+      "shielding": 0.0,
+      "ticks": 0.0
     }
   },
-  "hps": 394.40578060488997,
-  "seconds_oom": 127.77800803776998
+  "hps": 389.6643976977633,
+  "seconds_oom": 117.73165694881999
 }

@@ -1,0 +1,19 @@
+name: Label pull requests
+
+# pull_request_target gives fork PRs a token that can write labels. It runs
+# this file from the base branch, and nothing here checks out PR code.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0

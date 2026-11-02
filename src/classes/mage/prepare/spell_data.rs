@@ -23,6 +23,9 @@ pub(super) struct SpellData {
     pub arcane_missiles_triggered: Ladder,
     pub arcane_power: Ladder,
     pub arcane_resilience: Ladder,
+    /// Arcane Resilience after hotfix push 113531 (Forever's rules): three ranks, 25/50/75% of
+    /// Intellect as armor (the store's curve for 28574).
+    pub arcane_resilience_113531: Ladder,
     pub arcane_subtlety: Ladder,
     pub arctic_reach: Ladder,
     pub blast_wave: Ladder,
@@ -38,6 +41,9 @@ pub(super) struct SpellData {
     pub conjure_mana_jade_triggered: Ladder,
     pub conjure_mana_ruby_triggered: Ladder,
     pub critical_mass: Ladder,
+    /// Critical Mass in client 1.60.1.70707 (Forever's rules): three ranks (TraitNodeEntry
+    /// 130513), curve 83083's 2/4/6.
+    pub critical_mass_70707: Ladder,
     pub elemental_precision: Ladder,
     pub evocation: Ladder,
     pub fingers_of_frost: Ladder,
@@ -73,6 +79,9 @@ pub(super) struct SpellData {
     pub improved_scorch: Ladder,
     pub improved_scorch_triggered: Ladder,
     pub incineration: Ladder,
+    /// Incineration in client 1.60.1.70707 (Forever's rules): five ranks (TraitNodeEntry
+    /// 130525), curve 83095's 2/4/6/8/10.
+    pub incineration_70707: Ladder,
     pub mage_armor: Ladder,
     pub magic_absorption: Ladder,
     pub master_of_elements: Ladder,
@@ -112,6 +121,7 @@ pub(super) fn spell_data() -> &'static SpellData {
             ]),
             arcane_power: Ladder::ranked(&[12042]),
             arcane_resilience: Ladder::talent(28574, 2),
+            arcane_resilience_113531: Ladder::talent_with_curve(28574, &[vec![25.0, 50.0, 75.0]]),
             arcane_subtlety: Ladder::talent(11210, 2),
             arctic_reach: Ladder::talent(16757, 2),
             blast_wave: Ladder::ranked(&[11113, 13018, 13019, 13020, 13021]),
@@ -129,6 +139,7 @@ pub(super) fn spell_data() -> &'static SpellData {
             conjure_mana_jade_triggered: Ladder::ranked(&[10052]),
             conjure_mana_ruby_triggered: Ladder::ranked(&[10058]),
             critical_mass: Ladder::talent(11115, 5),
+            critical_mass_70707: Ladder::talent_with_curve(11115, &[vec![2.0, 4.0, 6.0]]),
             elemental_precision: Ladder::talent(29438, 3),
             evocation: Ladder::ranked(&[12051]),
             fingers_of_frost: Ladder::talent(400647, 2),
@@ -170,6 +181,7 @@ pub(super) fn spell_data() -> &'static SpellData {
             improved_scorch: Ladder::talent(11095, 3),
             improved_scorch_triggered: Ladder::ranked(&[22959]),
             incineration: Ladder::talent(18459, 3),
+            incineration_70707: Ladder::talent_with_curve(18459, &[vec![2.0, 4.0, 6.0, 8.0, 10.0]]),
             mage_armor: Ladder::ranked(&[6117, 22782, 22783]),
             magic_absorption: Ladder::talent(29441, 2),
             master_of_elements: Ladder::talent(29074, 3),

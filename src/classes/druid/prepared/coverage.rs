@@ -16,6 +16,7 @@ pub(crate) const GATE: ClassGate = ClassGate {
     several_targets: Some(several_targets),
     tanks_several_targets: true,
     other_target_casts: Some(other_target_casts),
+    self_spells: &[],
 };
 
 /// Druid effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -28,6 +29,7 @@ const EFFECTS: &[&str] = &[
     "cat_form",
     "demoralizing_roar",
     "druid_forms",
+    "druid_thorns",
     "eclipse",
     "enrage",
     "faerie_fire",
@@ -56,12 +58,14 @@ const EFFECTS: &[&str] = &[
     "wrath",
     // MythicSim's healer sims (Rust only, checked against the client rows, not Go).
     "heals",
+    "bloom",
 ];
 
 /// The effect kind whose implementation executes a Druid spell.
 fn spell_capability(spell: &Spell) -> Option<&'static str> {
     match spell.class_spell.as_deref()? {
         "heal" | "swiftmend" => Some("heals"),
+        "bloom" => Some("bloom"),
         "moonkin_form" => Some("moonkin_form"),
         "starfire" if spell.damage_effect.is_some() => Some("starfire"),
         "wrath" if spell.damage_effect.is_some() => Some("wrath"),
@@ -84,6 +88,7 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "swipe" => Some("swipe"),
         "hurricane" => Some("hurricane"),
         "frenzied_regeneration" => Some("frenzied_regeneration"),
+        "thorns" => Some("druid_thorns"),
         _ => None,
     }
 }
@@ -108,6 +113,7 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         | Effect::BearForm { aura, .. }
         | Effect::Enrage { aura, .. }
         | Effect::Barkskin { aura, .. }
+        | Effect::DruidThorns { aura, .. }
         | Effect::FrenziedRegeneration { aura, .. } => vec![("player", aura)],
         Effect::NaturalReaction { trigger_aura, .. } => vec![("player", trigger_aura)],
         Effect::NaturesBounty { aura, .. } | Effect::UnendingLifeRefund { aura, .. } => {

@@ -49,6 +49,14 @@ pub(crate) struct StrengthOfEarth {
     pub(crate) duration: i64,
 }
 
+/// The Restoration shaman's Mana Tide Totem (Forever's rules): its aura and duration, and the
+/// Healing Stream Totem spells, by spellbook position, that share its water totem slot.
+#[derive(Clone, Debug)]
+pub(crate) struct ManaTide {
+    pub(crate) totem: StrengthOfEarth,
+    pub(crate) streams: Vec<crate::core::fight::SpellId>,
+}
+
 /// Go `registerStrengthOfEarthTotemSpell` ApplyEffects: the previous earth totem's aura goes,
 /// the slot records the new one's expiry and its aura activates. The only earth totem in
 /// scope is this one, so the previous aura is its own. Returns the new expiry.

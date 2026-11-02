@@ -18,7 +18,7 @@ use super::super::external_cooldowns;
 use super::super::periodic_action::PeriodicActionOptions;
 use super::super::resolve_proc::{chance, proc_trigger};
 use super::super::sim::{
-    AuraConfig, AuraId, BuildPhase, EffectId, Sim, UnitId, NEVER_EXPIRES, SECOND,
+    AuraConfig, AuraId, BuildPhase, EffectId, Rules, Sim, UnitId, NEVER_EXPIRES, SECOND,
 };
 use super::super::spell::GCD_DEFAULT;
 use super::super::spelldata::must_find;
@@ -455,6 +455,10 @@ pub(crate) fn drive_leader_of_the_pack(
     unit: UnitId,
     _party: &Message,
 ) -> Result<(), Refusal> {
+    if env.sim.rules == Rules::Forever {
+        raid_crit_buff(env, unit, &LEADER_OF_THE_PACK);
+        return Ok(());
+    }
     narrowed_crit_buff(
         env,
         unit,
@@ -471,8 +475,35 @@ pub(crate) fn drive_moonkin_aura(
     unit: UnitId,
     _party: &Message,
 ) -> Result<(), Refusal> {
+    if env.sim.rules == Rules::Forever {
+        raid_crit_buff(env, unit, &MOONKIN_AURA);
+        return Ok(());
+    }
     narrowed_crit_buff(env, unit, &MOONKIN_AURA, dbcenums::A_MOD_SPELL_CRIT_CHANCE);
     Ok(())
+}
+
+/// Hotfix push 113531 under Forever's rules: Moonkin Aura (SpellEffect 701335) and Leader of the
+/// Pack (702727) are both 3% of every kind of crit, A_MOD_CRIT_PCT, where the frozen rows give
+/// spell crit and weapon crit. Two identical auras do not add up: both bid in one category,
+/// `RaidCrit`, and one counts, as wowsims/forever #769 rules. A party with both still gets 3%
+/// physical and 3% spell crit; a party with one now gets both.
+fn raid_crit_buff(env: &mut Environment, unit: UnitId, meta: &super::Meta) {
+    let meta = super::Meta {
+        category: "RaidCrit",
+        single_aura: true,
+        ..*meta
+    };
+    let mut options = meta.options(0);
+    options.read_as.push((
+        dbcenums::A_MOD_WEAPON_CRIT_PERCENT,
+        dbcenums::A_MOD_CRIT_PCT,
+    ));
+    options
+        .read_as
+        .push((dbcenums::A_MOD_SPELL_CRIT_CHANCE, dbcenums::A_MOD_CRIT_PCT));
+    let aura = meta.buff(&mut env.sim, unit, false, 0, options);
+    env.sim.make_permanent(aura);
 }
 
 /// Go `narrowedCritBuff`: the buff with its row's A_MOD_CRIT_PCT read as one kind of crit.

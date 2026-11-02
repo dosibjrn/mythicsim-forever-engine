@@ -135,6 +135,8 @@ fn differences(golden: &Golden, prepared: &Value) -> Vec<String> {
     out
 }
 
+/// Every case prepared with the reference's rules (`Rules::GoReference`), where Rust departs
+/// from it on purpose (hotfix push 113531's tree and rows), gives what the Go exporter wrote.
 #[test]
 fn every_druid_case_prepares_as_go_does() {
     let mut cases = 0;
@@ -150,7 +152,8 @@ fn every_druid_case_prepares_as_go_does() {
         let golden: Golden = serde_json::from_slice(&fs::read(entry.path()).unwrap()).unwrap();
         assert_eq!(golden.case, case);
         let request = fs::read(directory().join(format!("{case}.request.json"))).unwrap();
-        match forever_engine::prepare_json(&request, case) {
+        let rules = forever_engine::Rules::GoReference;
+        match forever_engine::prepare_json_with(&request, case, rules) {
             Ok(prepared) => {
                 let diffs = differences(&golden, &prepared);
                 if !diffs.is_empty() {
@@ -178,6 +181,8 @@ fn a_restoration_druid_is_prepared_with_its_heals() {
     let player = &mut value["raid"]["parties"][0]["players"][0];
     player.as_object_mut().unwrap().remove("feralCatDruid");
     player["restorationDruid"] = serde_json::json!({"options": {"classOptions": {}}});
+    // The fixture's talents in hotfix push 113531's order, which Forever's rules read.
+    player["talentsString"] = serde_json::json!("050022-55000032023012125001-055");
     let prepared = forever_engine::prepare_json(&serde_json::to_vec(&value).unwrap(), "x")
         .expect("a Restoration druid is prepared");
     let heals = prepared["effects"]
@@ -197,6 +202,9 @@ fn a_tanking_bear_is_prepared_with_the_target_swing() {
     let request = fs::read(directory().join("bear.request.json")).unwrap();
     let mut value: Value = serde_json::from_slice(&request).unwrap();
     value["raid"]["tanks"] = serde_json::json!([{"type": "Player", "index": 0}]);
+    // The fixture's talents in hotfix push 113531's order, which Forever's rules read.
+    value["raid"]["parties"][0]["players"][0]["talentsString"] =
+        serde_json::json!("-5500033212310212551-055");
     value["encounter"]["targets"][0]["tankIndex"] = serde_json::json!(0);
     let prepared = forever_engine::prepare_json(&serde_json::to_vec(&value).unwrap(), "x")
         .expect("a tanking bear is prepared");

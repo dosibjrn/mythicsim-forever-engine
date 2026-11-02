@@ -3,7 +3,7 @@
 
 use crate::{
     contracts::prepared_v2::ConsecrationRank,
-    core::fight::{melee::PhysicalOutcome, DotId, Fight, Outcome, Side, SpellId},
+    core::fight::{melee::PhysicalOutcome, DotId, Fight, Outcome, Side, SpellId, OUTCOME_LANDED},
 };
 
 use super::super::agent::PaladinAgent;
@@ -27,6 +27,59 @@ pub(crate) fn holy_strike(
         Outcome::Table(PhysicalOutcome::MeleeSpecialHitAndCrit { count: true }),
     );
     fight.deal_damage(spell, result, false);
+    if fight.agent.shieldsworn && result.outcome & OUTCOME_LANDED != 0 {
+        shieldsworn(fight, result.target);
+    }
+}
+
+/// Shieldsworn (1328544, push 113554, Forever's rules; upstream #772's holy_shield.go and
+/// talents_protection.go): a Holy Strike that lands strikes with the shield. The active Holy
+/// Shield deals its damage without spending a charge, and Shield Specialization rolls its mana
+/// chance without its cooldown. Upstream hears only a hit that lands (its TODO asks whether a
+/// miss triggers them too).
+fn shieldsworn(fight: &mut Fight<PaladinAgent>, target: Side) {
+    for rank in 0..fight.agent.holy_shield.len() {
+        let shield = std::rc::Rc::clone(&fight.agent.holy_shield[rank]);
+        if fight.aura(shield.aura).active {
+            fight.cast(shield.proc_spell, target);
+        }
+    }
+    if let Some(specialization) = fight.agent.shield_specialization.clone() {
+        if specialization.chance != 1.0
+            && fight.random("Shield Specialization - Shieldsworn") > specialization.chance
+        {
+            return;
+        }
+        let amount = fight.player.powers.max_mana * specialization.mana_share;
+        fight.add_mana(amount, specialization.metrics);
+    }
+}
+
+/// Hammer of the Righteous: `weapon_dps` times the main hand's damage a second (Go
+/// `Weapon.DPS`), on the melee special table, calculated and dealt at each target in turn.
+pub(crate) fn hammer_of_the_righteous(
+    fight: &mut Fight<PaladinAgent>,
+    spell: SpellId,
+    target: Side,
+    weapon_dps: f64,
+    max_targets: usize,
+) {
+    let weapon = &fight.autos.mh.weapon;
+    let dps = if weapon.swing_speed == 0.0 {
+        0.0
+    } else {
+        (weapon.base_damage_min + weapon.base_damage_max) / 2.0 / weapon.swing_speed
+    };
+    let base = weapon_dps * dps;
+    for side in fight.cleave_targets(target, max_targets) {
+        let result = fight.calc_damage_with(
+            spell,
+            side,
+            base,
+            Outcome::Table(PhysicalOutcome::MeleeSpecialHitAndCrit { count: true }),
+        );
+        fight.deal_damage(spell, result, false);
+    }
 }
 
 /// Hammer of Wrath: the rolled damage on the ranged table, dealt when the hammer lands.

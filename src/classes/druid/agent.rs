@@ -14,6 +14,7 @@ use super::{
     spells::{
         bear::{self, Barkskin, Enrage, FrenziedRegeneration, Lacerate, Maul},
         bear_form::{self, BearForm},
+        bloom::Bloom,
         cat_builders::{Builder, CatBuilders},
         cat_form::{self, CatForm},
         faerie_fire::FaerieFire,
@@ -67,6 +68,8 @@ pub(crate) enum DruidSpell {
     /// The spell each Hurricane period casts.
     HurricaneTick,
     Barkskin,
+    /// thorns.go: the cast turns the druid's own Thorns on.
+    Thorns,
     FrenziedRegeneration,
     /// A survival cooldown Go never casts without a health threshold: only its cast checks run.
     Survival,
@@ -136,6 +139,8 @@ pub(crate) struct DruidAgent {
     /// The Restoration druid's heals, and the ranks Swiftmend consumes, Rejuvenation first.
     heals: Option<Rc<HealBook>>,
     swiftmend_hots: Vec<usize>,
+    /// Bloom (hotfix push 113531, Forever's rules): the heal a heal over time's end makes.
+    bloom: Option<Rc<Bloom>>,
     /// With an item swap, each set's weapon in caster form and paw, Main then Swap1.
     form_weapons: Option<[FormWeapons; 2]>,
     moonkin_form: Option<AuraRef>,
@@ -180,6 +185,8 @@ pub(crate) struct DruidAgent {
     natural_reaction: Option<NaturalReaction>,
     pub(crate) frenzied_regeneration: Option<AuraRef>,
     barkskin: Option<Barkskin>,
+    /// The druid's own Thorns aura.
+    thorns: Option<AuraRef>,
     frenzied_regeneration_spell: Option<FrenziedRegeneration>,
     natures_bounty: Option<Rc<NaturesBounty>>,
     unending_life: Option<Rc<UnendingLifeRefund>>,
@@ -190,6 +197,7 @@ impl Default for DruidAgent {
         DruidAgent {
             heals: None,
             swiftmend_hots: Vec::new(),
+            bloom: None,
             moonkin_form: None,
             moonfire_dot: None,
             insect_swarm_debuff: None,
@@ -227,6 +235,7 @@ impl Default for DruidAgent {
             natural_reaction: None,
             frenzied_regeneration: None,
             barkskin: None,
+            thorns: None,
             frenzied_regeneration_spell: None,
             natures_bounty: None,
             unending_life: None,
@@ -341,6 +350,9 @@ impl DruidAgent {
                 }
                 Effect::Barkskin { spell_id, .. } if *spell_id == id.spell_id && id.tag == 0 => {
                     return Some(DruidSpell::Barkskin)
+                }
+                Effect::DruidThorns { spell_id, .. } if *spell_id == id.spell_id && id.tag == 0 => {
+                    return Some(DruidSpell::Thorns)
                 }
                 _ => {}
             }
@@ -466,6 +478,16 @@ impl DruidAgent {
                         .flat_map(|ids| ids.iter().rev().filter_map(rank_of))
                         .collect();
                     fight.agent.heals = Some(Rc::new(book));
+                }
+                Effect::Bloom { spell_id, hots } => {
+                    let spirit = prepared
+                        .player
+                        .stats
+                        .get("Spirit")
+                        .copied()
+                        .ok_or("prepared stats lack Spirit")?;
+                    let bound = Bloom::bind(&fight, *spell_id, spirit, hots)?;
+                    fight.agent.bloom = Some(Rc::new(bound));
                 }
                 Effect::DruidForms {
                     starting_form,
@@ -705,12 +727,14 @@ impl DruidAgent {
                     damage_per_energy,
                     damage_per_combo_point,
                     attack_power_per_combo_point,
+                    keeps_energy,
                     ..
                 } => {
                     fight.agent.ferocious_bite = Some(FerociousBite {
                         damage_per_energy: *damage_per_energy,
                         damage_per_combo_point: *damage_per_combo_point,
                         attack_power_per_combo_point: *attack_power_per_combo_point,
+                        keeps_energy: *keeps_energy,
                     });
                 }
                 Effect::ShiftingPower { spell, energy } => {
@@ -933,6 +957,9 @@ impl DruidAgent {
                     )?;
                     fight.agent.unending_life = Some(Rc::new(bound));
                 }
+                Effect::DruidThorns { aura, .. } => {
+                    fight.agent.thorns = Some(fight.player_aura(aura)?);
+                }
                 Effect::Barkskin { aura, .. } => {
                     let stat_bit = stat_bit(aura).ok_or("Barkskin is not a stat aura")?;
                     fight.agent.barkskin = Some(Barkskin {
@@ -1115,6 +1142,10 @@ impl Agent for DruidAgent {
                 let rank = book
                     .rank_of(spell)
                     .expect("a heal is one of the bound ranks");
+                // A heal over time cast again leaves the one running to end on its player.
+                if let Some(bloom) = fight.agent.bloom.clone() {
+                    bloom.on_recast(fight, &book, rank);
+                }
                 book.cast(fight, rank);
             }
             DruidSpell::Swiftmend => {
@@ -1201,6 +1232,10 @@ impl Agent for DruidAgent {
                 .barkskin
                 .expect("Barkskin is bound")
                 .apply(fight),
+            DruidSpell::Thorns => {
+                let aura = fight.agent.thorns.expect("Thorns is bound");
+                fight.activate_aura(aura);
+            }
             DruidSpell::FrenziedRegeneration => fight
                 .agent
                 .frenzied_regeneration_spell
@@ -1384,6 +1419,11 @@ impl Agent for DruidAgent {
     }
 
     fn on_dot_expire(fight: &mut Fight<Self>, dot: DotId, behavior: DruidSpell) {
+        if behavior == DruidSpell::Heal {
+            if let Some(bloom) = fight.agent.bloom.clone() {
+                bloom.on_dot_expire(fight, dot);
+            }
+        }
         if behavior == DruidSpell::InsectSwarm {
             let side = fight.dots[dot].side;
             insect_swarm::on_dot_expire(fight, fight.agent.insect_swarm_debuff, side);

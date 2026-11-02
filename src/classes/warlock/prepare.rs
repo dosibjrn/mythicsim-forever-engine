@@ -301,6 +301,33 @@ impl PrepAgent for Warlock {
         sim.unit_mut(unit).pseudo_stats.self_healing_multiplier = 1.0;
     }
 
+    /// Under Forever's rules, The Black Book's use: the demon's aura and the damage done
+    /// multiplier its row states for every school.
+    fn class_item_use_effect(
+        &self,
+        env: &Environment,
+        _spell: SpellId,
+        item: i32,
+    ) -> Option<serde_json::Value> {
+        if item != 19337 || env.sim.rules != crate::prepare::sim::Rules::Forever {
+            return None;
+        }
+        let row = crate::prepare::spelldata::must_find(items::BLACK_BOOK_BUFF);
+        let multiplier: f64 = row
+            .effects
+            .iter()
+            .filter(|effect| {
+                effect.aura == crate::prepare::dbcenums::A_MOD_DAMAGE_PERCENT_DONE
+                    && effect.misc == 127
+            })
+            .map(|effect| 1.0 + effect.base_points / 100.0)
+            .product();
+        Some(serde_json::json!({
+            "kind": "black_book", "item_id": item, "aura": items::BLACK_BOOK_DEMON_AURA,
+            "damage_multiplier": multiplier,
+        }))
+    }
+
     /// The warlock package's `core.NewItemEffect` calls.
     fn apply_item_effect(&mut self, sim: &mut Sim, unit: UnitId, item: i32) -> bool {
         match item {

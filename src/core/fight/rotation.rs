@@ -218,6 +218,16 @@ pub(crate) struct Compilation {
     pub(crate) sequences: Vec<(Rc<str>, usize)>,
 }
 
+impl Compilation {
+    /// Whether a Move sits anywhere in the rotation: the priority list, a group instance or a
+    /// schedule's inner action. A prepull move does not count.
+    pub(crate) fn has_move(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item.action, Act::Move(_)))
+    }
+}
+
 /// A prepull action: a cast, or Go `APLActionActivateAura`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum PrepullAct {
@@ -3342,9 +3352,11 @@ impl<A: Agent> Fight<A> {
             self.player_log("No available actions!");
         }
         if self.player.rotation_timer <= self.now {
-            // A moving unit does not wait for its GCD.
+            // A moving unit does not wait for its GCD. Forever's rule (README, Rust-only
+            // mechanics): neither does a rotation with a move, so a walk timed to a swing timer
+            // starts when its condition turns true, as moving needs no GCD.
             let mut next = self.now + self.config.reaction;
-            if !self.player.moving {
+            if !self.player.moving && !self.rotation_with_moves_looks_through_gcd {
                 next = next.max(self.player.gcd);
             }
             self.wait_until(next);

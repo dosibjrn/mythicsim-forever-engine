@@ -27,15 +27,91 @@ use crate::prepare::agent::{fill_talents, ClassSpellName, PrepAgent};
 use crate::prepare::attack::AutoAttackOptions;
 use crate::prepare::energy::EnergyBarOptions;
 use crate::prepare::rage::RageBarOptions;
-use crate::prepare::sim::{AuraId, PowerBar, Sim, SpellId, UnitId};
+use crate::prepare::sim::{AuraId, PowerBar, Rules, Sim, SpellId, UnitId};
 use crate::prepare::spell::SpellConfig;
 use crate::prepare::stats::Stat;
+use crate::prepare::talent_layout::{self, new_talent, talent, LayoutTalent};
 use crate::prepare::Refusal;
 
 use talents::Talents;
 
 /// Go druid.TalentTreeSizes.
 const TALENT_TREE_SIZES: [usize; 3] = [16, 20, 16];
+
+/// Hotfix push 113531's Druid tree, which only Forever's rules read: each tree's talents in the
+/// client's order (row, then column), with upstream's proto field names (wowsims/forever #769).
+/// Balance keeps the Go reference's order.
+const FOREVER_BALANCE: &[LayoutTalent] = &[
+    talent("improved_wrath", "Improved Wrath", 5),
+    talent("genesis", "Genesis", 5),
+    talent("moonglow", "Moonglow", 3),
+    talent("improved_moonfire", "Improved Moonfire", 2),
+    talent("natures_majesty", "Nature's Majesty", 2),
+    talent("natures_reach", "Nature's Reach", 2),
+    talent("improved_entangling_roots", "Improved Entangling Roots", 3),
+    talent("natures_splendor", "Nature's Splendor", 1),
+    talent("insect_swarm", "Insect Swarm", 1),
+    talent("vengeance", "Vengeance", 5),
+    talent("improved_starfire", "Improved Starfire", 5),
+    talent("overgrowth", "Overgrowth", 2),
+    talent("natures_grace", "Nature's Grace", 1),
+    talent("eclipse", "Eclipse", 3),
+    talent("moonfury", "Moonfury", 5),
+    talent("moonkin_form", "Moonkin Form", 1),
+];
+
+/// Berserk (417141) and Improved Shifting Power (1322670) are gone. Furor (17056) takes Heart of
+/// the Wild's square in the first row; Predatory Strikes (16972) moves to the fourth row's first
+/// column, beside the new Lacerate (1328617, after Savage Fury) and Predatory Discipline
+/// (1328613); Rend and Tear (1223246) and Natural Reaction (417051) swap columns in the sixth
+/// row; Primal Bite (407995, after Leader of the Pack) and Shifting Power (1322605, after
+/// Predatory Discipline) close the tree in the seventh.
+const FOREVER_FERAL_COMBAT: &[LayoutTalent] = &[
+    talent("ferocity", "Ferocity", 5),
+    talent("furor", "Furor", 5),
+    talent("feral_swiftness", "Feral Swiftness", 2),
+    talent("feral_instinct", "Feral Instinct", 3),
+    talent("brutal_impact", "Brutal Impact", 2),
+    talent("thick_hide", "Thick Hide", 3),
+    talent("shredding_attacks", "Shredding Attacks", 3),
+    talent("savage_fury", "Savage Fury", 2),
+    talent("feral_charge", "Feral Charge", 1),
+    talent("sharpened_claws", "Sharpened Claws", 2),
+    talent("predatory_strikes", "Predatory Strikes", 3),
+    new_talent("lacerate", "Lacerate", 1),
+    new_talent("predatory_discipline", "Predatory Discipline", 1),
+    talent("blood_frenzy", "Blood Frenzy", 2),
+    talent("leader_of_the_pack", "Leader of the Pack", 1),
+    talent("natural_instinct", "Natural Instinct", 2),
+    talent("rend_and_tear", "Rend and Tear", 5),
+    talent("natural_reaction", "Natural Reaction", 5),
+    talent("primal_bite", "Primal Bite", 1),
+    talent("shifting_power", "Shifting Power", 1),
+];
+
+/// Gift of the Earthmother (414673) is gone and Bloom (1328621) takes its square. Heart of the
+/// Wild (17003) takes Furor's square, and Reflection (17106) and Subtlety (17118) swap.
+const FOREVER_RESTORATION: &[LayoutTalent] = &[
+    talent("natures_focus", "Nature's Focus", 5),
+    talent("heart_of_the_wild", "Heart of the Wild", 5),
+    talent("naturalist", "Naturalist", 5),
+    talent("reflection", "Reflection", 3),
+    talent("natural_shapeshifter", "Natural Shapeshifter", 3),
+    talent("subtlety", "Subtlety", 3),
+    talent("gift_of_nature", "Gift of Nature", 5),
+    new_talent("bloom", "Bloom", 1),
+    talent("tranquil_spirit", "Tranquil Spirit", 5),
+    talent("improved_rejuvenation", "Improved Rejuvenation", 3),
+    talent("swiftmend", "Swiftmend", 1),
+    talent("natures_swiftness", "Nature's Swiftness", 1),
+    talent("living_spirit", "Living Spirit", 3),
+    talent("improved_tranquility", "Improved Tranquility", 2),
+    talent("improved_regrowth", "Improved Regrowth", 5),
+    talent("wild_growth", "Wild Growth", 1),
+];
+
+pub(crate) const FOREVER_TREES: [&[LayoutTalent]; 3] =
+    [FOREVER_BALANCE, FOREVER_FERAL_COMBAT, FOREVER_RESTORATION];
 
 /// Which of Go's three registered Druid specs the player is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +149,10 @@ static CLASS_SPELLS: &[ClassSpellName] = &[
     ClassSpellName {
         mask: masks::SWIFTMEND,
         name: "swiftmend",
+    },
+    ClassSpellName {
+        mask: masks::BLOOM,
+        name: "bloom",
     },
     ClassSpellName {
         mask: masks::ENTANGLING_ROOTS,
@@ -340,13 +420,19 @@ pub(crate) fn new_druid(
         }
     }
 
-    let talents = fill_talents(
-        "proto.DruidTalents",
-        player.str("talents_string"),
-        TALENT_TREE_SIZES,
-    )
+    let talents_string = player.str("talents_string");
+    let (talents, extras) = match sim.rules {
+        Rules::Forever => talent_layout::fill(
+            "proto.DruidTalents",
+            "druid",
+            talents_string,
+            &FOREVER_TREES,
+        ),
+        Rules::GoReference => fill_talents("proto.DruidTalents", talents_string, TALENT_TREE_SIZES)
+            .map(|talents| (talents, talent_layout::Extras::new())),
+    }
     .map_err(|err| Refusal::new("talents", err))?;
-    let tal = Talents::from_message(&talents);
+    let tal = Talents::from_message(&talents, &extras);
 
     // druid.New.
     sim.enable_mana_bar(unit);
@@ -579,6 +665,7 @@ impl PrepAgent for Druid {
             Spec::FeralBear => self.register_feral_tank_spells(sim),
             Spec::Restoration => {
                 self.register_heals(sim);
+                self.register_bloom(sim);
                 self.register_natures_swiftness(sim);
             }
         }

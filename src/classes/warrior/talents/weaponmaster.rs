@@ -34,6 +34,7 @@ pub(crate) fn on_hit<A: Agent>(
     let mut attack = params.extra_attack;
     if fight.config.melee.replace_main_hand_swing {
         attack = A::replace_mh_swing(fight, attack);
+        fight.note_extra_attack_strike(params.extra_attack, attack);
     }
     fight.cast(attack, result.target);
 }

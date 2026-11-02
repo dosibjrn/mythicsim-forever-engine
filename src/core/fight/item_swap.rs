@@ -95,6 +95,12 @@ struct Variants {
     sulfuras: Option<[Vec<Option<f64>>; 2]>,
     /// Thunderfury's chances, likewise.
     thunderfury: Option<[Vec<Option<f64>>; 2]>,
+    /// The stacking on-use trinkets whose proc manager the swap rebuilds, as Badge of the
+    /// Swarmguard's rate for the main hand's speed, by their position.
+    stacking_cds: Vec<(usize, [Vec<Option<f64>>; 2])>,
+    /// The armor debuff procs whose weapon proc manager the swap rebuilds, as a swap onto Dark
+    /// Iron Sunderer, by their position.
+    armor_debuff_procs: Vec<(usize, [Vec<Option<f64>>; 2])>,
     /// The crit the player takes under either set, which a hit on the player reads.
     reduced_crit_taken: Option<[f64; 2]>,
     /// Damage procs whose effect roll reads the weapon in the hand (the party's Flametongue
@@ -173,6 +179,7 @@ fn mod_kind(kind: &str) -> Result<ModKind, BuildError> {
     match kind {
         "damage_done_pct" => Ok(ModKind::DamageDonePercent),
         "bonus_crit_percent" => Ok(ModKind::BonusCritPercent),
+        "threat_multiplier_pct" => Ok(ModKind::ThreatMultiplierPercent),
         other => Err(format!("an item swap spell modifier of kind {other}")),
     }
 }
@@ -428,6 +435,62 @@ impl<A: Agent> Fight<A> {
                 variants.thunderfury = Some([main, swapped]);
             }
         }
+        // The chances `bind` gives a stacking trinket: the manager's own, else its flat chance
+        // on each spell it hears.
+        let stacking_cds = |effects: &[Effect]| -> Vec<Vec<Option<f64>>> {
+            effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    Effect::StackingCdOnUse {
+                        chances: Some(manager),
+                        ..
+                    } => Some(super::chances_by_spell(manager, spells)),
+                    Effect::StackingCdOnUse {
+                        trigger_spells,
+                        proc_chance,
+                        ..
+                    } => {
+                        let mut chances = vec![None; spells];
+                        for &spell in trigger_spells {
+                            if let Some(slot) = chances.get_mut(spell) {
+                                *slot = Some(*proc_chance);
+                            }
+                        }
+                        Some(chances)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        for (index, (main, swapped)) in stacking_cds(effects)
+            .into_iter()
+            .zip(stacking_cds(&worn))
+            .enumerate()
+        {
+            if main != swapped {
+                variants.stacking_cds.push((index, [main, swapped]));
+            }
+        }
+        let armor_debuff_procs = |effects: &[Effect]| -> Vec<Vec<Option<f64>>> {
+            effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    Effect::ArmorDebuffProc { chances, .. } => {
+                        Some(super::chances_by_spell(chances, spells))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        for (index, (main, swapped)) in armor_debuff_procs(effects)
+            .into_iter()
+            .zip(armor_debuff_procs(&worn))
+            .enumerate()
+        {
+            if main != swapped {
+                variants.armor_debuff_procs.push((index, [main, swapped]));
+            }
+        }
         self.item_swap.as_mut().expect("bound").variants = variants;
     }
 
@@ -655,6 +718,12 @@ impl<A: Agent> Fight<A> {
             (variants.reduced_crit_taken, self.self_target.as_mut())
         {
             target.reduced_crit_taken_percent = by_set[index];
+        }
+        for (proc, by_set) in variants.stacking_cds {
+            self.stacking_cds[proc].chances = by_set[index].clone();
+        }
+        for (proc, by_set) in variants.armor_debuff_procs {
+            self.armor_debuff_procs[proc].chances = by_set[index].clone();
         }
         for (proc, by_set) in variants.damage_procs {
             let (trigger_spells, chances) = by_set[index].clone();

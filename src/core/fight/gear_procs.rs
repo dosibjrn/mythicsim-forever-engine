@@ -34,7 +34,8 @@ pub(crate) struct EnergyProc {
 /// each stack count.
 #[derive(Clone, Debug)]
 pub(crate) struct ArmorDebuffProc {
-    chances: Vec<Option<f64>>,
+    /// Each spell's chance, which an item swap rebuilds for the weapons in the hands.
+    pub(crate) chances: Vec<Option<f64>>,
     rng_label: String,
     aura: AuraRef,
     armor_by_stacks: Vec<f64>,

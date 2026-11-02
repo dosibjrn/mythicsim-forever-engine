@@ -14,7 +14,8 @@ pub(crate) const GATE: ClassGate = ClassGate {
     limits,
     several_targets: Some(several_targets),
     tanks_several_targets: false,
-    other_target_casts: None,
+    other_target_casts: Some(other_target_casts),
+    self_spells: &["adrenaline_rush", "blade_flurry", "cold_blood", "vanish"],
 };
 
 /// Rogue effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -182,4 +183,25 @@ fn limits(prepared: &PreparedV2, reachable: &[&Spell]) -> Vec<String> {
 /// Flurry's extra hit on the next target runs as in Go.
 fn several_targets(_prepared: &PreparedV2, reachable: &[&Spell]) -> Vec<String> {
     crate::engine::coverage::spells_reaching_other_targets(reachable, &[])
+}
+
+/// A cast aimed at another target lands its hit, its dot (Rupture, Garrote, Deadly Poison) and
+/// its debuff (Hemorrhage, Wound Poison) there as in Go, with combo points on the rogue. Expose
+/// Armor's armor and Kidney Shot's stun stay on the first target, so those are refused.
+fn other_target_casts(_prepared: &PreparedV2, spells: &[&Spell]) -> Vec<String> {
+    spells
+        .iter()
+        .filter(|spell| {
+            matches!(
+                spell.class_spell.as_deref(),
+                Some("expose_armor" | "kidney_shot")
+            )
+        })
+        .map(|spell| {
+            format!(
+                "{} at a target past the first lands on the first target only",
+                spell.action_id.clone().unwrap_or_default()
+            )
+        })
+        .collect()
 }

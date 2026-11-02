@@ -6,6 +6,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::{fs, path::Path};
 
+#[path = "support/paladin_113554.rs"]
+mod paladin_113554;
+
 #[derive(Deserialize)]
 struct Manifest {
     cases: Vec<Case>,
@@ -193,6 +196,24 @@ fn the_ui_default_fields_prepare_as_without_them() {
             .find(|case| case.id == id)
             .expect("a fixture case");
         let mut request: Value = serde_json::from_slice(&request_bytes(case)).unwrap();
+        // A paladin's talents read in push 113554's tree, which Forever's rules prepare.
+        paladin_113554::forever_request(&mut request);
+        if id == "frost-reference" {
+            // The fixture's talents in client 1.60.1.70707's order, which Forever's rules read:
+            // Arcane Focus's points on Improved Channeling, which takes its square.
+            request["raid"]["parties"][0]["players"][0]["talentsString"] =
+                "050205103-3-053500000101301251".into();
+        }
+        // The Druid fixtures' talents in hotfix push 113531's order, which Forever's rules read.
+        let druid_talents = match id {
+            "feral-druid-faerie-fire-armor" => Some("050022-55000032023012125001-055"),
+            "feral-bear-druid-defensives" => Some("-5500033212310212551-055"),
+            _ => None,
+        };
+        if let Some(talents) = druid_talents {
+            request["raid"]["parties"][0]["players"][0]["talentsString"] = talents.into();
+        }
+        let base = serde_json::to_vec(&request).unwrap();
         request["raid"]["numActiveParties"] = 5.into();
         let tanks = request["raid"]["tanks"]
             .as_array()
@@ -206,8 +227,8 @@ fn the_ui_default_fields_prepare_as_without_them() {
         if player["rotation"]["type"] == "TypeAPL" {
             player["rotation"]["type"] = "TypeAuto".into();
         }
-        let without = forever_engine::prepare_json(&request_bytes(case), id)
-            .unwrap_or_else(|err| panic!("{id}: {err}"));
+        let without =
+            forever_engine::prepare_json(&base, id).unwrap_or_else(|err| panic!("{id}: {err}"));
         let mut with = forever_engine::prepare_json(&serde_json::to_vec(&request).unwrap(), id)
             .unwrap_or_else(|err| panic!("{id} with the UI's fields: {err}"));
         with["request_sha256"] = without["request_sha256"].clone();

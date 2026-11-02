@@ -54,7 +54,21 @@ pub(super) fn damage_effect(sim: &Sim, spell: SpellId) -> Option<Value> {
     if action.spell_id == 0 || action.tag != 0 {
         return None;
     }
-    let row = damage_rows().get(&action.spell_id)?;
+    let row = match damage_rows().get(&action.spell_id) {
+        Some(row) => *row,
+        // chastise.go, under Forever's rules (Go's exporter leaves the cast unknown): every
+        // rank rolls its own row.
+        None if sim.rules == crate::prepare::sim::Rules::Forever => {
+            let mut found = None;
+            spell_data().chastise.each(|_, row| {
+                if row.id == action.spell_id {
+                    found = Some(row);
+                }
+            });
+            found?
+        }
+        None => return None,
+    };
     let effect = row.damage_effect();
     if effect.is_nil() {
         return None;
@@ -311,6 +325,7 @@ pub(super) fn effects(priest: &Priest, env: &Environment, notes: &mut Vec<String
     // MythicSim's healer sims (Rust only): the healer's heals.
     if priest.healer {
         effects.push(crate::prepare::heals::heals_effect(env, &priest.heals));
+        effects.extend(priest.heal_talents(&env.sim));
     }
 
     // mind_blast.go: a direct hit on the rank's own row.

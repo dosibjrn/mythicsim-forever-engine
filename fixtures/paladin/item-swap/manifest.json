@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "source": "A production Shockadin request (Holy/Retribution, Manual Crowd Pummeler opener, sim 3da15ee0) with Brutality Blade in its Swap1 set, the character renamed, and the live Shockadin board's talents (05025210221021--0523330110130033, no One-Handed Weapon Specialization) since hotfix push 113554 refuses the original string.",
+  "note": "Rust prepares it under Rules::Forever; the test compares the seal's hits after the swap with the same character wearing Brutality Blade from the pull.",
+  "cases": [
+    {
+      "id": "shockadin-mcp-to-one-hander",
+      "description": "Manual Crowd Pummeler at the pull, swapped for Brutality Blade once its haste fades: Seal of Righteousness's hit takes the one-hander's hand multiplier, speed and spell power share (0.10 a point at rank 8, against the two-hander's 0.12)."
+    }
+  ]
+}

@@ -7,9 +7,11 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+use super::book_ranks;
 use super::store::must_find;
 use super::{nil, nil_effect, Effect, Spell};
 use crate::data::spells as rows;
+use crate::prepare::sim::Rules;
 
 /// The kept ranks of each talent ladder, by spell id and rank count.
 type TalentRanks = HashMap<(i32, i32), Vec<&'static Spell>>;
@@ -80,6 +82,14 @@ impl Ladder {
         Ladder { ranks }
     }
 
+    /// A ladder of a trait-tree talent over a curve stated by the caller instead of the imported
+    /// data's: a client build after the frozen data that changed the talent's rank count. The
+    /// ranks are the curve rows' length. Not cached; the caller builds it once and keeps it.
+    pub(crate) fn talent_with_curve(spell_id: i32, curve: &[Vec<f64>]) -> Ladder {
+        let max_ranks = curve.first().map_or(0, |row| row.len() as i32);
+        Ladder::keep(talent_ranks(must_find(spell_id), curve, max_ranks))
+    }
+
     /// A ladder over rank copies, kept for the process.
     fn keep(copies: Vec<Spell>) -> Ladder {
         Ladder {
@@ -101,6 +111,20 @@ impl Ladder {
 
     pub(crate) fn highest(&self) -> &'static Spell {
         match self.ranks.last() {
+            Some(rank) => rank,
+            None => nil(),
+        }
+    }
+
+    /// The highest rank a player knows under these rules: under Forever's, a rank taught by an
+    /// Ahn'Qiraj 20 book is not known (see [`super::book_ranks`]).
+    pub(crate) fn highest_for(&self, rules: Rules) -> &'static Spell {
+        match self
+            .ranks
+            .iter()
+            .rev()
+            .find(|spell| rules != Rules::Forever || !book_ranks::is_book_rank(spell.id))
+        {
             Some(rank) => rank,
             None => nil(),
         }

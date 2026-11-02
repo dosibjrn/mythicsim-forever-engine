@@ -328,6 +328,8 @@ fn prepared_forever(name: &str) -> Value {
         .join(format!("fixtures/mage/prepared-v2/{name}.request.json"));
     let mut request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     request["simOptions"]["iterations"] = json!(20);
+    // A paladin's talents read in push 113554's tree, which Forever's rules prepare.
+    crate::paladin_113554::forever_request(&mut request);
     forever_engine::prepare_json_with(
         request.to_string().as_bytes(),
         name,
@@ -364,4 +366,109 @@ fn a_retribution_swap_with_seal_of_light_prepares_in_rust() {
     let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(prepared_coverage(&prepared), Vec::<String>::new());
     first_fight_log(value);
+}
+
+/// A Shockadin request (fixtures/paladin/item-swap) prepared in Rust under Forever's rules.
+fn paladin_swap_forever(request: &Value) -> Value {
+    forever_engine::prepare_json_with(
+        request.to_string().as_bytes(),
+        "rust",
+        forever_engine::Rules::Forever,
+    )
+    .unwrap()
+}
+
+/// Seal of Righteousness rank 8's (25713) non-critical hits in a fight log, by time in seconds.
+fn righteousness_hits(log: &str) -> Vec<(f64, String)> {
+    log.lines()
+        .filter(|line| line.contains("{SpellID: 25713} Hit for") && !line.contains("Resist"))
+        .map(|line| {
+            let time = line[1..line.find(']').unwrap()].parse().unwrap();
+            let amount = line.split("Hit for ").nth(1).unwrap();
+            (time, amount.split(' ').next().unwrap().to_string())
+        })
+        .collect()
+}
+
+/// The seal's rank holds only the per-hit value of a hundredth of a second of swing (the dummy
+/// aura of 20293, 1786 plus its per-level gain); the hit (25713) is computed as it lands, from the
+/// weapon in the hand: its speed, 0.85 or 1.2 for its hand, and its spell power share (client
+/// 70707's $<1h> or $<2h>). So once a Shockadin's Manual Crowd Pummeler opener swaps back to a
+/// one-hander, the seal hits as it does with the one-hander worn from the pull, not with the
+/// Pummeler's two-hand share (0.12 a point of spell power against 0.10).
+#[test]
+fn seal_of_righteousness_hits_with_the_swapped_one_hander() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/paladin/item-swap/shockadin-mcp-to-one-hander.request.json");
+    let request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let value = paladin_swap_forever(&request);
+    let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(prepared_coverage(&prepared), Vec::<String>::new());
+    let effects = value["effects"].as_array().unwrap();
+    let seal = effects
+        .iter()
+        .position(|effect| effect["kind"] == "seal_of_righteousness")
+        .unwrap();
+    // Rank 8's judgement dummy carries 0.2 as a 32-bit float.
+    let dummy = f64::from(0.2f32);
+    assert_eq!(effects[seal]["hand_multiplier"].as_f64(), Some(1.2));
+    assert_eq!(
+        effects[seal]["ranks"][7]["hit_coefficient"].as_f64(),
+        Some(dummy * 1.2 / 2.0)
+    );
+    let swapped: Vec<(String, f64)> = effects
+        .iter()
+        .find(|effect| effect["kind"] == "item_swap")
+        .unwrap()["swapped"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|change| {
+            let path = change["path"].as_str().unwrap();
+            let field = path.strip_prefix(&format!("/effects/{seal}/"))?;
+            Some((field.to_string(), change["value"].as_f64().unwrap()))
+        })
+        .collect();
+    for change in [
+        ("hand_multiplier", 0.85),
+        ("swing_speed", 2.5),
+        ("ranks/7/hit_coefficient", dummy / 2.0),
+    ] {
+        assert!(
+            swapped.contains(&(change.0.to_string(), change.1)),
+            "{change:?} in {swapped:?}"
+        );
+    }
+
+    // The same character with Brutality Blade from the pull and no opener.
+    let mut worn = request.clone();
+    let player = &mut worn["raid"]["parties"][0]["players"][0];
+    let rotation = player["rotation"]["priorityList"].as_array_mut().unwrap();
+    rotation.drain(..2);
+    player["equipment"]["items"][12] = json!({"id": 18832, "enchant": 1900});
+    player["enableItemSwap"] = json!(false);
+    player.as_object_mut().unwrap().remove("itemSwap");
+
+    let opener = righteousness_hits(&first_fight_log(value));
+    let swap = opener
+        .iter()
+        .position(|(time, _)| *time > 30.0)
+        .expect("hits after the swap");
+    let one_hander: std::collections::BTreeSet<String> =
+        righteousness_hits(&first_fight_log(paladin_swap_forever(&worn)))
+            .into_iter()
+            .map(|(_, amount)| amount)
+            .collect();
+    for (time, amount) in &opener[..swap] {
+        assert!(
+            !one_hander.contains(amount),
+            "{time}: {amount} before the swap"
+        );
+    }
+    for (time, amount) in &opener[swap..] {
+        assert!(
+            one_hander.contains(amount),
+            "{time}: {amount} not {one_hander:?}"
+        );
+    }
 }

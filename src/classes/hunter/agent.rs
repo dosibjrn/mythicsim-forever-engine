@@ -58,6 +58,8 @@ pub(crate) enum HunterSpell {
     LaceratingStrikes,
     StriderKick,
     WingClip,
+    /// traps.go: Freezing Trap's empty `ApplyEffects`.
+    FreezingTrap,
     ImmolationTrap,
     ExplosiveTrap,
     Volley,
@@ -255,6 +257,7 @@ pub(crate) fn spell_behavior(spell: &ExportedSpell) -> Option<HunterSpell> {
         "lacerating_strikes" if spell.dot.is_some() => Some(HunterSpell::LaceratingStrikes),
         "strider_kick" => Some(HunterSpell::StriderKick),
         "wing_clip" => Some(HunterSpell::WingClip),
+        "freezing_trap" => Some(HunterSpell::FreezingTrap),
         "immolation_trap" if spell.dot.is_some() => Some(HunterSpell::ImmolationTrap),
         "explosive_trap" if spell.dot.is_some() => Some(HunterSpell::ExplosiveTrap),
         "volley" if spell.dot.as_ref().is_some_and(|dot| dot.channeled) => {
@@ -840,6 +843,7 @@ impl Agent for HunterAgent {
                 let base = fight.agent.wing_clip_damage;
                 melee::wing_clip(fight, spell, target, base);
             }
+            HunterSpell::FreezingTrap => {}
             HunterSpell::ImmolationTrap => {
                 let trap = fight
                     .agent

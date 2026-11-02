@@ -13,6 +13,9 @@ use super::Refusal;
 /// The combination key of Go `Character.SpiritManaRegenPerSecond`, which is not a stat.
 const SPIRIT_REGEN_KEY: &str = "SpiritManaRegenPerSecond";
 
+/// The combination key of the pseudo stat `reduced_crit_taken_percent`, under Forever's rules.
+pub(crate) const CRIT_TAKEN_KEY: &str = "PseudoReducedCritTakenPercent";
+
 /// The stats the Rust runtime reads during a fight.
 const DYNAMIC_READ_STATS: [Stat; 6] = [
     Stat::SpellDamage,
@@ -121,6 +124,7 @@ pub(crate) fn character_stat_auras(env: &Environment) -> Vec<String> {
     candidates.extend(potion_stat_auras(env));
     candidates.extend(env.agent.stat_auras(&env.sim, env.player));
     candidates.extend(spell_data_stat_proc_auras(env));
+    candidates.extend(super::export_items::chance_on_hit_stat_auras(env));
     candidates.extend(lion_horn_proc_aura(env));
     candidates.extend(super::healer_gear::stat_auras(env));
     candidates.extend(simple_stat_active_auras(env));
@@ -275,7 +279,15 @@ pub(crate) fn stat_auras_effect_reading(
     if labels.is_empty() {
         return Ok(None);
     }
-    if layout.bits > 14 {
+    // Go's exporter combines at most 14 bits. Forever's rules allow 16: an Orc Enhancement
+    // Shaman with Jom Gabbar's four stack bits beside the totems, the swap and Blood Fury takes
+    // 15 (production sim ff415e0d), and each bit doubles the reset simulations.
+    let limit = if env.rules == super::sim::Rules::Forever {
+        16
+    } else {
+        14
+    };
+    if layout.bits > limit {
         return Err(Refusal::new(
             "stat_auras",
             format!("{} stat auras exceed the combination limit", labels.len()),
@@ -329,6 +341,17 @@ pub(crate) fn stat_auras_effect_reading(
                 json!(fresh.sim.unit(player).stats[stat]),
             );
         }
+        if env.rules == super::sim::Rules::Forever {
+            // Go `updateReducedCritTakenPercent`'s pseudo stat, which the hit reads.
+            let unit = fresh.sim.unit(player);
+            combo.insert(
+                CRIT_TAKEN_KEY.to_string(),
+                json!(
+                    unit.pseudo_stats.base_reduced_crit_taken_percent
+                        + unit.stats[Stat::ReducedCritTakenPercent] / 100.0
+                ),
+            );
+        }
         // Spirit regeneration follows Intellect and Spirit, which mana.go UpdateManaRegenRates
         // rereads when a stat aura changes either.
         let character = fresh.sim.character(player);
@@ -361,6 +384,14 @@ pub(crate) fn stat_auras_effect_reading(
             }
         }
     }
+    // Under Forever's rules the crit the player takes rides along when a combination changes it:
+    // the runtime sets it on the Goblin Sapper Charge's hit on its thrower, as Quel'Serrar's
+    // Defense changes it.
+    if !changed.contains(&Stat::ReducedCritTakenPercent.name()) {
+        for combo in &mut combos {
+            combo.remove(CRIT_TAKEN_KEY);
+        }
+    }
     if !changed_spirit_regen {
         for combo in &mut combos {
             combo.remove(SPIRIT_REGEN_KEY);
@@ -380,6 +411,8 @@ pub(crate) fn stat_auras_effect_reading(
 
 /// The label `buffs.ManaTideTotemsAura` gives the external caster's copy.
 const EXTERNAL_MANA_TIDE_LABEL: &str = "Mana Tide Totem (External)";
+/// The label of the Restoration shaman's own Mana Tide Totem, whose MP5 is the same row's.
+const SELF_MANA_TIDE_LABEL: &str = "Mana Tide Totem (Self)";
 
 /// `rawMP5Bonuses`: `AddStatsDynamic` adds each bonus to the raw stats and takes it away again,
 /// so a bonus that is not a whole number leaves the sum a few ulps off its start once the aura
@@ -403,7 +436,9 @@ fn raw_mp5_bonuses(
             continue;
         }
         let value = MANA_TIDE_TOTEMS.value(0);
-        if label == EXTERNAL_MANA_TIDE_LABEL && raw[0] + value == first {
+        if (label == EXTERNAL_MANA_TIDE_LABEL || label == SELF_MANA_TIDE_LABEL)
+            && raw[0] + value == first
+        {
             bonuses.insert(label.clone(), value);
             continue;
         }

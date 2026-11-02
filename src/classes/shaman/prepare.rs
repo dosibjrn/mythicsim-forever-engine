@@ -18,7 +18,7 @@ use crate::prepare::agent::{fill_talents, ClassSpellName, PrepAgent};
 use crate::prepare::attack::{AutoAttackOptions, Weapon};
 use crate::prepare::character::constants::DODGE_RATING_PER_DODGE_PERCENT;
 use crate::prepare::env::Environment;
-use crate::prepare::sim::{AuraId, Sim, SpellId, StateSlot, UnitId};
+use crate::prepare::sim::{AuraId, Rules, Sim, SpellId, StateSlot, UnitId};
 use crate::prepare::spell::ProcMask;
 use crate::prepare::stats::Stat;
 use crate::prepare::Refusal;
@@ -424,6 +424,13 @@ impl PrepAgent for Shaman {
         self.register_strength_of_earth_totem_spell(sim, unit);
         self.register_grace_of_air_totem_spell(sim, unit);
         self.register_mana_spring_totem_spell(sim, unit);
+        // MythicSim's healer sims under Forever's rules: the Restoration shaman's own Mana Tide.
+        if self.spec == Spec::Restoration
+            && sim.rules == Rules::Forever
+            && self.has_talent("mana_tide_totem")
+        {
+            self.register_mana_tide_totem_spell(sim, unit);
+        }
         self.register_shocks(sim, unit);
 
         if self.spec == Spec::Enhancement {
@@ -484,6 +491,7 @@ impl PrepAgent for Shaman {
             "Strength Of Earth Totem (Self)",
             "Grace Of Air Totem (Self)",
             "Mana Spring Totem (Self)",
+            "Mana Tide Totem (Self)",
             "Windfury Totem Proc (Self)",
         ]
         .iter()

@@ -1111,9 +1111,19 @@ pub(crate) fn export_state(
         // A player does not walk off before the spell they queued fires (README, Rust-only
         // mechanics); the reference's move starts at once.
         prepared["player"]["move_waits_for_queued_cast"] = json!(true);
+        // A melee swing does not restart the Auto Shot timer (README, Rust-only mechanics); the
+        // reference restarts it on every swing.
+        prepared["player"]["melee_keeps_auto_shot_timer"] = json!(true);
         // A move whose end time has come has arrived (README, Rust-only mechanics); the
         // reference can read the walk a hair short of the destination at that instant.
         prepared["player"]["move_arrives_at_destination"] = json!(true);
+        // A rotation with a move keeps looking through the global cooldown (README, Rust-only
+        // mechanics); the reference's idle rotation sleeps until the global cooldown ends.
+        prepared["player"]["rotation_with_moves_looks_through_gcd"] = json!(true);
+        // The off hand's half swing wait counts from the melee attack's start, which a walk in
+        // after an Auto Shot begins (README, Rust-only mechanics); the reference counts it from
+        // every arrival in melee range.
+        prepared["player"]["off_hand_waits_from_attack_start"] = json!(true);
         // Autocasting looks past a cooldown the GCD holds back (README, Rust-only mechanics);
         // the reference stops at the first ready one.
         prepared["player"]["autocast_skips_unready_cooldowns"] = json!(true);
@@ -1236,7 +1246,8 @@ const DAMAGE_SHIELD_REASON: &str = "a damage shield: hears only physical hits th
 /// two) on the attacker a spell batch window later (the trigger is not immediate), a fixed magic
 /// hit of the shield's damage that cannot crit. The damage is the shield's bid in its category;
 /// the shield spell adds the wearer's spell power by its coefficient. Under Forever's rules a
-/// paladin's own Retribution Aura rank the rotation casts is one more shield.
+/// paladin's own Retribution Aura rank or a druid's own Thorns the rotation casts is one more
+/// shield.
 fn tank_damage_shields(env: &Environment) -> Vec<Value> {
     let mut effects = Vec::new();
     let mut auras: Vec<_> = ["Retribution Aura (External)", "Thorns (External)"]
@@ -1253,7 +1264,8 @@ fn tank_damage_shields(env: &Environment) -> Vec<Value> {
                 .copied()
                 .filter(|&aura| {
                     let state = env.sim.aura(aura);
-                    state.label.starts_with("Retribution Aura Rank ")
+                    (state.label.starts_with("Retribution Aura Rank ")
+                        || state.label == "Thorns (Player)")
                         && state.action_id.as_ref().is_some_and(|id| {
                             id.tag == 0 && casts.contains(&i64::from(id.spell_id))
                         })
@@ -1280,13 +1292,21 @@ fn tank_damage_shields(env: &Environment) -> Vec<Value> {
         else {
             continue;
         };
-        effects.push(json!({
+        let mut effect = json!({
             "kind": "spell_data_damage_proc", "trigger_aura": label,
             "trigger_spells": Vec::<usize>::new(), "struck": true, "landed_only": true,
             "require_damage": false, "proc_chance": 1.0, "spell": position, "average": 0.0,
             "variance": 0.0, "roll": [damage, damage], "can_crit": false,
             "delay_ns": super::common_effects::SPELL_BATCH_WINDOW,
-        }));
+        });
+        // core.NewDamageShield deals the shield's damage as it is, with no roll. Go's exporter
+        // writes it as a roll of equal bounds, which draws; Forever's rules describe the fixed
+        // amount, which draws nothing.
+        if env.sim.rules == crate::prepare::sim::Rules::Forever {
+            effect["average"] = json!(damage);
+            effect["roll"] = Value::Null;
+        }
+        effects.push(effect);
     }
     effects
 }

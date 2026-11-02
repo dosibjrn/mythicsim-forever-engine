@@ -9,8 +9,10 @@ use crate::contracts::prepared_v2::ActionId;
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums;
+use crate::prepare::hotfix_113554;
 use crate::prepare::sim::{
-    AuraConfig, Cooldown, Duration, EventCallbacks, Sim, UnitId, MILLISECOND, NEVER_EXPIRES, SECOND,
+    AuraConfig, Cooldown, Duration, EventCallbacks, Rules, Sim, UnitId, MILLISECOND, NEVER_EXPIRES,
+    SECOND,
 };
 use crate::prepare::spell::{
     Cast, CastConfig, CostOptions, DotConfig, ProcMask, SpellConfig, SpellFlag,
@@ -525,7 +527,12 @@ impl Mage {
 
     fn register_fire_blast_spell(&self, sim: &mut Sim, unit: UnitId) {
         let rank = spell_data().fire_blast.highest();
-        let timer = sim.new_timer(unit);
+        // Hotfix push 113531 puts Ice Lance on Fire Blast's category (19), so under Forever's
+        // rules the two share the category's timer.
+        let timer = match sim.rules {
+            Rules::Forever => sim.category_timer(unit, i32::from(rank.category)),
+            Rules::GoReference => sim.new_timer(unit),
+        };
         sim.register_spell(
             unit,
             SpellConfig {
@@ -574,16 +581,25 @@ impl Mage {
         if !self.talents.bool("ice_lance") {
             return;
         }
-        let rank = spell_data().ice_lance.highest();
+        let rank = hotfix_113554::row(sim.rules, spell_data().ice_lance.highest().id);
         // The client's damage effect carries no spell power coefficient (the row reads 0), as Season
         // of Discovery's reworked Ice Lance (400640) does. Go fits it to the beta logs: .10 (#726).
         let ice_lance_coefficient = 0.1;
+        // Hotfix push 113531 gives every rank an 8 sec cooldown on category 19, which Fire Blast
+        // shares; the frozen rows have none at level 60.
+        let mut cast = default_cast(rank.gcd(), 0);
+        if rank.category > 0 {
+            cast.cd = Cooldown {
+                timer: Some(sim.category_timer(unit, i32::from(rank.category))),
+                duration: longest_cooldown(rank),
+            };
+        }
         sim.register_spell(
             unit,
             SpellConfig {
                 missile_speed: f64::from(rank.speed),
                 cost: flat_cost(rank),
-                cast: default_cast(rank.gcd(), 0),
+                cast,
                 bonus_coefficient: ice_lance_coefficient,
                 max_range: f64::from(rank.max_range),
                 ..damage_config(

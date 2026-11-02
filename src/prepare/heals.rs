@@ -21,7 +21,7 @@ use super::sim::{Cooldown, Duration, Rules, Sim, SpellId, TimerId, UnitId};
 use super::spell::{Cast, CastConfig, CostOptions, DotConfig, ProcMask, SpellConfig, SpellFlag};
 use super::spell_mod::{SpellModConfig, SpellModType};
 use super::spelldata::{Effect, Ladder, Spell as Row};
-use crate::contracts::prepared_v2::{ActionId, SmartHeal};
+use crate::contracts::prepared_v2::{ActionId, CritAbsorb, SmartHeal};
 use crate::contracts::request::{Message, Value as RequestValue};
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::sim::AuraConfig;
@@ -78,6 +78,8 @@ pub(crate) struct HealRank {
     pub tick_can_crit: bool,
     /// The shield's absorb, when the rank shields.
     pub absorb: Option<f64>,
+    /// Under Forever's rules, the share of a crit of this heal that becomes an absorb.
+    pub crit_absorb: Option<CritAbsorb>,
 }
 
 /// Registers one heal rank of `row` for `unit`: its cost, cast, cooldown and the parts its row
@@ -191,6 +193,7 @@ pub(crate) fn register_heal_from(
         tick,
         tick_can_crit: tick.is_some() && row.periodic_can_crit(),
         absorb: shield,
+        crit_absorb: None,
     }
 }
 
@@ -285,6 +288,7 @@ pub(crate) fn register_channel_heal(
         tick: Some(heal.tick),
         tick_can_crit: heal.tick_can_crit,
         absorb: None,
+        crit_absorb: None,
     }
 }
 
@@ -360,6 +364,7 @@ pub(crate) fn register_totem_heal(
         tick: Some(tick),
         tick_can_crit: heal.periodic_can_crit(),
         absorb: None,
+        crit_absorb: None,
     }
 }
 
@@ -502,6 +507,9 @@ pub(crate) fn heals_effect(env: &Environment, ranks: &[HealRank]) -> Value {
             }
             if let Some(absorb) = rank.absorb {
                 heal["absorb"] = json!(absorb);
+            }
+            if let (Some(absorb), Rules::Forever) = (rank.crit_absorb, env.rules) {
+                heal["crit_absorb"] = json!(absorb);
             }
             // Forever's party damage decides how far these heals reach (README, Rust-only
             // mechanics); the reference heals every target at once.

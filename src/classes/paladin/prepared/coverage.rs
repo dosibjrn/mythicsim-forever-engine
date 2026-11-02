@@ -15,6 +15,7 @@ pub(crate) const GATE: ClassGate = ClassGate {
     several_targets: Some(several_targets),
     tanks_several_targets: true,
     other_target_casts: None,
+    self_spells: &[],
 };
 
 /// Paladin effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -29,12 +30,15 @@ const EFFECTS: &[&str] = &[
     "holy_light_haste",
     "holy_wrath",
     "holy_strike",
+    "hammer_of_the_righteous",
     "illumination",
     "iron_creed",
     "judgement",
     "judgement_refresh",
     "lay_on_hands",
     "lights_vigil",
+    "lights_vigil_ally",
+    "oath_of_light",
     "paladin_aura_cast",
     "paladin_heals",
     "pursuit_of_justice",
@@ -43,15 +47,20 @@ const EFFECTS: &[&str] = &[
     "righteous_fury",
     "sacred_arbiter",
     "sanctified_judgement",
+    "second_judgement",
     "seal_of_command",
     "seal_of_fury",
+    "seal_of_justice",
     "seal_of_light",
     "seal_of_righteousness",
     "seal_of_the_crusader",
+    "seal_of_wisdom",
     "shield_specialization",
+    "shieldsworn",
     "swift_judgement",
     "templars_bulwark",
     "twist_of_light",
+    "unsealed_wrath",
     "vengeance",
     "vindication",
 ];
@@ -68,22 +77,33 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "seal_of_the_crusader" | "judgement_of_the_crusader" => Some("seal_of_the_crusader"),
         "seal_of_fury" | "seal_of_fury_proc" | "judgement_of_fury" => Some("seal_of_fury"),
         "seal_of_light" | "seal_of_light_proc" | "judgement_of_light" => Some("seal_of_light"),
+        "seal_of_wisdom" | "seal_of_wisdom_proc" | "judgement_of_wisdom" => Some("seal_of_wisdom"),
+        "seal_of_justice" | "judgement_of_justice" => Some("seal_of_justice"),
         "judgement" => Some("judgement"),
         "holy_strike" => Some("holy_strike"),
+        "hammer_of_the_righteous" => Some("hammer_of_the_righteous"),
         "hammer_of_wrath" => Some("hammer_of_wrath"),
         "consecration" => Some("consecration"),
         "exorcism" => Some("exorcism"),
         "holy_wrath" => Some("holy_wrath"),
         "holy_shock" => Some("holy_shock"),
         "lights_vigil" | "lights_vigil_strike" => Some("lights_vigil"),
+        "lights_vigil_ally" | "lights_vigil_heal" => Some("lights_vigil_ally"),
         "divine_favor" => Some("divine_favor"),
+        "oath_of_light" => Some("oath_of_light"),
         "righteous_fury" => Some("righteous_fury"),
         "swift_judgement" => Some("swift_judgement"),
+        "second_judgement" => Some("second_judgement"),
         "templars_bulwark" => Some("templars_bulwark"),
         "holy_shield" | "holy_shield_proc" => Some("holy_shield"),
         "holy_light" | "flash_of_light" | "holy_shock_heal" => Some("paladin_heals"),
         "lay_on_hands" => Some("lay_on_hands"),
-        "retribution_aura" => Some("paladin_aura_cast"),
+        "retribution_aura"
+        | "devotion_aura"
+        | "concentration_aura"
+        | "fire_resistance_aura"
+        | "frost_resistance_aura"
+        | "shadow_resistance_aura" => Some("paladin_aura_cast"),
         _ => None,
     }
 }
@@ -102,6 +122,9 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
             aura: trigger_aura, ..
         }
         | Effect::DivineFavor {
+            aura: trigger_aura, ..
+        }
+        | Effect::OathOfLight {
             aura: trigger_aura, ..
         }
         | Effect::SwiftJudgement {
@@ -124,11 +147,13 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
             aura,
             target_aura,
             ..
-        } => vec![
-            ("player", trigger_aura),
-            ("player", aura),
-            ("target", target_aura),
-        ],
+        } => {
+            let mut claimed = vec![("player", trigger_aura.as_str()), ("target", target_aura)];
+            if let Some(aura) = aura {
+                claimed.push(("player", aura));
+            }
+            claimed
+        }
         Effect::Reckoning {
             block_aura,
             crit_aura,
@@ -157,12 +182,20 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         Effect::TwistOfLight {
             trigger_aura,
             echoes,
+        }
+        | Effect::UnsealedWrath {
+            trigger_aura,
+            echoes,
         } => std::iter::once(("player", trigger_aura.as_str()))
             .chain(echoes.iter().map(|echo| ("player", echo.aura.as_str())))
             .collect(),
         Effect::LightsVigil { ranks } => ranks
             .iter()
             .map(|rank| ("target", rank.aura.as_str()))
+            .collect(),
+        Effect::LightsVigilAlly { ranks } => ranks
+            .iter()
+            .map(|rank| ("player", rank.aura.as_str()))
             .collect(),
         Effect::PaladinAuraCast { ranks } => ranks
             .iter()
@@ -199,6 +232,20 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
                 ]
             })
             .collect(),
+        Effect::SealOfWisdom { ranks } => ranks
+            .iter()
+            .flat_map(|rank| {
+                [
+                    ("player", rank.aura.as_str()),
+                    ("target", &rank.judgement_aura),
+                ]
+            })
+            .collect(),
+        Effect::SealOfJustice {
+            aura,
+            judgement_aura,
+            ..
+        } => vec![("player", aura), ("target", judgement_aura)],
         Effect::SealOfTheCrusader { ranks, .. } => ranks
             .iter()
             .flat_map(|rank| {

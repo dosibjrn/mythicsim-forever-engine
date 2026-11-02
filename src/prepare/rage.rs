@@ -89,7 +89,8 @@ const TWO_HAND_NORMALIZED_SWING_SPEED: f64 = 3.3;
 /// operation order: the hit factor, halved for the off hand, times the swing speed, the bar's base
 /// multiplier and the hand's multiplier, then raised for a two-handed weapon. A critical hit adds
 /// the swing's rage before that two-hander factor times `CritRageMultiplier` less one
-/// (`CritRageBonusSkipsTwoHand`), which the crit rage values carry.
+/// (`CritRageBonusSkipsTwoHand`), which the crit rage values carry. Under Forever's rules the
+/// effect carries `crit_multiplies_swing`: a crit multiplies the swing's whole rage instead.
 pub(crate) fn rage_bar_effect(
     sim: &Sim,
     unit: UnitId,
@@ -113,7 +114,7 @@ pub(crate) fn rage_bar_effect(
     };
     let (main_hand, main_hand_crit) = hit_rage(&auto_attacks.mh, false);
     let (off_hand, off_hand_crit) = hit_rage(&auto_attacks.oh, true);
-    serde_json::json!({
+    let mut effect = serde_json::json!({
         "kind": "rage_bar", "aura": "RageBar", "max_rage": bar.max_rage,
         "starting_rage": bar.starting_rage,
         "main_hand_rage": main_hand, "off_hand_rage": off_hand,
@@ -122,5 +123,11 @@ pub(crate) fn rage_bar_effect(
         // Patch 182: the threat of a gain takes the unit's threat multiplier at the gain and is split
         // between the targets in combat.
         "threat_multiplied": true,
-    })
+    });
+    // Forever's combat logs of 9 October 2026: a two-hander's critical white hit gives exactly
+    // twice the swing's rage, two-hander factor included (src/core/fight/rage.rs).
+    if sim.rules == super::sim::Rules::Forever {
+        effect["crit_multiplies_swing"] = serde_json::json!(true);
+    }
+    effect
 }

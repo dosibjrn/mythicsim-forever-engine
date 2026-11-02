@@ -16,6 +16,7 @@ pub(crate) const GATE: ClassGate = ClassGate {
     several_targets: Some(several_targets),
     tanks_several_targets: false,
     other_target_casts: Some(crate::engine::coverage::no_limits),
+    self_spells: &[],
 };
 
 /// Priest effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -42,6 +43,7 @@ const EFFECTS: &[&str] = &[
     "vampiric_embrace",
     // MythicSim's healer sims (Rust only, checked against the client rows, not Go).
     "heals",
+    "priest_heal_talents",
 ];
 
 /// Go registers Inner Focus (talents_discipline.go) and Dark Sacrifice (dark_sacrifice.go)
@@ -76,6 +78,8 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "power_infusion" => Some("power_infusion"),
         "shadowform" => Some("shadowform"),
         "smite" if spell.damage_effect.is_some() => Some("smite"),
+        // Chastise deals its roll as Smite does; the agent checks its Humanoid target.
+        "chastise" if spell.damage_effect.is_some() => Some("smite"),
         "holy_fire" if spell.damage_effect.is_some() && spell.dot.is_some() => Some("holy_fire"),
         "penance" if spell.dot.as_ref().is_some_and(|dot| dot.channeled) => Some("penance"),
         "heal" => Some("heals"),

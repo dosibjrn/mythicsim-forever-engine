@@ -41,9 +41,9 @@ impl Priest {
 
         // Tier 5
         self.apply_penance(sim, unit);
-        // Renewed Hope models nothing in Go either.
+        // Renewed Hope models nothing in Go either; the healer's is in `heals.rs`.
 
-        // Tier 6: Divine Aegis models nothing in Go either.
+        // Tier 6: Divine Aegis models nothing in Go either; the healer's is in `heals.rs`.
 
         // Tier 7
         self.apply_power_infusion(sim, unit);

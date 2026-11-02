@@ -225,6 +225,10 @@ mod tests {
         items.push(serde_json::json!({"id": 19959}));
         value["raid"]["parties"][0]["players"][0]["equipment"] =
             serde_json::json!({ "items": items });
+        // The request's talents in client 1.60.1.70707's order, which Forever's rules read:
+        // Arcane Focus's five points dropped.
+        value["raid"]["parties"][0]["players"][0]["talentsString"] =
+            serde_json::json!("050205103100301531-305000012-003");
         let bytes = serde_json::to_vec(&value).expect("json");
         let request = Request::from_json(&bytes).expect("parsed");
         Environment::new(request.message(), crate::classes::prepare_agent).expect("prepared")

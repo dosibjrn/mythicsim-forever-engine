@@ -10,9 +10,10 @@ use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger};
 use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::env::Environment;
 use crate::prepare::item_sets::ItemSet;
-use crate::prepare::sim::{AuraConfig, AuraId, Cooldown, Sim, UnitId, SECOND};
+use crate::prepare::sim::{AuraConfig, AuraId, Cooldown, Rules, Sim, UnitId, MILLISECOND, SECOND};
 use crate::prepare::spell::{school, CastConfig, DefenseType, SpellConfig, SpellFlag};
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
+use crate::prepare::spelldata::must_find;
 use crate::prepare::stats::{Stat, Stats};
 
 use super::masks;
@@ -223,8 +224,18 @@ fn malefic_raiment_4(env: &mut Environment, aura: AuraId) {
     sim.expose_to_apl(aura, 38393);
 }
 
+/// The demon aura of The Black Book under Forever's rules, the client row's name.
+pub(crate) const BLACK_BOOK_DEMON_AURA: &str = "Blessing of the Black Book";
+
+/// Blessing of the Black Book's client row (client 70707).
+pub(crate) const BLACK_BOOK_BUFF: i32 = 23720;
+
 /// The Go `core.NewItemEffect(19337, ...)`: The Black Book.
 pub(crate) fn black_book(sim: &mut Sim, unit: UnitId) {
+    if sim.rules == Rules::Forever {
+        black_book_forever(sim, unit);
+        return;
+    }
     let duration = SECOND * 30;
 
     // Go `warlock.Pets`: every pet of the warlock.
@@ -304,6 +315,73 @@ pub(crate) fn black_book(sim: &mut Sim, unit: UnitId) {
     ));
 }
 
+/// The Black Book under Forever's rules, as the client states it and the reference's current
+/// items.go registers it: Blessing of the Black Book (23720) lands on the demon that is out, every
+/// effect of its row on the pet (implicit target 5): 100% more damage done in every school
+/// (aura 79, misc 127) and 100% more armor (aura 101) for 30 sec. The use waits for a demon out,
+/// on the item's own 5 minute cooldown and its category's 30 seconds (1141), which the
+/// offensive trinket timer stands for. The demon's aura of each pet is plain here: the runtime
+/// multiplies the damage (`black_book`), and nothing swings at the demon, so its armor is read
+/// by nothing.
+fn black_book_forever(sim: &mut Sim, unit: UnitId) {
+    let row = must_find(BLACK_BOOK_BUFF);
+    let duration = row.duration();
+    for pet in sim.unit(unit).pets.clone() {
+        sim.register_aura(
+            pet,
+            AuraConfig {
+                label: BLACK_BOOK_DEMON_AURA.to_string(),
+                action_id: Some(ActionId {
+                    spell_id: BLACK_BOOK_BUFF,
+                    ..ActionId::default()
+                }),
+                duration,
+                ..AuraConfig::default()
+            },
+        );
+    }
+    let on_use = crate::prepare::items::database_item(19337)
+        .and_then(|item| item.item_effects.into_iter().next())
+        .and_then(|effect| effect.message("on_use").cloned())
+        .expect("The Black Book has a use");
+    let timer = sim.new_timer(unit);
+    let shared = sim.get_offensive_trinket_cd(unit);
+    let spell = sim.register_spell(
+        unit,
+        SpellConfig {
+            action_id: ActionId {
+                item_id: 19337,
+                ..ActionId::default()
+            },
+            defense_type: DefenseType::Magic,
+            flags: SpellFlag::NO_ON_CAST_COMPLETE,
+            cast: CastConfig {
+                cd: Cooldown {
+                    timer: Some(timer),
+                    duration: i64::from(on_use.i32("cooldown_ms")) * MILLISECOND,
+                },
+                shared_cd: Cooldown {
+                    timer: Some(shared),
+                    duration: i64::from(on_use.i32("category_cooldown_ms")) * MILLISECOND,
+                },
+                ..CastConfig::default()
+            },
+            has_extra_cast_condition: true,
+            ..SpellConfig::default()
+        },
+    );
+    sim.add_major_cooldown(
+        unit,
+        MajorCooldown {
+            spell,
+            priority: 0,
+            cooldown_type: cooldown_type::DPS,
+            allow_spell_queueing: false,
+            timings: Vec::new(),
+        },
+    );
+}
+
 /// The Go `core.NewItemEffect(19957, ...)`: Hazza'rah's Charm of Destruction. Use: increases the
 /// critical hit chance of your Destruction spells by 10% for 20 sec (24543). The client's class
 /// mask leaves out Incinerate, which Classic's Destruction flag took in.
@@ -374,13 +452,17 @@ mod tests {
     use crate::contracts::request::Request;
     use crate::prepare::character::cooldown_type;
     use crate::prepare::env::Environment;
-    use crate::prepare::sim::SECOND;
+    use crate::prepare::sim::{Rules, SECOND};
     use crate::prepare::spell::school;
 
     const REQUEST: &str =
         include_str!("../../../../tests/classes/warlock/prepare/affliction-succubus.request.json");
 
     fn prepared_with_trinkets() -> Environment {
+        prepared_with_trinkets_under(Rules::Forever)
+    }
+
+    fn prepared_with_trinkets_under(rules: Rules) -> Environment {
         let mut value: serde_json::Value = serde_json::from_str(REQUEST).expect("a request");
         let mut items = vec![serde_json::json!({}); 12];
         items.push(serde_json::json!({"id": 19337}));
@@ -389,14 +471,16 @@ mod tests {
             serde_json::json!({ "items": items });
         let bytes = serde_json::to_vec(&value).expect("json");
         let request = Request::from_json(&bytes).expect("parsed");
-        Environment::new(request.message(), crate::classes::prepare_agent).expect("prepared")
+        Environment::with_rules(request.message(), crate::classes::prepare_agent, rules)
+            .expect("prepared")
     }
 
-    /// The Black Book (items.go): a Blessing aura on the warlock, one on each demon, and a use
-    /// spell on a 3 minute cooldown that shares the 30 second offensive trinket timer.
+    /// The Black Book (items.go at the reference pin): a Blessing aura on the warlock, one on
+    /// each demon, and a use spell on a 3 minute cooldown that shares the 30 second offensive
+    /// trinket timer.
     #[test]
     fn the_black_book_registers_its_auras_and_use_spell() {
-        let env = prepared_with_trinkets();
+        let env = prepared_with_trinkets_under(Rules::GoReference);
         let sim = &env.sim;
         let aura = sim
             .get_aura(env.player, "Blessing of The Black Book")
@@ -415,6 +499,37 @@ mod tests {
             .find(|spell| spell.action_id.item_id == 19337)
             .expect("the use spell");
         assert_eq!(spell.cd.duration, 180 * SECOND);
+        assert_eq!(spell.shared_cd.duration, 30 * SECOND);
+        assert!(spell.has_extra_cast_condition);
+    }
+
+    /// The Black Book under Forever's rules (client 70707): the client row's Blessing on each
+    /// demon and none on the warlock, and a use on the item's 5 minute cooldown that shares the
+    /// 30 second offensive trinket timer and waits for a demon out.
+    #[test]
+    fn the_forever_black_book_blesses_only_the_demon() {
+        let env = prepared_with_trinkets();
+        let sim = &env.sim;
+        assert!(sim
+            .get_aura(env.player, "Blessing of The Black Book")
+            .is_none());
+        let pets = &sim.unit(env.player).pets;
+        assert!(!pets.is_empty());
+        for pet in pets {
+            let aura = sim
+                .get_aura(*pet, super::BLACK_BOOK_DEMON_AURA)
+                .map(|id| sim.aura(id))
+                .expect("the demon's aura");
+            assert_eq!(aura.duration, 30 * SECOND);
+        }
+        let spell = sim
+            .unit(env.player)
+            .spellbook
+            .iter()
+            .map(|id| sim.spell(*id))
+            .find(|spell| spell.action_id.item_id == 19337)
+            .expect("the use spell");
+        assert_eq!(spell.cd.duration, 300 * SECOND);
         assert_eq!(spell.shared_cd.duration, 30 * SECOND);
         assert!(spell.has_extra_cast_condition);
     }

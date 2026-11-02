@@ -10,9 +10,11 @@ use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger};
 use crate::prepare::character::constants::{CHARACTER_LEVEL, MAX_MELEE_RANGE, MIN_RANGED_RANGE};
 use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums;
+use crate::prepare::hotfix_113554;
 use crate::prepare::sim::SpellId;
 use crate::prepare::sim::{
-    AuraConfig, AuraId, Cooldown, Duration, EventCallbacks, Sim, MILLISECOND, NEVER_EXPIRES, SECOND,
+    AuraConfig, AuraId, Cooldown, Duration, EventCallbacks, Rules, Sim, MILLISECOND, NEVER_EXPIRES,
+    SECOND,
 };
 use crate::prepare::spell::{
     school, Cast, CastConfig, CostOptions, DefenseType, DotConfig, ProcMask, SpellConfig,
@@ -75,6 +77,12 @@ pub(super) fn ranged_config(mut config: SpellConfig) -> SpellConfig {
 /// which Go restores with that switch off, were Arcane Shot .204 to .429 by rank, Serpent
 /// Sting 1.0 over its duration and Volley .056 a tick.
 const HUNTER_ABILITY_SPELL_POWER_COEFFICIENT: f64 = 0.0;
+
+/// Multi-Shot's cast time under Forever's rules, before ranged haste. Its client row (2643) has
+/// none, but every Multi-Shot in the Forever beta logs has a cast start: a median 0.44 to 0.45
+/// seconds with the quiver's 15% (0.5 / 1.15 is 0.435) and 0.32 under Rapid Fire as well (0.5 /
+/// (1.15 x 1.4) is 0.31).
+const FOREVER_MULTI_SHOT_CAST_TIME: Duration = 500 * MILLISECOND;
 
 /// Go `arcaneShotRAPShare()`: 0.10 of ranged attack power since patch 174, the Hunter
 /// Discord's three dedicated tests (0.10, 0.10, 0.11) taken with the four beta logs' fit
@@ -184,9 +192,15 @@ impl Hunter {
     }
 
     /// Go `registerMultiShotSpell`: the beta client has one rank of Multi-Shot, with a 6 sec
-    /// cooldown shared with Aimed Shot.
+    /// cooldown shared with Aimed Shot. Its row has no cast time, so the reference casts it at
+    /// once; under Forever's rules it takes [`FOREVER_MULTI_SHOT_CAST_TIME`], which the ranged
+    /// haste multiplier divides as it does Aimed Shot's (README, Rust-only mechanics).
     fn register_multi_shot_spell(&mut self, sim: &mut Sim, timer: crate::prepare::sim::TimerId) {
         let rank = spell_data().multi_shot.highest();
+        let cast_time = match sim.rules {
+            Rules::Forever => FOREVER_MULTI_SHOT_CAST_TIME,
+            Rules::GoReference => rank.cast_time(),
+        };
         self.multi_shot = Some(sim.register_spell(
             self.unit,
             ranged_config(SpellConfig {
@@ -200,7 +214,7 @@ impl Hunter {
                 cost: row_mana_cost(rank),
                 cast: CastConfig {
                     default_cast: Cast {
-                        cast_time: rank.cast_time(),
+                        cast_time,
                         ..Cast::default()
                     },
                     cd: Cooldown {
@@ -327,7 +341,7 @@ impl Hunter {
 
     /// Go `registerSerpentStingSpell`.
     fn register_serpent_sting_spell(&mut self, sim: &mut Sim) {
-        let rank = spell_data().serpent_sting.highest();
+        let rank = spell_data().serpent_sting.highest_for(sim.rules);
         let tick = rank.periodic_effect();
         let tick_length = tick.period();
         let number_of_ticks = (rank.duration() / tick_length) as i32;
@@ -767,8 +781,10 @@ impl Hunter {
 
     /// Go `registerFreezingTrapSpell`: Freezing Trap deals no damage; it is registered so the
     /// trap talents and the shared cooldown have something to act on.
+    /// Hotfix push 113554 moves it from category 2183 to Explosive and Immolation Trap's 411
+    /// under Forever's rules, so the three share one cooldown.
     fn register_freezing_trap_spell(&mut self, sim: &mut Sim) {
-        let rank = spell_data().freezing_trap.rank(1);
+        let rank = hotfix_113554::row(sim.rules, spell_data().freezing_trap.rank(1).id);
         let cd = self.trap_cooldown(sim, rank);
         self.freezing_trap = Some(sim.register_spell(
             self.unit,

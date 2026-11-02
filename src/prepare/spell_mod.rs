@@ -27,6 +27,8 @@ pub(crate) struct ModId(pub usize);
 pub(crate) type SpellModApply = Rc<dyn Fn(&mut Sim, ModId, SpellId)>;
 /// Go `SpellModOnReset`.
 pub(crate) type SpellModOnReset = Rc<dyn Fn(&mut Sim, ModId)>;
+/// A further test of the spells a mod names, beyond Go's filters.
+pub(crate) type SpellModFilter = Rc<dyn Fn(&Sim, SpellId) -> bool>;
 
 /// Go `SpellModType`. The default, `Custom`, needs `apply_custom` and `remove_custom`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -134,6 +136,9 @@ pub(crate) struct SpellModConfig {
     pub apply_custom: Option<SpellModApply>,
     pub remove_custom: Option<SpellModApply>,
     pub reset_custom: Option<SpellModOnReset>,
+    /// Names only the spells it admits among those the filters above name. A mod of a built-in
+    /// kind with a filter stays one an item swap can switch, where a custom mod does not.
+    pub spell_filter: Option<SpellModFilter>,
     pub should_apply_to_pets: bool,
 }
 
@@ -148,6 +153,7 @@ pub(crate) struct SpellMod {
     pub proc_mask: ProcMask,
     pub spell_flag: SpellFlag,
     pub resource_type: Option<Resource>,
+    spell_filter: Option<SpellModFilter>,
     float_value: f64,
     int_value: i32,
     time_value: Duration,
@@ -277,6 +283,10 @@ pub(crate) fn should_apply(sim: &Sim, spell_id: SpellId, spell_mod: &SpellMod) -
         return false;
     }
 
+    if let Some(filter) = &spell_mod.spell_filter {
+        return filter(sim, spell_id);
+    }
+
     true
 }
 
@@ -328,6 +338,7 @@ impl Sim {
             proc_mask: config.proc_mask,
             spell_flag: config.spell_flag,
             resource_type: config.resource_type,
+            spell_filter: config.spell_filter,
             float_value: config.float_value,
             int_value: config.int_value,
             time_value: config.time_value,

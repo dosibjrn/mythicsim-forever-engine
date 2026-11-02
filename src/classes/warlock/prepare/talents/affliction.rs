@@ -3,7 +3,7 @@
 use crate::prepare::aura_helpers::{CallbackMask, ProcTrigger};
 use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums;
-use crate::prepare::sim::{AuraConfig, Cooldown, Sim, UnitId};
+use crate::prepare::sim::{AuraConfig, Cooldown, Rules, Sim, UnitId};
 use crate::prepare::spell::{CastConfig, SpellConfig, SpellFlag};
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::Stat;
@@ -112,18 +112,25 @@ impl Warlock {
     /// spell range for it to extend.
     fn apply_grim_reach(&self, _sim: &mut Sim, _unit: UnitId) {}
 
-    /// Improved Drains: 7/13/20% more drain damage (403511, a dot modifier).
+    /// Improved Drains: 7/13/20% more drain damage (403511, a dot modifier). Hotfix push 113554
+    /// takes Wrack out of its mask (SpellEffect 1050496, the second mask word's 262144) and gives
+    /// Drain Mana, which the engine does not cast, a second effect; under Forever's rules it
+    /// raises Drain Life and Drain Soul only.
     fn apply_improved_drains(&self, sim: &mut Sim, unit: UnitId) {
         let points = self.talents.i32("improved_drains");
         if points == 0 {
             return;
         }
+        let class_mask = match sim.rules {
+            Rules::Forever => masks::DRAIN_SPELLS & !masks::WRACK,
+            Rules::GoReference => masks::DRAIN_SPELLS,
+        };
         sim.add_static_mod(
             unit,
             SpellModConfig {
                 kind: SpellModType::DotDamageDonePct,
                 float_value: spell_data().improved_drains.fraction_at(points),
-                class_mask: masks::DRAIN_SPELLS,
+                class_mask,
                 ..SpellModConfig::default()
             },
         );

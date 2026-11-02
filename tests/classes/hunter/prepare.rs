@@ -304,3 +304,44 @@ fn a_pets_spell_hit_is_seventeen_eighths_of_its_masters_ranged_hit() {
     );
     assert!(spell_terms(&go).is_empty());
 }
+
+/// Forever's Engineering ammo, Swiftfeather Arrow (274387) and Swiftstrike Shot (274388), each
+/// "Adds 24.5 damage per second" on its Wowhead Forever tooltip. The ammo's damage per second
+/// times the bow's speed is added to each end of the ranged weapon's damage, under either rule
+/// set, and the reference's ammo keeps its values.
+#[test]
+fn forevers_engineering_ammo_adds_twenty_four_and_a_half_damage_per_second() {
+    let request = fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/mage/prepared-v2/production-marksmanship-hunter.request.json"),
+    )
+    .unwrap();
+    let ranged = |ammo: &str, rules| {
+        let mut value: Value = serde_json::from_slice(&request).unwrap();
+        value["raid"]["parties"][0]["players"][0]["hunter"]["options"]["classOptions"]["ammo"] =
+            serde_json::json!(ammo);
+        let prepared =
+            forever_engine::prepare_json_with(&serde_json::to_vec(&value).unwrap(), "x", rules)
+                .unwrap();
+        let weapon = &prepared["melee"]["ranged"];
+        let damage = |end: &str| weapon[end].as_f64().unwrap();
+        let speed = weapon["swing_speed"].as_f64().unwrap();
+        (damage("base_damage_min"), damage("base_damage_max"), speed)
+    };
+    for rules in [
+        forever_engine::Rules::Forever,
+        forever_engine::Rules::GoReference,
+    ] {
+        let (min, max, speed) = ranged("AmmoNone", rules);
+        for (ammo, dps) in [
+            ("SwiftfeatherArrow", 24.5),
+            ("SwiftstrikeShot", 24.5),
+            ("ThoriumHeadedArrow", 17.5),
+            ("MiniatureCannonBalls", 20.5),
+        ] {
+            let (ammo_min, ammo_max, _) = ranged(ammo, rules);
+            assert_eq!(ammo_min - min, dps * speed, "{ammo}");
+            assert_eq!(ammo_max - max, dps * speed, "{ammo}");
+        }
+    }
+}

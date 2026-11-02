@@ -122,6 +122,7 @@ impl<A: Agent> Fight<A> {
             return;
         }
         self.update_position(side, false);
+        self.start_attack_for_walk_in(side, range);
         let distance = range - self.unit_config(side).distance;
         let speed = self.movement_speed(side);
         // Go time.Duration(math.Abs(d)/speed*1000) * time.Millisecond.

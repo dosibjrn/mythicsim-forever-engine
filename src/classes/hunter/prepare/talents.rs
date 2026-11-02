@@ -11,7 +11,7 @@ use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums;
 use crate::prepare::env::{Environment, FinalizeEffect};
 use crate::prepare::sim::SpellId;
-use crate::prepare::sim::{AuraConfig, AuraId, Cooldown, EventCallbacks, Sim, MILLISECOND};
+use crate::prepare::sim::{AuraConfig, AuraId, Cooldown, EventCallbacks, Rules, Sim, MILLISECOND};
 use crate::prepare::spell::{Cast, CastConfig, ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::spell_mod::{ModId, SpellModConfig, SpellModType};
 use crate::prepare::stats::{Stat, Stats};
@@ -367,16 +367,22 @@ impl Hunter {
             return;
         }
         // The tooltip reads "Shots, Stings and melee abilities", but 19416's class mask leaves
-        // out Sniper Shot and Strider Kick.
+        // out Sniper Shot, and Strider Kick until client 1.60.1.70707 added bit 2097152 of the
+        // third mask word (Flanking Strike and Strider Kick; SpellEffect 696992). The Go
+        // reference keeps the old mask.
         let value = spell_data()
             .efficiency
             .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_COST)
             .fraction_at(rank);
+        let melee = match sim.rules {
+            Rules::Forever => masks::MELEE,
+            Rules::GoReference => masks::MELEE & !masks::STRIDER_KICK,
+        };
         sim.add_static_mod(
             self.unit,
             class_mod(
                 SpellModType::PowerCostPctAdd,
-                masks::SHOTS_AND_STINGS | (masks::MELEE & !masks::STRIDER_KICK),
+                masks::SHOTS_AND_STINGS | melee,
                 value,
             ),
         );

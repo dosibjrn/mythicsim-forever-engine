@@ -1,56 +1,56 @@
 {
   "actions": {
     "{\"spellId\":10901}": {
-      "casts": 4323.0,
+      "casts": 4596.0,
       "crit_ticks": 0.0,
       "crits": 0.0,
       "healing": 0.0,
-      "hits": 4323.0,
+      "hits": 4596.0,
       "overhealing": 0.0,
-      "shielding": 4953250.172073606,
+      "shielding": 5266050.842204556,
       "ticks": 0.0
     },
     "{\"spellId\":10917}": {
-      "casts": 2679.0,
+      "casts": 2713.0,
       "crit_ticks": 0.0,
-      "crits": 470.0,
-      "healing": 3034145.125793782,
-      "hits": 2209.0,
-      "overhealing": 31267.20578207373,
+      "crits": 1051.0,
+      "healing": 4651113.976598295,
+      "hits": 4375.0,
+      "overhealing": 47930.25112275471,
       "shielding": 0.0,
       "ticks": 0.0
     },
-    "{\"spellId\":25314}": {
-      "casts": 2628.0,
-      "crit_ticks": 0.0,
-      "crits": 467.0,
-      "healing": 6525580.416998708,
-      "hits": 2161.0,
-      "overhealing": 370309.2765432004,
-      "shielding": 0.0,
-      "ticks": 0.0
-    },
-    "{\"spellId\":25315}": {
-      "casts": 2252.0,
-      "crit_ticks": 1956.0,
+    "{\"spellId\":10929}": {
+      "casts": 2878.0,
+      "crit_ticks": 2453.0,
       "crits": 0.0,
-      "healing": 2903475.65735933,
+      "healing": 3157191.9713464635,
       "hits": 0.0,
-      "overhealing": 555513.6890301509,
+      "overhealing": 604056.5053588749,
       "shielding": 0.0,
-      "ticks": 8922.0
+      "ticks": 11411.0
+    },
+    "{\"spellId\":10965}": {
+      "casts": 2896.0,
+      "crit_ticks": 0.0,
+      "crits": 511.0,
+      "healing": 6646451.960685935,
+      "hits": 2385.0,
+      "overhealing": 377168.4141274802,
+      "shielding": 0.0,
+      "ticks": 0.0
     },
     "{\"spellId\":401859}": {
-      "casts": 5138.0,
+      "casts": 5177.0,
       "crit_ticks": 0.0,
-      "crits": 2888.0,
-      "healing": 5537607.629430415,
-      "hits": 12755.0,
-      "overhealing": 314244.4570436577,
+      "crits": 2868.0,
+      "healing": 5513701.277352572,
+      "hits": 12715.0,
+      "overhealing": 312887.8353522491,
       "shielding": 0.0,
       "ticks": 0.0
     }
   },
-  "hps": 424.38237405710913,
-  "seconds_oom": 102.19378700299005
+  "hps": 466.60170739143746,
+  "seconds_oom": 98.3748543126866
 }

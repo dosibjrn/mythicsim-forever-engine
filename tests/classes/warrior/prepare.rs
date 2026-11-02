@@ -221,7 +221,8 @@ fn threat_follows_the_in_game_captures() {
     };
     near(&spell("revenge")["threat_multiplier"], 2.25);
     near(&spell("revenge")["flat_threat_bonus"], 0.0);
-    near(&spell("heroic_strike")["flat_threat_bonus"], 2.54 * 60.0);
+    // Heroic Strike VIII (spell level 56): rank IX is an Ahn'Qiraj 20 book (book_ranks).
+    near(&spell("heroic_strike")["flat_threat_bonus"], 2.54 * 56.0);
     near(&spell("cleave")["flat_threat_bonus"], 1.53 * 60.0);
     near(&spell("sunder_armor")["flat_threat_bonus"], 206.0);
 
@@ -288,4 +289,26 @@ fn concussion_blow_is_cast_under_forever_rules() {
         .sum();
     // Once a 45 second cooldown over the fight, 50 fights.
     assert!(casts >= 50.0 * 3.0, "{casts} casts");
+}
+
+/// Shadow Oil, beyond the Go reference pin (client 70707, enchantment 25): in either imbue slot
+/// it registers the Shadow Bolt of spell 350026 and a proc aura for the hand it is on.
+#[test]
+fn shadow_oil_registers_a_proc_for_its_hand() {
+    let prepared = prepared_after(|request| {
+        let consumables = &mut request["raid"]["parties"][0]["players"][0]["consumables"];
+        consumables["mhImbueId"] = 3594.into();
+        consumables["ohTempEnchantId"] = 3824.into();
+    });
+    assert!(aura(&prepared, "Shadow Oil (main hand)").is_some());
+    assert!(aura(&prepared, "Shadow Oil (off hand)").is_some());
+    assert!(aura(&prepared, "Frost Oil (main hand)").is_none());
+    let spells = prepared["player"]["spells"].as_array().unwrap();
+    assert_eq!(
+        spells
+            .iter()
+            .filter(|spell| spell["action_id"]["spell_id"] == 350026)
+            .count(),
+        1
+    );
 }

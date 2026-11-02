@@ -350,6 +350,10 @@ pub struct SealOfRighteousnessRank {
     pub judgement_spell_id: i32,
     pub proc_spell_id: i32,
     pub per_hit_value: f64,
+    /// The damage spell's spell power share with the weapon in the hand, given when an item swap
+    /// moves it between a one-hander and a two-hander: each hit reads the hand as it lands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hit_coefficient: Option<f64>,
 }
 
 /// What an item swap callback leaves its aura in under one set: activated if inactive (`on`),
@@ -494,6 +498,19 @@ pub struct SealOfLightRank {
     pub judgement_aura: String,
 }
 
+/// A Seal of Wisdom rank: its seal, the mana restore its proc casts and the restore's amount,
+/// and its judgement with the judgement's target aura.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealOfWisdomRank {
+    pub seal_spell_id: i32,
+    pub aura: String,
+    pub proc_spell_id: i32,
+    pub mana: f64,
+    pub judgement_spell_id: i32,
+    pub judgement_aura: String,
+}
+
 /// A Seal of the Crusader rank: its seal, judgement, the judgement's target aura, the melee
 /// speed multiplier and the main hand auto damage it takes back.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -595,6 +612,20 @@ pub struct LightsVigilRank {
     pub aura: String,
     pub refund: f64,
     pub metrics_action_id: ActionId,
+}
+
+/// A Light's Vigil rank in the Holy Paladin healer sim under Forever's rules (push 113554): the
+/// cast, its vigil aura on the player, and the party heal the next Holy Shock heal on the player
+/// triggers: the heal spell, its client roll at the caster level and the players it lands on.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightsVigilAllyRank {
+    pub spell_id: i32,
+    pub aura: String,
+    pub heal_spell_id: i32,
+    pub average: f64,
+    pub variance: f64,
+    pub players: u32,
 }
 
 /// A Holy Shock rank's damage roll.
@@ -901,12 +932,30 @@ pub struct Player {
     /// spell's range before it fires.
     #[serde(default, skip_serializing_if = "is_false")]
     pub move_waits_for_queued_cast: bool,
+    /// Forever's rule: a melee swing leaves the Auto Shot timer where it was, so a shot due at a
+    /// time still fires then after a swing lands before it. False is the Go reference, under
+    /// which every melee swing restarts the timer as if a shot had just fired.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub melee_keeps_auto_shot_timer: bool,
     /// Forever's rule: a move whose end time has come reads as arrived, so a rotation woken at
     /// that instant, before the move's end action runs, sees the destination. False is the Go
     /// reference, which reads the millisecond-rounded walk a hair short of it and can leave a
     /// Hunter who stepped in out of melee range for the rest of the fight.
     #[serde(default, skip_serializing_if = "is_false")]
     pub move_arrives_at_destination: bool,
+    /// Forever's rule: a rotation with a Move anywhere in it keeps looking through the global
+    /// cooldown, so a walk starts when its condition turns true, as moving needs no global
+    /// cooldown, and goes on from a queued instant as it goes off. False is the Go reference,
+    /// whose idle rotation sleeps until the global cooldown ends, and a walk timed to a swing
+    /// timer or waiting on a queued instant starts late.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub rotation_with_moves_looks_through_gcd: bool,
+    /// Forever's rule: a dual wielder who also shoots has a melee attack that an Auto Shot turns
+    /// off and a walk into melee range turns back on as it starts, and the off hand's half swing
+    /// wait counts from then. An attack still on when the player steps back in adds no new wait.
+    /// False is the Go reference, which adds the half swing on every arrival in melee range.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub off_hand_waits_from_attack_start: bool,
     /// Forever's rule: Autocast Other Cooldowns passes over a ready cooldown that may not fire
     /// at this point of the GCD (an explosive while the GCD is ready or too little of it is
     /// left for its cast, any other while the GCD runs) and looks at the next one. False is the
@@ -1419,6 +1468,10 @@ pub struct HealSpell {
     /// player, counted as this heal's shielding (Vestments of Faith's Armor of Faith).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crit_shield: Option<f64>,
+    /// Forever's rules: a share of each critical heal that becomes an absorb on its player
+    /// (Divine Aegis), counted as another spell's shielding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crit_absorb: Option<CritAbsorb>,
     /// A healer's gear under Forever's rules: the direct heal's multiplier while any of these
     /// heal over time ranks is up (Idol of Rejuvenation on Regrowth).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1430,6 +1483,20 @@ pub struct HealSpell {
     pub cooldown_per_hot_ns: Option<i64>,
 }
 
+/// A heal's critical hits shielding their player, as Divine Aegis does.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CritAbsorb {
+    /// The share of the critical heal the absorb holds.
+    pub share: f64,
+    /// The client spell ID of the absorb aura, whose spell the shielding counts on.
+    pub spell_id: i32,
+    /// Whether the ticks of a channelled heal (Penance) shield as well. A tick of a heal over
+    /// time never does.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ticks: bool,
+}
+
 /// A direct heal's bonus while a heal over time of the healer is up.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1437,6 +1504,43 @@ pub struct HotBonus {
     /// The heal over time ranks, by client spell ID.
     pub spell_ids: Vec<i32>,
     pub multiplier: f64,
+    /// Whether the bonus is the first player's alone, as Riptide's is on Chain Heal ("directly
+    /// on that target"), where the others jump on at their falloff of the unboosted heal.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub first_target_only: bool,
+}
+
+/// Renewed Hope (425280): the priest's Power Word: Shield leaves Weakened Soul on a member of
+/// the party, and a listed heal on a member who has it gains crit chance and cuts the debuff.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RenewedHope {
+    /// The heal ranks that gain the crit and cut the debuff, by client spell ID.
+    pub heal_spell_ids: Vec<i32>,
+    /// The shield ranks that leave Weakened Soul, by client spell ID.
+    pub shield_spell_ids: Vec<i32>,
+    /// The crit chance a heal gains, in percentage points.
+    pub crit_percent: f64,
+    /// What a heal takes off the debuff's remaining time, in nanoseconds.
+    pub cut_ns: i64,
+    /// Weakened Soul's duration, in nanoseconds.
+    pub duration_ns: i64,
+    /// Hits a second on each member of the party, the tank first: who needs the next heal.
+    pub hit_rates: Vec<f64>,
+}
+
+/// Litany of Light (1317006): casting a heal after a different heal restores a share of its
+/// base mana cost.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LitanyOfLight {
+    /// The share of the spell's base cost that returns.
+    pub share: f64,
+    /// The heal ranks, grouped by the spell they are a rank of: the next heal differs when its
+    /// group does.
+    pub families: Vec<Vec<i32>>,
+    /// The metrics the mana returned counts on.
+    pub metrics_action_id: ActionId,
 }
 
 /// A heal that reaches players as the party's damage hits them, in MythicSim's healer sims under
@@ -1983,6 +2087,10 @@ pub enum Effect {
         damage_per_energy: f64,
         damage_per_combo_point: f64,
         attack_power_per_combo_point: f64,
+        /// Predatory Discipline (1328613, hotfix push 113531): a landed bite keeps the energy
+        /// left after its cost and still deals the damage it is worth.
+        #[serde(default, skip_serializing_if = "is_false")]
+        keeps_energy: bool,
     },
     /// Shifting Power: mana into energy.
     ShiftingPower {
@@ -2091,6 +2199,12 @@ pub enum Effect {
     /// Barkskin: a cooldown whose aura's physical damage taken cut is a stat aura; cast in a
     /// fight it restarts the main hand swing.
     Barkskin {
+        spell_id: i32,
+        aura: String,
+    },
+    /// Thorns (Forever's rules): the cast turns on the druid's own shield, which strikes back
+    /// through the shared damage shield effects.
+    DruidThorns {
         spell_id: i32,
         aura: String,
     },
@@ -2255,6 +2369,16 @@ pub enum Effect {
         #[serde(default)]
         blocked: bool,
     },
+    /// The raid's Expose Armor under Forever's rules: the target opens the fight at
+    /// `armor_before`, its armor without Expose Armor, and the aura lands at full `delay_ns`
+    /// into the fight, taking the target to its prepared armor. The raid's Sunder Armor ramps
+    /// a stack every default GCD from the pull (`SunderArmorRamp`); landing at 3 s gives the
+    /// same armor-seconds over the opening, so a player gets the same damage from either.
+    ExternalExposeArmor {
+        aura: String,
+        delay_ns: i64,
+        armor_before: f64,
+    },
     /// Paladin judgement.go: a landed melee strike refreshes the active judgement debuffs.
     JudgementRefresh {
         trigger_aura: String,
@@ -2330,6 +2454,20 @@ pub enum Effect {
         healing_taken_multiplier: f64,
         table_healing_dealt_multiplier: f64,
     },
+    /// Paladin seal_of_wisdom.go: every rank's seal, mana restore and judgement. A landed melee
+    /// hit that is no proc runs the handler a batch window later, which casts the restore on the
+    /// paladin. The judgement's debuff returns mana through a `judgement_of_wisdom` effect.
+    SealOfWisdom {
+        ranks: Vec<SealOfWisdomRank>,
+    },
+    /// Paladin seal_of_justice.go: the seal, whose stun raid bosses are immune to, and the
+    /// judgement, whose debuff does nothing in the sim.
+    SealOfJustice {
+        seal_spell_id: i32,
+        aura: String,
+        judgement_spell_id: i32,
+        judgement_aura: String,
+    },
     /// Paladin seal_of_the_crusader.go: every rank's seal and judgement, and the spells the
     /// seal's main hand auto damage mod applies to. The judgement auras' Holy damage is their
     /// bid in the "Judgement of the Crusader" exclusive category.
@@ -2365,6 +2503,12 @@ pub enum Effect {
         player: PaladinHealUnit,
         target: PaladinHealUnit,
     },
+    /// Druid Bloom (hotfix push 113531, Forever's rules, healer sims): a heal over time of
+    /// `hots` that ends by its duration heals the player for its Spirit, as the spell `spell_id`.
+    Bloom {
+        spell_id: i32,
+        hots: Vec<i32>,
+    },
     /// MythicSim's healer sims (Rust only): every heal rank a class registers for the player,
     /// and the player's healing modifiers at reset with its bonus healing taken.
     Heals {
@@ -2374,6 +2518,14 @@ pub enum Effect {
         /// Forever's rules: the party's damage, when a heal follows it ([`SmartHeal`]).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         party: Option<PartyDamage>,
+    },
+    /// The healer Priest's talents that act on the party rather than on one heal (Rust only,
+    /// Forever's rules): what the heals of this priest cannot state by themselves.
+    PriestHealTalents {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        renewed_hope: Option<RenewedHope>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        litany_of_light: Option<LitanyOfLight>,
     },
     /// Paladin lay_on_hands.go: each rank the rotation names drains the paladin's mana,
     /// restores mana to the paladin when it heals the paladin, and heals for the paladin's
@@ -2401,6 +2553,14 @@ pub enum Effect {
     },
     /// Paladin hammer_of_wrath.go: the damage rolls are on the spells.
     HammerOfWrath {},
+    /// Paladin hammer_of_the_righteous.go (Forever's rules): Holy damage of `weapon_dps` times
+    /// the main hand's damage a second, on the melee special table, at the target and the next
+    /// ones up to `max_targets`, each calculated and dealt in turn.
+    HammerOfTheRighteous {
+        spell_id: i32,
+        weapon_dps: f64,
+        max_targets: i32,
+    },
     /// Paladin exorcism.go: the rolls are on the spells; it hits only an Undead or Demon.
     Exorcism {},
     /// Paladin holy_wrath.go: the rolls are on the spells; a cast that pauses the swing and
@@ -2421,6 +2581,10 @@ pub enum Effect {
         threat_percent: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instrument_of_law: Option<AuraMultiplier>,
+        /// Push 113554 under Forever's rules: the multiplier on all the paladin's threat while
+        /// the aura holds (effect 1367626, +33%).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        all_threat_multiplier: Option<f64>,
     },
     /// Paladin swift_judgement.go: a major cooldown that finishes Judgement's cooldown and
     /// makes the next Judgement free.
@@ -2484,6 +2648,12 @@ pub enum Effect {
     LightsVigil {
         ranks: Vec<LightsVigilRank>,
     },
+    /// Light's Vigil on an ally (push 113554, the Holy Paladin healer sim under Forever's rules):
+    /// the cast puts a vigil on the player for 30 sec, one at a time, and the next Holy Shock
+    /// heal on the player spends it, triggers no cooldown and heals the player's whole party.
+    LightsVigilAlly {
+        ranks: Vec<LightsVigilAllyRank>,
+    },
     /// Paladin holy_shock.go: every rank's damage roll.
     HolyShock {
         ranks: Vec<HolyShockRank>,
@@ -2495,6 +2665,24 @@ pub enum Effect {
         aura: String,
         crit: f64,
         spells: Vec<String>,
+    },
+    /// Paladin oath_of_light.go (hotfix push 113554, Forever's rules): the cast swears the Oath
+    /// on the healed ally for the aura's 5 minutes, and its Holy Light, Flash of Light and Holy
+    /// Shock heals add the flat bonus to their base amount while it holds. Boundless Light's crit
+    /// on the Holy Shock heal holds only without it.
+    OathOfLight {
+        spell_id: i32,
+        aura: String,
+        holy_light: f64,
+        flash_of_light: f64,
+        holy_shock: f64,
+        boundless_light_crit: f64,
+        /// The share of the party's heals that reach the Oath's holder, among the players the
+        /// healer's heals land on: the tank's share of the party's hits. A heal that does not
+        /// reach the holder gets none of the flat bonus, and a Holy Shock heal on it has
+        /// Boundless Light's crit. One is the Oath on every heal.
+        #[serde(default = "one")]
+        holder_share: f64,
     },
     /// An item proc common/shared/shared_utils.go builds from client rows: a listener that
     /// casts a single target magic hit at once on the unit hit. A weapon proc rolls its proc
@@ -2667,12 +2855,56 @@ pub enum Effect {
         health: f64,
         metrics_action_id: ActionId,
     },
+    /// Oil of Immolation (MythicSim Rust only, client 70707 item 8956): the character uses the oil
+    /// `prepot_ns` before the pull and again as its `aura` ends, and each of the aura's `ticks`
+    /// periods casts the tick `spell` (a Fire hit of `damage` on every target) if the player
+    /// stands within `radius` yards. A use while the player's melee swings are running pushes
+    /// each pending swing back by `swing_delay_ns`; the use before the pull finds none running.
+    /// A prepared value without the two durations (an older one) uses the oil at the pull and
+    /// delays nothing.
+    OilOfImmolation {
+        item_id: i32,
+        aura: String,
+        spell: usize,
+        period_ns: i64,
+        ticks: i32,
+        radius: f64,
+        damage: f64,
+        #[serde(default)]
+        swing_delay_ns: i64,
+        #[serde(default)]
+        prepot_ns: i64,
+    },
     /// core/battle_squawk.go (Forever's rules): the party's squawks, up from the reset in the
     /// exported melee state, take their melee speed back as their stacks fall to none at the
     /// aura's expiry, `per_stack` each.
     BattleSquawk {
         aura: String,
         per_stack: f64,
+    },
+    /// items_trinkets.go Mark of the Champion (Forever's rules, targets of its mob types): while
+    /// the aura holds, the player's attack tables add the bonus. Go's melee attack power reads
+    /// `ranged_attack_power`, its ranged attack power the same, and a magic spell's bonus damage
+    /// `spell_damage`.
+    MobTypeBonus {
+        aura: String,
+        attack_power: f64,
+        ranged_attack_power: f64,
+        spell_damage: f64,
+        /// Under Forever's rules, melee attack power against the targets' type alone
+        /// (`A_MOD_MELEE_ATTACK_POWER_VERSUS`), as Quel'Serrar's Sanctuary grants against
+        /// Dragonkin; ranged attacks do not read it.
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        melee_attack_power: f64,
+    },
+    /// core/enchant_speed.go `registerSpeedAura` (Forever's rules, with an item swap): an item
+    /// or enchant's speed aura multiplies the melee, ranged and cast speed while up. The one
+    /// worn from the start is in the exported speeds; the swap gains and expires them.
+    SpeedAura {
+        aura: String,
+        melee_multiplier: f64,
+        ranged_multiplier: f64,
+        cast_multiplier: f64,
     },
     /// Rogue items.go Darkmantle Armor (4), Rogue Armor Energize (Forever's rules): landed hits
     /// roll each spell's chance from the set's proc manager under the label; a batch window
@@ -2710,7 +2942,9 @@ pub enum Effect {
     Vindication {
         trigger_aura: String,
         proc_chance: f64,
-        aura: String,
+        /// The paladin's attack power aura, which push 113554 removes under Forever's rules.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aura: Option<String>,
         target_aura: String,
     },
     /// Paladin talents_retribution.go Sanctified Judgement: Judgement returns part of the
@@ -2733,6 +2967,22 @@ pub enum Effect {
         trigger_aura: String,
         echoes: Vec<SealEcho>,
     },
+    /// Paladin Unsealed Wrath (push 113554, Forever's rules): landed melee autos store the
+    /// active seal in its Echo, up to the Echo's stacks; one landed with a different seal spends
+    /// every other Echo's stacks, each a roll of the stored seal.
+    UnsealedWrath {
+        trigger_aura: String,
+        echoes: Vec<SealEcho>,
+    },
+    /// Paladin Swift Judgement (push 113554, Forever's rules): a second Judgement on its own
+    /// cooldown, which unleashes the active seal's judgement, free and off the global cooldown.
+    SecondJudgement {
+        spell_id: i32,
+    },
+    /// Paladin Shieldsworn (push 113554, Forever's rules): a landed Holy Strike triggers the
+    /// active Holy Shield's damage without a charge and Shield Specialization's mana chance
+    /// without its cooldown.
+    Shieldsworn {},
     /// Every Mind Blast rank's direct hit.
     MindBlast {},
     /// Every Shadow Word: Death rank's direct hit; Early Demise adds crit in the 20% execute
@@ -2977,6 +3227,13 @@ pub enum Effect {
         aura: String,
         school_damage_taken_multiplier: f64,
         schools: Vec<String>,
+    },
+    /// The Windshaper Skyborne racial Skysight: a cast that only a rotation action uses, whose
+    /// aura Elemental Blessing multiplies the movement speed while up.
+    Skysight {
+        spell_id: i32,
+        aura: String,
+        speed_multiplier: f64,
     },
     /// The High Order Skyborne racial Read Ley Line: a cast that only a rotation action
     /// uses, whose aura Energized multiplies mana regeneration.
@@ -3337,17 +3594,6 @@ pub enum Effect {
         aura: String,
         changes: Vec<SpellModChange>,
     },
-    /// MythicSim's healer sims under Forever's rules: a self buff of globes, as Water Shield.
-    /// Casting `spell_id` puts `aura` up with all its stacks. Each direct heal of the player's
-    /// that crits spends a globe, at most once per `icd_ns`, for `mana_fraction` of the maximum
-    /// mana; the last globe spent takes the aura down.
-    ManaGlobes {
-        spell_id: i32,
-        aura: String,
-        mana_fraction: f64,
-        icd_ns: i64,
-        metrics_action_id: ActionId,
-    },
     InertListener {
         unit: String,
         aura: String,
@@ -3575,6 +3821,13 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         school_power_stat: Option<String>,
     },
+    /// The Black Book under Forever's rules: its use, which waits for a demon out, activates
+    /// the demon's aura, which multiplies the demon's damage done in every school while up.
+    BlackBook {
+        item_id: i32,
+        aura: String,
+        damage_multiplier: f64,
+    },
     /// The summoned demon's AI: the first ability it can cast while its mana stays above
     /// `min_mana`, otherwise a wait.
     WarlockPet {
@@ -3777,6 +4030,16 @@ pub enum Effect {
         aura: String,
         duration_ns: i64,
     },
+    /// Mana Tide Totem (MythicSim's Restoration shaman sim, Forever's rules): the water totem's
+    /// aura, whose MP5 is a class stat aura. It takes the water totem slot of the Healing Stream
+    /// Totems `healing_stream_totems` names: its cast ends their heals over time, and a cast of
+    /// one of them ends it.
+    ManaTideTotem {
+        spell_id: i32,
+        aura: String,
+        duration_ns: i64,
+        healing_stream_totems: Vec<i32>,
+    },
     /// Flametongue Totem: the totem's aura turns on a trigger that casts a fire hit off landed
     /// main hand autos, unless a main hand Flametongue Weapon holds the benefit.
     FlametongueTotem {
@@ -3908,6 +4171,11 @@ pub enum Effect {
         /// Patch 182: the threat of a gain is `threat_per_rage` times the unit's threat multiplier at
         /// the gain, split between the targets in combat. Off, `threat_per_rage` on each target.
         threat_multiplied: bool,
+        /// Forever's rules: a critical white hit gives `CritRageMultiplier` times its swing's whole
+        /// rage, a two-hander's factor included, in place of the crit rage values. Without it, as
+        /// in Go, a two-hander's crit adds the rage of the swing before that factor.
+        #[serde(default, skip_serializing_if = "is_false")]
+        crit_multiplies_swing: bool,
     },
     /// Go `AttachMultiplicativePseudoStatBuff` on the player's damage taken multiplier, for
     /// auras that are not up from the reset: the gain multiplies, the expiry divides.
@@ -4023,6 +4291,43 @@ pub enum Effect {
         spell_id: i32,
         base_damage: f64,
     },
+    /// Shield Bash (Forever's rules): a fixed client base on the special hit table, refunded on
+    /// a miss, with a shield in Battle or Defensive Stance.
+    ShieldBash {
+        spell_id: i32,
+        base_damage: f64,
+        can_block: bool,
+    },
+    /// Mocking Blow (Forever's rules): a fixed client base on the special hit table, refunded on
+    /// a miss, in Battle Stance.
+    MockingBlow {
+        spell_id: i32,
+        base_damage: f64,
+    },
+    /// Disarm (Forever's rules): a special hit roll without damage that puts up the target's
+    /// aura, refunded on a miss, in Defensive Stance. The aura only tracks its uptime.
+    WarriorDisarm {
+        spell_id: i32,
+        aura: String,
+    },
+    /// Victory Rush (Forever's rules): castable while Victorious is up, which nothing in the
+    /// sim brings up, since no target dies.
+    VictoryRush {
+        spell_id: i32,
+        aura: String,
+    },
+    /// Intercept (Forever's rules): a cast at range in Berserker Stance that puts up its dash
+    /// aura for the spell's cooldown and runs the warrior to `overshoot` yards inside the
+    /// minimum range. The aura multiplies the movement speed, ends with the movement, and at its
+    /// end the stun's damage lands on the target with an outcome that always hits.
+    WarriorIntercept {
+        spell_id: i32,
+        aura: String,
+        speed_multiplier: f64,
+        overshoot: f64,
+        min_range: f64,
+        damage: f64,
+    },
     /// Bloodrage: instant and periodic rage for a share of base health.
     Bloodrage {
         spell_id: i32,
@@ -4085,6 +4390,11 @@ pub enum Effect {
         aura: String,
         melee_speed_multiplier: f64,
         charges: i32,
+        /// Forever's rules: every white swing spends a charge whatever its outcome, and a Heroic
+        /// Strike or Cleave spends one only when it misses. Without it, as in Go, a landed white
+        /// hit spends one, Heroic Strike and Cleave included.
+        #[serde(default, skip_serializing_if = "is_false")]
+        every_swing_spends: bool,
     },
     /// Anger Management: rage every period from the reset.
     AngerManagement {
@@ -4606,6 +4916,11 @@ pub enum Effect {
         spell_id: i32,
         base_damage: f64,
     },
+    /// Freezing Trap (Forever's rules): a cast without an effect, which spends its mana, global
+    /// cooldown and the trap category's cooldown.
+    FreezingTrap {
+        spell_id: i32,
+    },
     /// Immolation Trap: a magic hit roll without a hit count, then a fire dot.
     ImmolationTrap {
         spell_id: i32,
@@ -4877,6 +5192,18 @@ pub enum Effect {
         metrics_action_id: ActionId,
         delay_ns: i64,
     },
+    /// The same for mana, under Forever's rules: a set bonus proc trigger the class's own
+    /// domain does not export, whose handler a spell batch window after a landed hit restores
+    /// mana to a character with a mana bar, as Beaststalker Armor's five piece bonus on a class
+    /// other than a Hunter.
+    ManaProc {
+        trigger_aura: String,
+        rng_label: String,
+        chances: Vec<SpellChance>,
+        mana: f64,
+        metrics_action_id: ActionId,
+        delay_ns: i64,
+    },
     /// Go aura_helpers.go ApplyFixedUptimeAura: a periodic roll that activates the aura and a
     /// first roll with a random duration.
     FixedUptimeAura {
@@ -4966,16 +5293,21 @@ impl Effect {
             Effect::ItemSwap { .. } => "item_swap",
             Effect::SealOfTheCrusader { .. } => "seal_of_the_crusader",
             Effect::SealOfLight { .. } => "seal_of_light",
+            Effect::SealOfWisdom { .. } => "seal_of_wisdom",
+            Effect::SealOfJustice { .. } => "seal_of_justice",
             Effect::SealOfFury { .. } => "seal_of_fury",
             Effect::HolyLightHaste { .. } => "holy_light_haste",
             Effect::PaladinHeals { .. } => "paladin_heals",
             Effect::PaladinAuraCast { .. } => "paladin_aura_cast",
             Effect::Heals { .. } => "heals",
+            Effect::PriestHealTalents { .. } => "priest_heal_talents",
+            Effect::Bloom { .. } => "bloom",
             Effect::LayOnHands { .. } => "lay_on_hands",
             Effect::EyeForAnEye { .. } => "eye_for_an_eye",
             Effect::PursuitOfJustice { .. } => "pursuit_of_justice",
             Effect::HolyStrike { .. } => "holy_strike",
             Effect::HammerOfWrath { .. } => "hammer_of_wrath",
+            Effect::HammerOfTheRighteous { .. } => "hammer_of_the_righteous",
             Effect::Exorcism { .. } => "exorcism",
             Effect::HolyWrath { .. } => "holy_wrath",
             Effect::Consecration { .. } => "consecration",
@@ -4984,8 +5316,12 @@ impl Effect {
             Effect::SanctifiedJudgement { .. } => "sanctified_judgement",
             Effect::SacredArbiter { .. } => "sacred_arbiter",
             Effect::TwistOfLight { .. } => "twist_of_light",
+            Effect::UnsealedWrath { .. } => "unsealed_wrath",
+            Effect::SecondJudgement { .. } => "second_judgement",
+            Effect::Shieldsworn { .. } => "shieldsworn",
             Effect::HolyShock { .. } => "holy_shock",
             Effect::LightsVigil { .. } => "lights_vigil",
+            Effect::LightsVigilAlly { .. } => "lights_vigil_ally",
             Effect::StatProc { .. } => "stat_proc",
             Effect::Illumination { .. } => "illumination",
             Effect::RighteousFury { .. } => "righteous_fury",
@@ -4997,6 +5333,7 @@ impl Effect {
             Effect::IronCreed { .. } => "iron_creed",
             Effect::HolyShield { .. } => "holy_shield",
             Effect::DivineFavor { .. } => "divine_favor",
+            Effect::OathOfLight { .. } => "oath_of_light",
             Effect::SpellDataDamageProc { .. } => "spell_data_damage_proc",
             Effect::SpellDataHealProc { .. } => "spell_data_heal_proc",
             Effect::SecondWind { .. } => "second_wind",
@@ -5006,10 +5343,14 @@ impl Effect {
             Effect::HealthRageProc { .. } => "health_rage_proc",
             Effect::EnergyProc { .. } => "energy_proc",
             Effect::BattleSquawk { .. } => "battle_squawk",
+            Effect::SpeedAura { .. } => "speed_aura",
+            Effect::MobTypeBonus { .. } => "mob_type_bonus",
             Effect::HealthRegenAura { .. } => "health_regen_aura",
+            Effect::OilOfImmolation { .. } => "oil_of_immolation",
             Effect::DamageOnUse { .. } => "damage_on_use",
             Effect::ArmorDebuffProc { .. } => "armor_debuff_proc",
             Effect::SunderArmorRamp { .. } => "sunder_armor_ramp",
+            Effect::ExternalExposeArmor { .. } => "external_expose_armor",
             Effect::StatAuras { .. } => "stat_auras",
             Effect::CatForm { .. } => "cat_form",
             Effect::Prowl { .. } => "prowl",
@@ -5030,6 +5371,7 @@ impl Effect {
             Effect::PrimalBite { .. } => "primal_bite",
             Effect::Swipe { .. } => "swipe",
             Effect::Hurricane { .. } => "hurricane",
+            Effect::DruidThorns { .. } => "druid_thorns",
             Effect::NaturalReaction { .. } => "natural_reaction",
             Effect::Barkskin { .. } => "barkskin",
             Effect::NaturesBounty { .. } => "natures_bounty",
@@ -5045,6 +5387,7 @@ impl Effect {
             Effect::ShieldBlock { .. } => "shield_block",
             Effect::LastStand { .. } => "last_stand",
             Effect::ReadLeyLine { .. } => "read_ley_line",
+            Effect::Skysight { .. } => "skysight",
             Effect::PresenceOfMind { .. } => "presence_of_mind",
             Effect::IceLance { .. } => "ice_lance",
             Effect::ArcaneMissiles { .. } => "arcane_missiles",
@@ -5069,7 +5412,6 @@ impl Effect {
             Effect::StackingCdOnUse { .. } => "stacking_cd_on_use",
             Effect::ShieldOnHeal { .. } => "shield_on_heal",
             Effect::InstantCastAura { .. } => "instant_cast_aura",
-            Effect::ManaGlobes { .. } => "mana_globes",
             Effect::InertListener { .. } => "inert_listener",
             Effect::ShadowBolt {} => "shadow_bolt",
             Effect::Immolate { .. } => "immolate",
@@ -5127,6 +5469,7 @@ impl Effect {
             Effect::WaterShield { .. } => "water_shield",
             Effect::GraceOfAirTotem { .. } => "grace_of_air_totem",
             Effect::ManaSpringTotem { .. } => "mana_spring_totem",
+            Effect::ManaTideTotem { .. } => "mana_tide_totem",
             Effect::WindfuryTotemSelf { .. } => "windfury_totem_self",
             Effect::FlametongueTotem { .. } => "flametongue_totem",
             Effect::FlametongueWeapon { .. } => "flametongue_weapon",
@@ -5169,6 +5512,11 @@ impl Effect {
             Effect::IntimidatingShout { .. } => "intimidating_shout",
             Effect::ConcussionBlow { .. } => "concussion_blow",
             Effect::Pummel { .. } => "pummel",
+            Effect::ShieldBash { .. } => "shield_bash",
+            Effect::MockingBlow { .. } => "mocking_blow",
+            Effect::WarriorDisarm { .. } => "warrior_disarm",
+            Effect::VictoryRush { .. } => "victory_rush",
+            Effect::WarriorIntercept { .. } => "warrior_intercept",
             Effect::Bloodthrill { .. } => "bloodthrill",
             Effect::WeaponmasterSword { .. } => "weaponmaster_sword",
             Effect::Revenge { .. } => "revenge",
@@ -5184,6 +5532,7 @@ impl Effect {
             Effect::AimedShot { .. } => "aimed_shot",
             Effect::ArcaneShot { .. } => "arcane_shot",
             Effect::RenatakisCharm { .. } => "renatakis_charm",
+            Effect::BlackBook { .. } => "black_book",
             Effect::HunterSetManaProc { .. } => "hunter_set_mana_proc",
             Effect::SniperShot { .. } => "sniper_shot",
             Effect::MultiShot { .. } => "multi_shot",
@@ -5233,6 +5582,7 @@ impl Effect {
             Effect::StriderKick { .. } => "strider_kick",
             Effect::WingClip { .. } => "wing_clip",
             Effect::ImmolationTrap { .. } => "immolation_trap",
+            Effect::FreezingTrap { .. } => "freezing_trap",
             Effect::ExplosiveTrap { .. } => "explosive_trap",
             Effect::Volley { .. } => "volley",
             Effect::Resourcefulness { .. } => "resourcefulness",
@@ -5253,6 +5603,7 @@ impl Effect {
             Effect::FixedUptimeAura { .. } => "fixed_uptime_aura",
             Effect::HealthOnCast { .. } => "health_on_cast",
             Effect::EnergizeProc { .. } => "energize_proc",
+            Effect::ManaProc { .. } => "mana_proc",
         }
     }
 }

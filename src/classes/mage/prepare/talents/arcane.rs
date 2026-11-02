@@ -6,7 +6,8 @@ use crate::contracts::prepared_v2::ActionId;
 use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger};
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
-use crate::prepare::sim::{AuraConfig, EventCallbacks, Sim, UnitId, MILLISECOND};
+use crate::prepare::hotfix_113554;
+use crate::prepare::sim::{AuraConfig, EventCallbacks, Rules, Sim, UnitId, MILLISECOND};
 use crate::prepare::spell::school;
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::{SchoolIndex, Stat, Stats};
@@ -66,6 +67,9 @@ impl Mage {
         );
     }
 
+    /// Client 1.60.1.70707 removed Arcane Focus (11222, TraitNode 105814). Forever's talent
+    /// layout has no position for it, so under Forever's rules the field is never set and this
+    /// registers nothing; Precision gives Arcane spells their talent hit instead.
     fn register_arcane_focus(&self, sim: &mut Sim, unit: UnitId) {
         let rank = self.talents.i32("arcane_focus");
         if rank == 0 {
@@ -180,10 +184,17 @@ impl Mage {
         if rank == 0 {
             return;
         }
+        // Three ranks under Forever's rules since hotfix push 113531 (25/50/75% of Intellect),
+        // two in the Go reference.
+        let data = spell_data();
+        let ladder = match sim.rules {
+            Rules::Forever => &data.arcane_resilience_113531,
+            Rules::GoReference => &data.arcane_resilience,
+        };
         sim.unit_mut(unit).sdm.add_stat_dependency(
             Stat::Intellect,
             Stat::Armor,
-            spell_data().arcane_resilience.fraction_at(rank),
+            ladder.fraction_at(rank),
         );
     }
 
@@ -357,11 +368,15 @@ impl Mage {
     /// Go `Mage.registerArcaneCharges`: Forever's Arcane Blast buff (400573) as client 70425
     /// redesigned it. Each stack gives the mage 15% of its Intellect as spell damage and raises
     /// Arcane Blast's own cost; up to four stacks, 15 sec from the first, and nothing spends it.
+    /// Hotfix push 113531 makes it 12%, 100% and 18 sec under Forever's rules.
     pub(crate) fn register_arcane_charges(&self, sim: &mut Sim, unit: UnitId) {
         if !self.talents.bool("arcane_blast") {
             return;
         }
-        let buff_rank = spell_data().arcane_blast_triggered.highest();
+        // Hotfix push 113531's row under Forever's rules: 12% of Intellect a stack, 100% more
+        // cost a stack, 18 sec.
+        let buff_rank =
+            hotfix_113554::row(sim.rules, spell_data().arcane_blast_triggered.highest().id);
         let intellect_per_stack = buff_rank.effect_n(1).percent();
         let cost_per_stack = buff_rank
             .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_COST)

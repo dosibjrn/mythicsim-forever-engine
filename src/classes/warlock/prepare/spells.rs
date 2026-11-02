@@ -79,7 +79,7 @@ pub(super) fn target_units(sim: &Sim) -> Vec<UnitId> {
 
 impl Warlock {
     pub(super) fn register_corruption(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().corruption.highest();
+        let rank = spell_data().corruption.highest_for(sim.rules);
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -210,7 +210,7 @@ impl Warlock {
     }
 
     pub(super) fn register_immolate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().immolate.highest();
+        let rank = spell_data().immolate.highest_for(sim.rules);
         let tick = rank.periodic_effect();
         let immolate = sim.register_spell(
             unit,

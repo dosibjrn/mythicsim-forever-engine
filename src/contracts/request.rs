@@ -30,6 +30,12 @@ pub fn field_by_number(type_name: &str, number: u32) -> Option<(String, bool)> {
     Some((field.name.clone(), field.kind == FieldKind::Bool))
 }
 
+/// A message field's proto name and whether it is a bool, by proto or JSON name.
+pub fn field_by_name(type_name: &str, name: &str) -> Option<(String, bool)> {
+    let field = schema::message(type_name).ok()?.field(name)?;
+    Some((field.name.clone(), field.kind == FieldKind::Bool))
+}
+
 /// The name of an enum value by number.
 pub fn enum_name(enum_type: &str, number: i32) -> Option<&'static str> {
     schema::enum_value_name(enum_type, number)

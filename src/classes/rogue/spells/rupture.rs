@@ -49,6 +49,7 @@ impl Rupture {
         if result.landed() {
             let points = fight.energy_bar().combo_points;
             let dot = fight.spells[spell].dot.expect("Rupture has a dot");
+            let dot = fight.dot_on(dot, target);
             fight.dots[dot].base_tick_count = self.base_tick_count + points;
             fight.apply_dot(dot);
             snapshot = Some(self.snapshot(fight, points));

@@ -10,6 +10,26 @@ use serde::Deserialize;
 
 const SCHEMA: &str = include_str!("../../../data/proto-schema.json");
 
+/// Enum values Forever has that the pinned reference schema lacks, each added unless the schema
+/// already holds its name or number (README, Rust-only mechanics): Forever's Engineering ammo,
+/// Swiftfeather Arrow (274387) and Swiftstrike Shot (274388).
+const FOREVER_ENUM_VALUES: [(&str, &str, i32); 2] = [
+    ("proto.HunterOptions.Ammo", "SwiftfeatherArrow", 13),
+    ("proto.HunterOptions.Ammo", "SwiftstrikeShot", 14),
+];
+
+/// Message fields Forever has that the pinned reference schema lacks (README, Rust-only
+/// mechanics), each added unless the message already has a field of that name or number. They
+/// number from 1000, clear of anything the reference or an upstream merge will add: the
+/// reference refuses them as unknown fields, so a request that sets one is a Rust-only request.
+/// Each is a `bool` of the message: (message, proto name, JSON name, number).
+const FOREVER_BOOL_FIELDS: [(&str, &str, &str, u32); 1] = [(
+    "proto.ConsumesSpec",
+    "oil_of_immolation",
+    "oilOfImmolation",
+    1000,
+)];
+
 /// A field's protobuf kind, by Go's `protoreflect.Kind` name.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -148,7 +168,49 @@ struct Schema {
 fn schema() -> &'static Schema {
     static SCHEMA_CELL: OnceLock<Schema> = OnceLock::new();
     SCHEMA_CELL.get_or_init(|| {
-        let raw: RawSchema = serde_json::from_str(SCHEMA).expect("data/proto-schema.json parses");
+        let mut raw: RawSchema =
+            serde_json::from_str(SCHEMA).expect("data/proto-schema.json parses");
+        for (enum_name, name, number) in FOREVER_ENUM_VALUES {
+            let values = raw
+                .enums
+                .get_mut(enum_name)
+                .expect("the schema has the enum");
+            if values
+                .iter()
+                .all(|value| value.name != name && value.number != number)
+            {
+                values.push(RawEnumValue {
+                    name: name.to_string(),
+                    number,
+                });
+            }
+        }
+        for (message, name, json_name, number) in FOREVER_BOOL_FIELDS {
+            let fields = &mut raw
+                .messages
+                .get_mut(message)
+                .expect("the schema has the message")
+                .fields;
+            if fields
+                .iter()
+                .all(|field| field.name != name && field.number != number)
+            {
+                fields.push(FieldSchema {
+                    name: name.to_string(),
+                    json_name: json_name.to_string(),
+                    number,
+                    kind: FieldKind::Bool,
+                    repeated: false,
+                    packed: false,
+                    optional: false,
+                    oneof: None,
+                    oneof_index: None,
+                    type_name: None,
+                    map_key: None,
+                    map_value: None,
+                });
+            }
+        }
         let messages = raw
             .messages
             .into_iter()

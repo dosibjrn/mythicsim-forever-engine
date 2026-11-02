@@ -18,7 +18,7 @@ use crate::contracts::prepared_v2::ActionId;
 use crate::contracts::request::Message;
 use crate::data::spells::Spell;
 
-use super::aura_helpers::{ProcTrigger, StackingStatAura, StatBuffAura};
+use super::aura_helpers::{HitOutcome, ProcTrigger, StackingStatAura, StatBuffAura};
 use super::dbcenums;
 use super::env::Environment;
 use super::item_swap::{ManagerChance, ManagerMask};
@@ -52,7 +52,16 @@ pub(crate) struct SpellDataProc {
     pub buff_spell_id: i32,
     /// A "Chance on hit" item effect or a combat enchant.
     pub is_weapon_proc: bool,
+    /// A chance on hit the client states no rate for (its trigger's `ProcChance` is 101, the
+    /// server's "chance on hit" sentinel, with no procs per minute), which the reference leaves
+    /// unregistered. Under Forever's rules it rolls [`CHANCE_ON_HIT_PPM`].
+    pub rateless: bool,
 }
+
+/// The rate MythicSim assumes for a chance on hit the client states no rate for: Classic servers
+/// roll a `ProcChance` of 101 at 1.8% per second of the hitting weapon's speed, which is 1.08
+/// procs a minute. No Blizzard source states Forever's; README, Rust-only mechanics.
+pub(crate) const CHANCE_ON_HIT_PPM: f64 = 1.08;
 
 impl SpellDataProc {
     /// The zero config the generated registrations fill in.
@@ -63,6 +72,7 @@ impl SpellDataProc {
         trigger_spell_id: 0,
         buff_spell_id: 0,
         is_weapon_proc: false,
+        rateless: false,
     };
 
     /// Go `SpellDataProc.effectSource`.
@@ -467,6 +477,7 @@ pub(crate) fn spell_data_proc_listener(
         weapon_proc_shape(cfg),
         spell_data_proc_rate(source, trigger, ppm),
         stated_weapon_proc_chance(cfg.is_weapon_proc, source, trigger),
+        chance_on_hit_rate(cfg, source),
     ];
     let mut config = proc_trigger(sim, Some(unit), trigger, &opts);
     config.name = cfg.name.to_string();
@@ -500,6 +511,26 @@ fn spell_data_proc_rate(source: EffectSource, row: &'static Spell, entry_ppm: f6
         // in place next to a manager would gate the rate twice.
         trigger.proc_chance = 0.0;
         trigger.dpm = Some(dpm);
+    })
+}
+
+/// A rateless chance on hit's rate under Forever's rules ([`CHANCE_ON_HIT_PPM`]), in place of
+/// whatever the row's sentinel reads as. A weapon rolls it on its own hits, by its own speed; any
+/// other item on the wearer's landed melee and ranged hits, by the speed of the weapon that hit.
+/// Spells never roll it.
+fn chance_on_hit_rate(cfg: &SpellDataProc, source: EffectSource) -> ProcOpt {
+    let rateless = cfg.rateless;
+    Rc::new(move |sim, character, trigger| {
+        if !rateless || sim.rules != super::sim::Rules::Forever {
+            return;
+        }
+        let unit = character.expect("a rate needs a character");
+        if !trigger.is_weapon_proc {
+            trigger.proc_mask = ProcMask(trigger.proc_mask.0 & ProcMask::MELEE_OR_RANGED.0);
+            trigger.outcome = HitOutcome::LANDED;
+        }
+        trigger.proc_chance = 0.0;
+        trigger.dpm = dpm_for_mask(sim, unit, source, CHANCE_ON_HIT_PPM, trigger.proc_mask);
     })
 }
 
@@ -748,7 +779,18 @@ fn apply_spell_data_damage_proc(env: &mut Environment, cfg: &SpellDataProc) {
     let unit = env.player;
     let source = cfg.source();
     let (trigger, damage) = cfg.rows();
-    let config = spell_data_proc_damage_spell(env, damage, true);
+    let mut config = spell_data_proc_damage_spell(env, damage, true);
+    // A Forever chance on hit's damage over time is the item's debuff, not the class spell its
+    // row is named after: the Rend of Blood Talon (13318) is not the Warrior's.
+    if cfg.rateless && env.sim.rules == super::sim::Rules::Forever && config.dot.number_of_ticks > 0
+    {
+        config.dot.aura.label = format!("{} {}", damage.name, damage.id);
+        // A damage over time a missile carries alone goes on as the hit lands: its flight is
+        // not modelled (README, Rust-only mechanics).
+        if damage.damage_effect().is_nil() {
+            config.missile_speed = 0.0;
+        }
+    }
     env.sim.register_spell(unit, config);
 
     // The proc's damage lands on the hit that caused it rather than on the next one.

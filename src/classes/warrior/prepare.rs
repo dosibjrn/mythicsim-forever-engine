@@ -8,6 +8,9 @@ pub(crate) mod items;
 pub(crate) mod masks;
 mod shouts;
 mod spell_data;
+
+/// The ranks of Charge and Intercept, which run the warrior to the target.
+pub(crate) const RUN_SPELLS: [i32; 6] = [100, 6178, 11578, 20252, 20616, 20617];
 mod spells;
 mod stances;
 mod talents;

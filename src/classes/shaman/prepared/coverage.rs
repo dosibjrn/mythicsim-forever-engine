@@ -15,6 +15,7 @@ pub(crate) const GATE: ClassGate = ClassGate {
     several_targets: Some(several_targets),
     tanks_several_targets: false,
     other_target_casts: Some(crate::engine::coverage::no_limits),
+    self_spells: &[],
 };
 
 /// Shaman effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -38,6 +39,7 @@ const EFFECTS: &[&str] = &[
     "lightning_shield",
     "magma_totem",
     "mana_spring_totem",
+    "mana_tide_totem",
     "maelstrom_weapon",
     "rage_of_the_farseer",
     "rockbiter_threat",
@@ -176,6 +178,7 @@ fn limits(prepared: &PreparedV2, reachable: &[&Spell]) -> Vec<String> {
             Effect::StrengthOfEarthTotem { spell_id, .. } => known.push(*spell_id),
             Effect::GraceOfAirTotem { spell_id, .. } => known.push(*spell_id),
             Effect::ManaSpringTotem { spell_id, .. } => known.push(*spell_id),
+            Effect::ManaTideTotem { spell_id, .. } => known.push(*spell_id),
             Effect::WindfuryTotemSelf { spell_id, .. } => known.push(*spell_id),
             _ => {}
         }

@@ -77,6 +77,8 @@ pub(crate) enum WarlockSpell {
     DemonicBrand,
     /// The Imp's Firebolt.
     Firebolt,
+    /// The Black Book's use under Forever's rules.
+    BlackBook,
 }
 
 /// Class auras with Rust behavior.
@@ -100,6 +102,8 @@ pub(crate) enum WarlockAura {
     HavocBane,
     /// The warlock's permanent listener that copies damage onto the baned target.
     HavocCopy,
+    /// Blessing of the Black Book on the demon.
+    BlackBook,
 }
 
 /// [`Agent::on_periodic`] tags of Warlock periodic actions.
@@ -148,6 +152,8 @@ pub(crate) struct WarlockAgent {
     firebolt_roll: Option<(f64, f64)>,
     decimation: Option<Rc<Decimation>>,
     demonic_brand: Option<Rc<DemonicBrand>>,
+    /// The Black Book's aura on the summoned demon and its damage done multiplier.
+    black_book: Option<(AuraRef, f64)>,
     /// Fel Energy's period, share of maximum mana and mana metrics.
     fel_energy: Option<(i64, f64, usize)>,
 }
@@ -195,6 +201,9 @@ fn class_auras(prepared: &PreparedV2) -> Vec<(&'static str, String, WarlockAura)
             Effect::FelEnergy { aura, .. } => {
                 auras.push(("player", aura.clone(), WarlockAura::FelEnergy))
             }
+            Effect::BlackBook { aura, .. } => {
+                auras.push(("pet", aura.clone(), WarlockAura::BlackBook))
+            }
             Effect::BaneOfHavoc {
                 aura, copy_aura, ..
             } => {
@@ -234,6 +243,10 @@ fn class_auras(prepared: &PreparedV2) -> Vec<(&'static str, String, WarlockAura)
 impl WarlockAgent {
     /// The class behavior of an exported spell, if Rust implements it.
     pub(crate) fn spell(spell: &ExportedSpell) -> Option<WarlockSpell> {
+        let id = spell.action_id.clone().unwrap_or_default();
+        if id.item_id == 19337 && id.tag == 0 {
+            return Some(WarlockSpell::BlackBook);
+        }
         let damage = spell.damage_effect.is_some();
         let dot = spell.dot.is_some();
         match spell.class_spell.as_deref()? {
@@ -547,6 +560,20 @@ impl WarlockAgent {
                     fight.agent.demon = Some(Rc::new(bound));
                 }
                 Effect::LashOfPain { base_damage } => fight.agent.lash_of_pain_base = *base_damage,
+                // Without a simulated demon the use never casts: it waits for a demon out.
+                Effect::BlackBook {
+                    aura,
+                    damage_multiplier,
+                    ..
+                } => {
+                    if let Some(demon) = demon_side {
+                        let index = fight.trackers[demon.index()]
+                            .find(aura)
+                            .ok_or_else(|| format!("demon aura {aura} is not registered"))?;
+                        let aura = AuraRef { side: demon, index };
+                        fight.agent.black_book = Some((aura, *damage_multiplier));
+                    }
+                }
                 Effect::Firebolt {
                     min_damage,
                     max_damage,
@@ -682,6 +709,11 @@ impl Agent for WarlockAgent {
         behavior: WarlockSpell,
     ) {
         match behavior {
+            // items.go: the use lands the blessing on the demon out.
+            WarlockSpell::BlackBook => {
+                let (aura, _) = fight.agent.black_book.expect("The Black Book is bound");
+                fight.activate_aura(aura);
+            }
             WarlockSpell::ShadowBolt => shadow_bolt::apply(fight, spell, target),
             WarlockSpell::SoulFire => soul_fire::apply(fight, spell, target),
             WarlockSpell::Shadowburn => shadowburn::apply(fight, spell, target),
@@ -864,6 +896,11 @@ impl Agent for WarlockAgent {
 
     fn extra_cast_condition(fight: &Fight<Self>, _spell: SpellId, behavior: WarlockSpell) -> bool {
         match behavior {
+            // items.go: a demon out and enabled.
+            WarlockSpell::BlackBook => fight
+                .agent
+                .black_book
+                .is_some_and(|(aura, _)| fight.active_pet(aura.side).enabled),
             WarlockSpell::Conflagrate => fight
                 .agent
                 .conflagrate
@@ -925,6 +962,10 @@ impl Agent for WarlockAgent {
                 talent.on_gain(fight);
             }
             WarlockAura::HavocBane => bane_of_havoc::on_gain(fight, aura),
+            WarlockAura::BlackBook => {
+                let (_, multiplier) = fight.agent.black_book.expect("The Black Book is bound");
+                fight.unit_mut(aura.side).damage_dealt_multiplier *= multiplier;
+            }
             WarlockAura::FelEnergy => {
                 // Go StartPeriodicAction at the regeneration priority, first tick a period on.
                 let (period, _, _) = fight.agent.fel_energy.expect("bound");
@@ -957,6 +998,10 @@ impl Agent for WarlockAgent {
                 talent.on_expire(fight);
             }
             WarlockAura::HavocBane => bane_of_havoc::on_expire(fight, aura),
+            WarlockAura::BlackBook => {
+                let (_, multiplier) = fight.agent.black_book.expect("The Black Book is bound");
+                fight.unit_mut(aura.side).damage_dealt_multiplier /= multiplier;
+            }
             _ => {}
         }
     }

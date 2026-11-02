@@ -16,6 +16,7 @@ pub(crate) const GATE: ClassGate = ClassGate {
     several_targets: Some(several_targets),
     tanks_several_targets: false,
     other_target_casts: None,
+    self_spells: &[],
 };
 
 /// Hunter effect kinds implemented in Rust and validated against the pinned Go reference.
@@ -26,6 +27,7 @@ const EFFECTS: &[&str] = &[
     "aspect_of_the_hawk",
     "explosive_trap",
     "expose_prey",
+    "freezing_trap",
     "immolation_trap",
     "mongoose_bite",
     "hunter_set_mana_proc",
@@ -79,6 +81,7 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "mongoose_bite" => Some("mongoose_bite"),
         "strider_kick" => Some("strider_kick"),
         "wing_clip" => Some("wing_clip"),
+        "freezing_trap" => Some("freezing_trap"),
         "immolation_trap" if spell.dot.is_some() => Some("immolation_trap"),
         "explosive_trap" if spell.dot.is_some() => Some("explosive_trap"),
         "volley" if spell.dot.as_ref().is_some_and(|dot| dot.channeled) => Some("volley"),

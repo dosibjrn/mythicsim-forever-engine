@@ -762,6 +762,8 @@ fn spell_mod_of(sim: &Sim, unit: UnitId, id: ModId) -> Result<Value, Refusal> {
     let kind = match modifier.kind {
         super::spell_mod::SpellModType::DamageDonePct => "damage_done_pct",
         super::spell_mod::SpellModType::BonusCritPercent => "bonus_crit_percent",
+        // Two-Handed Weapon Specialization's threat under push 113554 (Forever's rules).
+        super::spell_mod::SpellModType::ThreatMultiplierPct => "threat_multiplier_pct",
         _ => {
             return Err(Refusal::new(
                 "item_swap",

@@ -243,6 +243,49 @@ pub(crate) fn sunder_armor_effect(
     Some(ramp)
 }
 
+/// When the raid's Expose Armor lands under Forever's rules: 3 s into the fight. Sunder Armor's
+/// ramp (a stack every default GCD from the pull, full at 6 s) leaves 6,750 armor-seconds of its
+/// 2,250 armor unapplied over the opening; Expose Armor at full from 3 s leaves the same, so the
+/// raid's choice of the two no longer changes a player's damage (Bae and Vrelk, Discord, 28
+/// October 2026: a Hunter simmed 1,241 with Expose Armor against 1,226 with Sunder Armor).
+pub(crate) const EXTERNAL_EXPOSE_ARMOR_DELAY: i64 = 2 * GCD_DEFAULT;
+
+/// The raid's Expose Armor under Forever's rules: `external_expose_armor`, with the target's
+/// armor without it, from a separate reset simulation. Nothing under the reference's rules,
+/// where it is up from the pull, nor when a stronger member of its category keeps it out, nor
+/// beside the raid's Sunder Armor: with both, Expose Armor stays up from the pull as before (the
+/// raid's Sunder Armor would have covered the opening), and only the choice of one or the other
+/// is levelled.
+pub(crate) fn external_expose_armor_effect(env: &Environment) -> Option<Value> {
+    if env.sim.rules != super::super::sim::Rules::Forever {
+        return None;
+    }
+    let target = env.encounter.targets[0];
+    if env
+        .sim
+        .get_aura(target, "Sunder Armor (External)")
+        .is_some()
+    {
+        return None;
+    }
+    let label = "Expose Armor (External)";
+    let aura = env.sim.get_aura(target, label)?;
+    if !env.sim.aura(aura).active || env.sim.aura(aura).duration != NEVER_EXPIRES {
+        return None;
+    }
+    let mut fresh = env.fresh();
+    let target = fresh.encounter.targets[0];
+    let aura = fresh.sim.get_aura(target, label)?;
+    fresh.sim.deactivate(aura);
+    let unit = fresh.sim.unit(target);
+    let armor_before =
+        unit.pseudo_stats.armor_multiplier * unit.stats[super::super::stats::Stat::Armor];
+    Some(json!({
+        "kind": "external_expose_armor", "aura": label,
+        "delay_ns": EXTERNAL_EXPOSE_ARMOR_DELAY, "armor_before": armor_before,
+    }))
+}
+
 /// The target's armor with the named aura active at the given stacks, from a separate reset
 /// simulation so the exported one is untouched: Go `targetArmorWithStacks`.
 fn target_armor_with_stacks(env: &Environment, label: &str, stacks: i32) -> f64 {

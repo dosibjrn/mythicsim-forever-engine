@@ -16,13 +16,18 @@ use super::{
         dark_sacrifice, devouring_plague, direct, holy, periodic, prayer_of_mending, shadowfiend,
         shadowform,
     },
-    talents::{inner_focus, power_in_light, power_infusion, searing_light, shadow_weaving},
+    talents::{
+        inner_focus, litany_of_light, power_in_light, power_infusion, renewed_hope, searing_light,
+        shadow_weaving,
+    },
 };
 
 /// What a Priest spell does when its effects apply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PriestSpell {
     MindBlast,
+    /// Chastise (Forever): a rolled Holy hit, cast only at a Humanoid.
+    Chastise,
     ShadowWordDeath,
     ShadowWordPain,
     DevouringPlague,
@@ -61,6 +66,8 @@ pub(crate) enum PriestAura {
 /// Priest state that Go keeps in the `Priest` struct and its closures.
 #[derive(Default)]
 pub(crate) struct PriestAgent {
+    /// Whether the target is a Humanoid, the only creature Chastise can be cast at.
+    humanoid_target: bool,
     early_demise_crit: f64,
     /// Improved Mind Flay's step a tick (client 70425).
     mind_flay_ramp: f64,
@@ -81,6 +88,12 @@ pub(crate) struct PriestAgent {
     heals: Option<Rc<HealBook>>,
     /// Prayer of Mending on the party, under Forever's rules.
     pub(crate) mending: Option<prayer_of_mending::MendingRun>,
+    /// Renewed Hope, and who on the party has Weakened Soul.
+    renewed_hope: Option<Rc<renewed_hope::RenewedHope>>,
+    pub(crate) souls: renewed_hope::Souls,
+    /// Litany of Light, and the spell the last heal cast was, as one of its families.
+    litany_of_light: Option<Rc<litany_of_light::LitanyOfLight>>,
+    pub(crate) last_heal: Option<usize>,
     power_infusion: Option<Rc<power_infusion::PowerInfusion>>,
     shadowfiend: Option<Rc<shadowfiend::Shadowfiend>>,
     /// Vampiric Embrace's debuff, its heal share and health metrics.
@@ -221,6 +234,7 @@ impl PriestAgent {
             "shadowfiend" => Some(PriestSpell::Shadowfiend),
             "power_infusion" => Some(PriestSpell::PowerInfusion),
             "smite" if spell.damage_effect.is_some() => Some(PriestSpell::Smite),
+            "chastise" if spell.damage_effect.is_some() => Some(PriestSpell::Chastise),
             "holy_nova" if spell.damage_effect.is_some() => Some(PriestSpell::HolyNova),
             "holy_fire" if spell.damage_effect.is_some() && spell.dot.is_some() => {
                 Some(PriestSpell::HolyFire)
@@ -244,7 +258,10 @@ impl PriestAgent {
             .any(|effect| matches!(effect, Effect::VampiricEmbrace { .. }));
         let mut fight = Fight::new(
             prepared,
-            PriestAgent::default(),
+            PriestAgent {
+                humanoid_target: prepared.target.mob_type.as_deref() == Some("MobTypeHumanoid"),
+                ..PriestAgent::default()
+            },
             |spell| PriestAgent::spell(spell, unmasked, vampiric_embrace),
             |unit, label| {
                 auras
@@ -370,6 +387,20 @@ impl PriestAgent {
                         party.as_ref(),
                     )?;
                     fight.agent.heals = Some(Rc::new(book));
+                }
+                Effect::PriestHealTalents {
+                    renewed_hope,
+                    litany_of_light,
+                } => {
+                    if let Some(spec) = renewed_hope {
+                        let (bound, souls) = renewed_hope::bind(&mut fight, spec)?;
+                        fight.agent.renewed_hope = Some(Rc::new(bound));
+                        fight.agent.souls = souls;
+                    }
+                    if let Some(spec) = litany_of_light {
+                        let bound = litany_of_light::bind(&mut fight, spec)?;
+                        fight.agent.litany_of_light = Some(Rc::new(bound));
+                    }
                 }
                 Effect::ShadowWordDeath { early_demise_crit } => {
                     fight.agent.early_demise_crit = *early_demise_crit;
@@ -590,8 +621,15 @@ impl Agent for PriestAgent {
     type Spell = PriestSpell;
     type Aura = PriestAura;
 
+    /// chastise.go `ExtraCastCondition`: the target is a Humanoid.
+    fn extra_cast_condition(fight: &Fight<Self>, _spell: SpellId, behavior: PriestSpell) -> bool {
+        behavior != PriestSpell::Chastise || fight.agent.humanoid_target
+    }
+
     fn reset(fight: &mut Fight<Self>) {
         fight.agent.mending = None;
+        fight.agent.souls.clear();
+        fight.agent.last_heal = None;
     }
 
     fn on_class_action(fight: &mut Fight<Self>, tag: u32) {
@@ -623,14 +661,25 @@ impl Agent for PriestAgent {
                 let rank = book
                     .rank_of(spell)
                     .expect("a heal is one of the bound ranks");
+                if let Some(litany) = fight.agent.litany_of_light.clone() {
+                    litany.on_cast(fight, spell);
+                }
+                let crit = match fight.agent.renewed_hope.clone() {
+                    Some(hope) => hope.on_cast(fight, spell),
+                    None => 0.0,
+                };
                 match book.mending(rank) {
                     Some((charges, duration)) => {
                         prayer_of_mending::cast(fight, &book, rank, charges, duration);
                     }
-                    None => book.cast(fight, rank),
+                    None => book.cast_with_crit(fight, rank, 1.0, crit),
                 }
             }
-            PriestSpell::MindBlast | PriestSpell::Smite => direct::apply(fight, spell, target),
+            // chastise.go: `CalcAndDealDamage` of the row's roll on `OutcomeMagicHitAndCrit`,
+            // as Smite.
+            PriestSpell::MindBlast | PriestSpell::Smite | PriestSpell::Chastise => {
+                direct::apply(fight, spell, target)
+            }
             // talents_holy.go: Go `CalcAndDealAoeDamageWithVariance`, which rolls, resolves and
             // deals the hit on each target in unit index order before the heal is cast on the
             // priest.
@@ -713,7 +762,12 @@ impl Agent for PriestAgent {
         match behavior {
             PriestSpell::Heal => {
                 let book = fight.agent.heals.clone().expect("the heals are bound");
+                let spell = fight.dots[dot].spell;
+                if let Some(hope) = fight.agent.renewed_hope.clone() {
+                    fight.heal_crit_bonus = hope.on_tick(fight, spell);
+                }
                 book.tick(fight, dot);
+                fight.heal_crit_bonus = 0.0;
             }
             PriestSpell::MindFlay if fight.agent.mind_flay_ramp != 0.0 => {
                 // Improved Mind Flay: each tick deals the step more than the one before.

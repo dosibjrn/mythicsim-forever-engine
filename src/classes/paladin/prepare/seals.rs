@@ -48,7 +48,8 @@ pub(super) const JUDGEMENT_OF_LIGHT_HEAL_IDS: [(i32, i32); 4] =
     [(1, 20267), (2, 20341), (3, 20342), (4, 20343)];
 
 /// The mana each rank's Judgement of Wisdom grants attackers.
-const JUDGEMENT_OF_WISDOM_MANA_IDS: [(i32, i32); 3] = [(1, 20268), (2, 20352), (3, 20353)];
+pub(super) const JUDGEMENT_OF_WISDOM_MANA_IDS: [(i32, i32); 3] =
+    [(1, 20268), (2, 20352), (3, 20353)];
 
 pub(super) fn paired(table: &[(i32, i32)], rank: i32) -> i32 {
     table
@@ -174,13 +175,8 @@ impl Paladin {
         };
         sim.register_spell(unit, judgement);
 
-        // Go `sealOfRighteousnessHitCoefficient` with `SealOfRighteousnessSpellPowerFixed` on (MythicSim
-        // patch 158): the judgement dummy's share, x1.2 on a two-hander, halved.
-        let mut coefficient = per_hit.coeff();
-        if self.main_hand_is_two_hand(sim, unit) {
-            coefficient *= 1.2;
-        }
-        coefficient /= 2.0;
+        let coefficient =
+            righteousness_hit_coefficient(per_hit.coeff(), self.main_hand_is_two_hand(sim, unit));
         sim.register_spell(
             unit,
             SpellConfig {
@@ -626,4 +622,14 @@ impl Paladin {
         let aura = self.make_seal_exclusive(sim, aura);
         self.register_seal_spell(sim, unit, rank, masks::SEAL_OF_FURY, aura);
     }
+}
+
+/// Go `sealOfRighteousnessHitCoefficient` with `SealOfRighteousnessSpellPowerFixed` on (MythicSim
+/// patch 158): the judgement dummy's share, x1.2 on a two-hander, halved.
+pub(super) fn righteousness_hit_coefficient(dummy: f64, two_hand: bool) -> f64 {
+    let mut coefficient = dummy;
+    if two_hand {
+        coefficient *= 1.2;
+    }
+    coefficient / 2.0
 }

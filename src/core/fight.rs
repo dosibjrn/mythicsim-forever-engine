@@ -42,6 +42,7 @@ mod log;
 pub(crate) mod melee;
 pub(crate) mod metrics;
 pub(crate) mod movement;
+mod oil_of_immolation;
 pub(crate) mod pet;
 mod power_infusion;
 mod racial;
@@ -57,7 +58,8 @@ use std::collections::{BTreeMap, HashMap};
 
 pub(crate) use aura::{AuraBehavior, AuraRef, Tracker};
 pub(crate) use damage::{
-    Outcome, SpellResult, OUTCOME_BLOCK, OUTCOME_CRIT, OUTCOME_DODGE, OUTCOME_LANDED, OUTCOME_PARRY,
+    Outcome, SpellResult, OUTCOME_BLOCK, OUTCOME_CRIT, OUTCOME_DODGE, OUTCOME_LANDED, OUTCOME_MISS,
+    OUTCOME_PARRY,
 };
 pub(crate) use dot::Dot;
 pub(crate) use enemy::EnemySlow;
@@ -1232,6 +1234,15 @@ struct SunderRamp {
     blocked: bool,
 }
 
+/// The raid's Expose Armor under Forever's rules (`ExternalExposeArmor`): the target opens at
+/// `armor_before` and the aura lands `delay` into the fight.
+#[derive(Clone, Debug)]
+struct ExternalExpose {
+    aura: AuraRef,
+    delay: i64,
+    armor_before: f64,
+}
+
 /// Go aura_helpers.go `ApplyFixedUptimeAura` for a player aura.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FixedUptime {
@@ -1505,6 +1516,12 @@ pub(crate) enum Action {
     Pushback {
         chance: f64,
     },
+    /// A spell data damage proc's handler for the target's swing, which no spell of the
+    /// player's carries: the proc's hit on the attacker, a delay after the swing.
+    StruckDamageProc {
+        proc: usize,
+        target: Side,
+    },
     /// A rotation prepull action: Go `APLActionCastSpell.Execute`.
     Prepull(SpellId),
     /// A rotation prepull action: Go `APLActionCastFriendlySpell.Execute` at the player.
@@ -1541,6 +1558,8 @@ pub(crate) enum Action {
     /// A tick of the raid's Sunder Armor ramp on a target, by its position, with the ticks
     /// done so far.
     SunderTick(u8, i32),
+    /// The raid's Expose Armor landing on a target, by its position (Forever's rules).
+    ExternalExpose(u8),
     /// Go trackChanceOfDeath's pending action: mark the player dead if health is still gone.
     DeathCheck,
     /// A fixed uptime aura's periodic roll, or its first roll.
@@ -1556,6 +1575,10 @@ pub(crate) enum Action {
         regen: usize,
         generation: u32,
     },
+    /// The character uses the Oil of Immolation.
+    OilUse,
+    /// A period of the Oil of Immolation's shield, numbered from 1.
+    OilTick(i32),
     /// A tick of an aura's periodic stack adder, with the ticks left including this one.
     StackTick {
         aura: AuraRef,
@@ -1716,6 +1739,9 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) energize_procs: Vec<energy::EnergizeProc>,
     pub(crate) health_on_cast: Vec<HealthOnCast>,
     pub(crate) judgements_of_light: Vec<JudgementOfLight>,
+    /// Go `Unit.JowManaMetrics` of the player, which takes the action of the first Judgement
+    /// of Wisdom that restores its mana: whether one has.
+    pub(crate) jow_metrics_named: bool,
     /// Listeners on the player's casts that restore mana: [`Effect::ManaOnCast`].
     pub(crate) mana_on_cast: Vec<energy::ManaOnCast>,
     /// A healer's stacking on-use trinkets: [`Effect::StackingCdOnUse`].
@@ -1724,8 +1750,6 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) shields_on_heal: Vec<healer_gear::ShieldOnHeal>,
     /// A healer's instant cast auras: [`Effect::InstantCastAura`].
     pub(crate) instant_casts: Vec<healer_gear::InstantCast>,
-    /// A healer's self buffs of globes: [`Effect::ManaGlobes`].
-    pub(crate) mana_globes: Vec<healer_gear::ManaGlobes>,
     /// Go `rageBar`, for a player that has one.
     pub(crate) rage: Option<rage::RageBar>,
     /// Single aura exclusive categories the runtime enforces.
@@ -1775,6 +1799,9 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) damage_taken_modifiers: Vec<DamageTakenModifier>,
     /// Go `doneIteration` is deactivating the auras: an iteration is ending.
     pub(crate) done_iteration: bool,
+    /// The aura the tracker is deactivating because its duration ran out, for a class that tells
+    /// an aura fading by time from one cut short (a refresh, a consume, the iteration's end).
+    pub(crate) expiring_by_duration: Option<AuraRef>,
     /// Spell-conditioned modifiers, applied after `damage_taken_modifiers`; no class registers
     /// both kinds, so Go's single registration order is kept.
     pub(crate) spell_damage_taken_modifiers: Vec<SpellDamageTakenModifier>,
@@ -1825,6 +1852,7 @@ pub(crate) struct Fight<A: Agent> {
     /// The player's weapon attacks.
     pub(crate) autos: melee::AutoAttacks,
     sunder: Option<SunderRamp>,
+    external_expose: Option<ExternalExpose>,
     /// Gnome's Eureka!, when the character has it.
     pub(crate) eureka: Option<racial::Eureka>,
     /// Registered pets that nothing summons.
@@ -1852,6 +1880,9 @@ pub(crate) struct Fight<A: Agent> {
     /// The rotation as the application shows it, with Go's validation messages of each
     /// line, built with the rotation.
     pub(crate) presentation: Option<rotation_checks::Presentation>,
+    /// The logged fight's queued strikes that went out on an extra attack, for the
+    /// application's timeline: when, the strike and the extra attack it replaced.
+    pub(crate) extra_attack_strikes: Vec<serde_json::Value>,
     mana_regen_casting: usize,
     mana_regen_not_casting: usize,
     mana_gain_spell: Option<SpellId>,
@@ -1883,6 +1914,9 @@ pub(crate) struct Fight<A: Agent> {
     /// The player's healing dealt multiplier relative to its exported value, which Power
     /// Infusion moves while a copy of the aura holds the category.
     pub(crate) healing_dealt_factor: f64,
+    /// A crit chance, as a fraction, the next heal rolls on top of its spell's: set by a class
+    /// for the one heal it names (Renewed Hope) and put back to zero after it.
+    pub(crate) heal_crit_bonus: f64,
     /// Dragonbreath Chili, when the character ate it.
     pub(crate) chili: Option<DragonbreathChili>,
     /// Enchant Weapon - Revelation, when a weapon carries it.
@@ -1891,6 +1925,12 @@ pub(crate) struct Fight<A: Agent> {
     /// Purging gives: its aura and the bonus the player's spells take while it holds, when the
     /// targets are of its mob type.
     pub(crate) mob_type_spell_damage: Option<(AuraRef, f64)>,
+    /// Go `AttackTable.MobTypeBonusStats` from Mark of the Champion: each aura and its ranged
+    /// attack power (which Go's melee attack power reads too) and spell damage bonus.
+    pub(crate) mob_type_bonuses: Vec<(AuraRef, f64, f64)>,
+    /// Under Forever's rules, the auras whose melee attack power holds against the targets'
+    /// type alone, and that attack power.
+    pub(crate) mob_type_melee_bonuses: Vec<(AuraRef, f64)>,
     /// Item damage procs built from client rows, by their aura's position.
     pub(crate) damage_procs: Vec<DamageProc>,
     /// Enchant heal procs, by their position among the heal proc effects.
@@ -1906,6 +1946,8 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) health_rage_procs: Vec<gear_procs::HealthRageProc>,
     pub(crate) energy_procs: Vec<gear_procs::EnergyProc>,
     pub(crate) health_regens: Vec<health_regen::HealthRegen>,
+    /// The Oil of Immolation, when the character uses it.
+    pub(crate) oil: Option<oil_of_immolation::OilOfImmolation>,
     /// Gear procs that stack an armor debuff on the target, by their aura's position.
     pub(crate) armor_debuff_procs: Vec<gear_procs::ArmorDebuffProc>,
     /// Spell data stat procs, by their position among the effects of their kind.
@@ -1921,6 +1963,9 @@ pub(crate) struct Fight<A: Agent> {
     /// The player's Intellect for each combination, when one changes it: Go refreshes the
     /// cached mana regeneration rates whenever a dynamic change moves it.
     stat_intellect: Vec<Option<f64>>,
+    /// The crit the player takes by combination, when one changes it: the Goblin Sapper Charge's
+    /// hit on its thrower reads it.
+    stat_crit_taken: Vec<Option<f64>>,
     /// The player's school spell damage stats for each combination, when one changes them.
     pub(crate) stat_school_damage: Vec<Option<[f64; 8]>>,
     /// The player's resistances for each combination that a combination changes, by Go
@@ -1958,8 +2003,15 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) casting_regen_at_once: bool,
     /// Forever's rule that a rotation's move waits for a queued spell to fire.
     pub(crate) move_waits_for_queued_cast: bool,
+    /// Forever's rule that a melee swing leaves the Auto Shot timer alone.
+    pub(crate) melee_keeps_auto_shot_timer: bool,
     /// Forever's rule that a move whose end time has come reads as arrived.
     pub(crate) move_arrives_at_destination: bool,
+    /// Forever's rule that a rotation with a Move keeps looking through the global cooldown:
+    /// set only while the rule is on and the rotation holds a Move.
+    pub(crate) rotation_with_moves_looks_through_gcd: bool,
+    /// Forever's rule that the off hand's half swing wait counts from the melee attack's start.
+    pub(crate) off_hand_waits_from_attack_start: bool,
     /// Forever's rule that autocasting passes over a cooldown the GCD holds back.
     pub(crate) autocast_skips_unready_cooldowns: bool,
     /// Forever's rule that a damage bonus applied after the calculation raises threat too.
@@ -2385,6 +2437,7 @@ impl<A: Agent> Fight<A> {
                 off_hand_crit_rage,
                 threat_per_rage,
                 threat_multiplied,
+                crit_multiplies_swing,
                 ..
             } => Some(rage::RageBar {
                 max: max_rage.max(100.0),
@@ -2396,6 +2449,7 @@ impl<A: Agent> Fight<A> {
                 off_hand_crit_rage: *off_hand_crit_rage,
                 threat_per_rage: *threat_per_rage,
                 threat_multiplied: *threat_multiplied,
+                crit_multiplies_swing: *crit_multiplies_swing,
                 gain_threat: Vec::new(),
                 damage_taken_metrics: 0,
                 refund_metrics: 0,
@@ -2726,6 +2780,7 @@ impl<A: Agent> Fight<A> {
                         | Effect::ShatterCurse { spell_id, aura, .. }
                         | Effect::Stoneform { spell_id, aura, .. }
                         | Effect::ReadLeyLine { spell_id, aura, .. }
+                        | Effect::Skysight { spell_id, aura, .. }
                             if id.spell_id == *spell_id && id.tag == 0 =>
                         {
                             activations.push((spells.len(), aura));
@@ -2733,7 +2788,6 @@ impl<A: Agent> Fight<A> {
                         }
                         Effect::StackingOnUse { spell_id, aura, .. }
                         | Effect::InstantCastAura { spell_id, aura, .. }
-                        | Effect::ManaGlobes { spell_id, aura, .. }
                             if id.spell_id == *spell_id && id.item_id == 0 && id.tag == 0 =>
                         {
                             activations.push((spells.len(), aura));
@@ -2930,6 +2984,11 @@ impl<A: Agent> Fight<A> {
                             )
                         }
                         Effect::ForceReactiveDisk { spell, damage, .. } if *spell == spells.len() => {
+                            Some(SpellBehavior::AreaFixedDamage(*damage))
+                        }
+                        // The shield's tick is the same hit: a literal on the magic table with
+                        // a crit against every target, each dealt as it is calculated.
+                        Effect::OilOfImmolation { spell, damage, .. } if *spell == spells.len() => {
                             Some(SpellBehavior::AreaFixedDamage(*damage))
                         }
                         Effect::Thunderfury {
@@ -3221,6 +3280,11 @@ impl<A: Agent> Fight<A> {
             .iter()
             .map(|combo| combo.get("Intellect").copied())
             .collect();
+        // Under Forever's rules the crit the player takes, when a combination changes it.
+        let stat_crit_taken: Vec<Option<f64>> = stat_combos
+            .iter()
+            .map(|combo| combo.get("PseudoReducedCritTakenPercent").copied())
+            .collect();
         // And each school spell damage and resistance stat only when a combination changes it;
         // the others keep their reset values.
         let by_school = |names: &[(usize, &str)], base: [f64; 8]| -> Vec<Option<[f64; 8]>> {
@@ -3320,6 +3384,9 @@ impl<A: Agent> Fight<A> {
                     .enumerate()
                     .map(|(pet, exported)| (Side::Pet(pet as u8), &exported.auras)),
             );
+        // Go `Unit.JowManaMetrics`: every Judgement of Wisdom on the target restores the
+        // attacker's mana under one metric.
+        let mut jow_metrics: Option<usize> = None;
         for (side, auras) in unit_auras {
             let unit = match side {
                 Side::Player => "player",
@@ -3360,10 +3427,13 @@ impl<A: Agent> Fight<A> {
                     )),
                     _ => None,
                 }) {
-                    let metrics = resource(Side::Player, jow.2.clone(), false, ResourceKind::Mana);
+                    let metrics = *jow_metrics.get_or_insert_with(|| {
+                        resource(Side::Player, jow.2.clone(), false, ResourceKind::Mana)
+                    });
                     AuraBehavior::JudgementOfWisdom {
                         chance: jow.0,
                         mana: jow.1,
+                        id: jow.2.clone(),
                         metrics,
                         delay: jow.3,
                     }
@@ -3431,6 +3501,26 @@ impl<A: Agent> Fight<A> {
                         ranged,
                         cast,
                     }
+                } else if let Some((melee, ranged, cast)) =
+                    effects.iter().find_map(|effect| match effect {
+                        Effect::SpeedAura {
+                            aura,
+                            melee_multiplier,
+                            ranged_multiplier,
+                            cast_multiplier,
+                        } if side == Side::Player && *aura == exported.label => Some((
+                            *melee_multiplier,
+                            *ranged_multiplier,
+                            *cast_multiplier,
+                        )),
+                        _ => None,
+                    })
+                {
+                    AuraBehavior::SwapSpeed {
+                        melee,
+                        ranged,
+                        cast,
+                    }
                 } else if let Some(per_stack) = effects.iter().find_map(|effect| match effect {
                     Effect::BattleSquawk { aura, per_stack }
                         if side == Side::Player && *aura == exported.label =>
@@ -3481,6 +3571,15 @@ impl<A: Agent> Fight<A> {
                     _ => None,
                 }) {
                     AuraBehavior::MultiplyManaRegenSpeed(multiplier)
+                } else if let Some(speed) = effects.iter().find_map(|effect| match effect {
+                    Effect::Skysight {
+                        aura,
+                        speed_multiplier,
+                        ..
+                    } if side == Side::Player && *aura == exported.label => Some(*speed_multiplier),
+                    _ => None,
+                }) {
+                    AuraBehavior::MultiplyMovementSpeed(speed)
                 } else if let Some(index) = (side == Side::Player)
                     .then(|| {
                         effects
@@ -3629,9 +3728,11 @@ impl<A: Agent> Fight<A> {
                     .then(|| {
                         effects
                             .iter()
-                            .filter(|effect| matches!(effect, Effect::EnergizeProc { .. }))
+                            .filter(|effect| {
+                                matches!(effect, Effect::EnergizeProc { .. } | Effect::ManaProc { .. })
+                            })
                             .position(|effect| {
-                                matches!(effect, Effect::EnergizeProc { trigger_aura, .. } if *trigger_aura == exported.label)
+                                matches!(effect, Effect::EnergizeProc { trigger_aura, .. } | Effect::ManaProc { trigger_aura, .. } if *trigger_aura == exported.label)
                             })
                     })
                     .flatten()
@@ -3981,11 +4082,11 @@ impl<A: Agent> Fight<A> {
             energize_procs: Vec::new(),
             health_on_cast: Vec::new(),
             judgements_of_light: Vec::new(),
+            jow_metrics_named: false,
             mana_on_cast: Vec::new(),
             stacking_cds: Vec::new(),
             shields_on_heal: Vec::new(),
             instant_casts: Vec::new(),
-            mana_globes: Vec::new(),
             player: Player::initial(&config),
             cast_speed: config.cast_speed,
             targets: vec![
@@ -4008,6 +4109,7 @@ impl<A: Agent> Fight<A> {
             free_travel_batches: Vec::new(),
             damage_taken_modifiers: Vec::new(),
             done_iteration: false,
+            expiring_by_duration: None,
             spell_damage_taken_modifiers: Vec::new(),
             damage_taken_health,
             config,
@@ -4057,11 +4159,13 @@ impl<A: Agent> Fight<A> {
             log: None,
             autos: melee::AutoAttacks::default(),
             sunder: None,
+            external_expose: None,
             aura_logs,
             stat_combos,
             stat_health,
             stat_spirit,
             stat_intellect,
+            stat_crit_taken,
             stat_school_damage,
             stat_resistance,
             stat_mask: 0,
@@ -4081,9 +4185,12 @@ impl<A: Agent> Fight<A> {
             innervates_up: 0,
             power_infusion: None,
             healing_dealt_factor: 1.0,
+            heal_crit_bonus: 0.0,
             chili: None,
             revelation: None,
             mob_type_spell_damage: None,
+            mob_type_bonuses: Vec::new(),
+            mob_type_melee_bonuses: Vec::new(),
             damage_procs: Vec::new(),
             spell_stat_procs: Vec::new(),
             aura_mods: Vec::new(),
@@ -4094,6 +4201,7 @@ impl<A: Agent> Fight<A> {
             health_rage_procs: Vec::new(),
             energy_procs: Vec::new(),
             health_regens: Vec::new(),
+            oil: None,
             armor_debuff_procs: Vec::new(),
             eureka: None,
             pets: pet::inert_pets(effects)?,
@@ -4105,6 +4213,7 @@ impl<A: Agent> Fight<A> {
             pet_agent_max_mana: pet::pet_agent_max_mana(prepared),
             checks: std::cell::RefCell::new(None),
             presentation: None,
+            extra_attack_strikes: Vec::new(),
             heartbeat_offset: 0,
             totals: metrics::Totals {
                 target_dtps: vec![
@@ -4133,7 +4242,10 @@ impl<A: Agent> Fight<A> {
             hp_percent_for_defensives: player.hp_percent_for_defensives,
             casting_regen_at_once: player.casting_regen_at_once,
             move_waits_for_queued_cast: player.move_waits_for_queued_cast,
+            melee_keeps_auto_shot_timer: player.melee_keeps_auto_shot_timer,
             move_arrives_at_destination: player.move_arrives_at_destination,
+            rotation_with_moves_looks_through_gcd: player.rotation_with_moves_looks_through_gcd,
+            off_hand_waits_from_attack_start: player.off_hand_waits_from_attack_start,
             autocast_skips_unready_cooldowns: player.autocast_skips_unready_cooldowns,
             threat_follows_damage_bonus: player.threat_follows_damage_bonus,
             burst: player.burst_window.map(burst::BurstWindow::new),
@@ -4159,31 +4271,54 @@ impl<A: Agent> Fight<A> {
             fight.enable_energy_bar(energy);
         }
         for effect in effects {
-            if let Effect::EnergizeProc {
-                rng_label,
-                chances,
-                energy,
-                metrics_action_id,
-                delay_ns,
-                ..
-            } = effect
-            {
-                let mut by_spell = vec![None; fight.spells.len()];
-                for entry in chances {
-                    if let Some(slot) = by_spell.get_mut(entry.spell) {
-                        *slot = Some(entry.chance);
-                    }
+            let (rng_label, chances, resource, amount, metrics_action_id, delay_ns) = match effect {
+                Effect::EnergizeProc {
+                    rng_label,
+                    chances,
+                    energy,
+                    metrics_action_id,
+                    delay_ns,
+                    ..
+                } => (
+                    rng_label,
+                    chances,
+                    ResourceKind::Energy,
+                    energy,
+                    metrics_action_id,
+                    delay_ns,
+                ),
+                Effect::ManaProc {
+                    rng_label,
+                    chances,
+                    mana,
+                    metrics_action_id,
+                    delay_ns,
+                    ..
+                } => (
+                    rng_label,
+                    chances,
+                    ResourceKind::Mana,
+                    mana,
+                    metrics_action_id,
+                    delay_ns,
+                ),
+                _ => continue,
+            };
+            let mut by_spell = vec![None; fight.spells.len()];
+            for entry in chances {
+                if let Some(slot) = by_spell.get_mut(entry.spell) {
+                    *slot = Some(entry.chance);
                 }
-                let metrics =
-                    fight.new_resource_metrics(metrics_action_id.clone(), ResourceKind::Energy);
-                fight.energize_procs.push(energy::EnergizeProc {
-                    label: rng_label.clone(),
-                    chances: by_spell,
-                    energy: *energy,
-                    metrics,
-                    delay: *delay_ns,
-                });
             }
+            let metrics = fight.new_resource_metrics(metrics_action_id.clone(), resource);
+            fight.energize_procs.push(energy::EnergizeProc {
+                label: rng_label.clone(),
+                chances: by_spell,
+                resource,
+                energy: *amount,
+                metrics,
+                delay: *delay_ns,
+            });
         }
         for effect in effects {
             match effect {
@@ -4625,6 +4760,8 @@ impl<A: Agent> Fight<A> {
             .collect();
         fight.bind_item_swap(prepared)?;
         let compilation = fight.compile_rotation(&parsed)?;
+        // The rotation is fixed for the fight, so whether it moves is settled once here.
+        fight.rotation_with_moves_looks_through_gcd &= compilation.has_move();
         fight.rotation = compilation.items;
         fight.priority_len = compilation.priority;
         fight.group_ranges = compilation.groups;
@@ -4665,6 +4802,29 @@ impl<A: Agent> Fight<A> {
             }
         }
         fight.presentation = Some(fight.presentation(&parsed, &player.rotation));
+        for effect in effects {
+            if let Effect::ExternalExposeArmor {
+                aura,
+                delay_ns,
+                armor_before,
+            } = effect
+            {
+                let index = fight.trackers[Side::Target.index()]
+                    .find(aura)
+                    .ok_or_else(|| format!("target aura {aura} is not registered"))?;
+                let aura = AuraRef {
+                    side: Side::Target,
+                    index,
+                };
+                // The reset leaves it down; it lands at its delay.
+                fight.set_aura_permanent(aura, false);
+                fight.external_expose = Some(ExternalExpose {
+                    aura,
+                    delay: *delay_ns,
+                    armor_before: *armor_before,
+                });
+            }
+        }
         for effect in effects {
             if let Effect::SunderArmorRamp {
                 aura,
@@ -4746,6 +4906,25 @@ impl<A: Agent> Fight<A> {
                     ..
                 } if target.mob_type.as_deref() == Some(mob_type.as_str()) => {
                     fight.mob_type_spell_damage = Some((fight.player_aura(aura)?, *spell_damage));
+                }
+                Effect::MobTypeBonus {
+                    aura,
+                    ranged_attack_power,
+                    spell_damage,
+                    melee_attack_power,
+                    ..
+                } => {
+                    let aura = fight.player_aura(aura)?;
+                    if *ranged_attack_power != 0.0 || *spell_damage != 0.0 {
+                        fight
+                            .mob_type_bonuses
+                            .push((aura, *ranged_attack_power, *spell_damage));
+                    }
+                    if *melee_attack_power != 0.0 {
+                        fight
+                            .mob_type_melee_bonuses
+                            .push((aura, *melee_attack_power));
+                    }
                 }
                 Effect::EmeraldDragonWhelp { .. } => fight.bind_whelp(effect)?,
                 Effect::Revelation { .. } => fight.bind_revelation(effect)?,
@@ -4939,29 +5118,6 @@ impl<A: Agent> Fight<A> {
                 fight.aura_mut(aura).behavior =
                     AuraBehavior::InstantCast(fight.instant_casts.len() - 1);
             }
-            // A healer's self buff of globes, with its internal cooldown on a runtime timer.
-            if let Effect::ManaGlobes {
-                aura,
-                mana_fraction,
-                icd_ns,
-                metrics_action_id,
-                ..
-            } = effect
-            {
-                let aura = fight.player_aura(aura)?;
-                fight.timers.push(STARTING_CD_TIME);
-                let timer = fight.timers.len() - 1;
-                let metrics =
-                    fight.new_resource_metrics(metrics_action_id.clone(), ResourceKind::Mana);
-                fight.mana_globes.push(healer_gear::ManaGlobes {
-                    fraction: *mana_fraction,
-                    icd: *icd_ns,
-                    timer,
-                    metrics,
-                });
-                fight.aura_mut(aura).behavior =
-                    AuraBehavior::ManaGlobes(fight.mana_globes.len() - 1);
-            }
             // A healer's on-use aura of spell mods: one dynamic mod per kind and amount, over the
             // spells it changes.
             if let Effect::SpellModAuraOnUse { aura, changes, .. } = effect {
@@ -5025,6 +5181,7 @@ impl<A: Agent> Fight<A> {
         }
         fight.bind_gear_procs(effects)?;
         fight.bind_health_regens(effects)?;
+        fight.bind_oil_of_immolation(effects)?;
         fight.bind_on_use_damage(effects);
         fight.autos.melee = prepared.melee.auto_swing_melee;
         fight.autos.dual_wielding = prepared.melee.dual_wielding;
@@ -5125,6 +5282,12 @@ impl<A: Agent> Fight<A> {
         self.set_player_powers(self.stat_combos[mask as usize]);
         if let Some(path) = self.mp5_path.as_mut() {
             self.player.powers.mp5 = path.change(changed, mask);
+        }
+        if let (Some(Some(crit_taken)), Some(target)) = (
+            self.stat_crit_taken.get(mask as usize),
+            self.self_target.as_mut(),
+        ) {
+            target.reduced_crit_taken_percent = *crit_taken;
         }
         if self.has_mana_bar() && self.player.mana > self.player.powers.max_mana {
             self.player.mana = self.player.powers.max_mana;
@@ -5540,8 +5703,14 @@ impl<A: Agent> Fight<A> {
         self.reset();
         // Go PrePull: time starts at the first prepull action; later ones run first at a tie.
         let count = self.prepull.len() as i32;
-        if let Some(&(first, _)) = self.prepull.first() {
-            self.now = first;
+        // Forever's Oil of Immolation rule: the oil is used before the pull, even with no prepull.
+        let start = match (self.prepull.first(), self.oil_of_immolation_start()) {
+            (Some(&(first, _)), Some(oil)) => Some(first.min(oil)),
+            (Some(&(first, _)), None) => Some(first),
+            (None, oil) => oil,
+        };
+        if let Some(start) = start {
+            self.now = start;
         }
         for index in 0..self.prepull.len() {
             let (at, act) = self.prepull[index];
@@ -5731,6 +5900,7 @@ impl<A: Agent> Fight<A> {
         self.reset_auras(side);
         // Go driveWindfuryTotem's OnReset: the totem refreshes every period from the reset.
         if side == Side::Player {
+            self.oil_of_immolation_reset();
             if let Some(windfury) = &self.windfury {
                 let period = windfury.period;
                 self.schedule(period, PRIORITY_AUTO, Action::WindfuryRefresh);
@@ -5743,6 +5913,11 @@ impl<A: Agent> Fight<A> {
             unit.armor_delta = 0.0;
             if self.sunder.is_some() {
                 self.schedule(0, PRIORITY_DOT, Action::SunderTick(position as u8, 0));
+            }
+            if let Some(expose) = &self.external_expose {
+                let delay = expose.delay;
+                self.targets[position].armor = expose.armor_before;
+                self.schedule(delay, PRIORITY_DOT, Action::ExternalExpose(position as u8));
             }
         }
         if side == Side::Player {
@@ -5952,13 +6127,20 @@ impl<A: Agent> Fight<A> {
                     let (spell, target) = (queued.spell, queued.target);
                     // A strict sequence's hook unhooks itself, casts, then advances it.
                     let hooks = std::mem::take(&mut self.apl.queue_hooks);
-                    self.cast(spell, target);
+                    let cast = self.cast(spell, target);
                     for item in hooks {
                         self.advance_sequence(item);
                     }
                     // A move the rotation held for this spell goes now, not at the end of the
-                    // global cooldown the spell started (Forever's rule, `move_ready`).
-                    if std::mem::take(&mut self.apl.move_held_for_queue) {
+                    // global cooldown the spell started (Forever's rule, `move_ready`). A
+                    // rotation with a move goes on from a queued instant that went off, as it
+                    // does after one it casts itself (Forever's rule, README, Rust-only
+                    // mechanics); one that failed would only queue it again for this instant.
+                    if std::mem::take(&mut self.apl.move_held_for_queue)
+                        || (cast
+                            && self.rotation_with_moves_looks_through_gcd
+                            && self.player.hardcast.expires <= self.now)
+                    {
                         self.set_rotation_timer(self.now);
                     }
                 }
@@ -6001,6 +6183,10 @@ impl<A: Agent> Fight<A> {
                 }
             }
             Action::Pushback { chance } => self.pushback_handler(chance),
+            Action::StruckDamageProc { proc, target } => {
+                let spell = self.damage_procs[proc].spell;
+                self.cast(spell, target);
+            }
             Action::Prepull(spell) => self.cast_or_queue(spell, self.current_target_side()),
             Action::PrepullAtPlayer(spell) => self.cast_or_queue(spell, Side::Player),
             Action::PrepullChannel(spell, item) => self.prepull_channel(spell, item),
@@ -6070,6 +6256,7 @@ impl<A: Agent> Fight<A> {
                 }
             }
             Action::SunderTick(target, done) => self.sunder_tick(target, done),
+            Action::ExternalExpose(target) => self.external_expose_lands(target),
             Action::DeathCheck => self.death_check(),
             Action::FixedUptime { index, first } => self.fixed_uptime_roll(index, first),
             Action::MovementEnd(side) => {
@@ -6108,6 +6295,8 @@ impl<A: Agent> Fight<A> {
             Action::HealthRegenTick { regen, generation } => {
                 self.health_regen_tick(regen, generation)
             }
+            Action::OilUse => self.oil_use(),
+            Action::OilTick(tick) => self.oil_tick(tick),
             Action::WindfuryRefresh => {
                 let windfury = self.windfury.as_ref().expect("Windfury Totem is bound");
                 let (totem, period) = (windfury.totem, windfury.period);
@@ -6230,6 +6419,18 @@ impl<A: Agent> Fight<A> {
             priority,
         };
         self.schedule(self.now + period, priority, Action::ClassPeriodic(periodic));
+    }
+
+    /// The raid's Expose Armor lands on a target under Forever's rules: the aura goes up and the
+    /// target takes its prepared armor, which counts it.
+    fn external_expose_lands(&mut self, target: u8) {
+        let expose = self.external_expose.clone().expect("the effect is bound");
+        let side = Side::target(target as usize);
+        let aura = self.aura_on(expose.aura, side);
+        self.activate_aura(aura);
+        let armor = self.config.melee.defender_armor;
+        let unit = &mut self.targets[target as usize];
+        unit.armor = armor + unit.armor_delta;
     }
 
     /// Go driveSunderArmor's periodic action on a target: activate, add a stack, and come back

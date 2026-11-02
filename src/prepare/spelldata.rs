@@ -16,6 +16,7 @@
 
 pub(crate) mod area;
 pub(crate) mod attributes;
+pub(crate) mod book_ranks;
 pub(crate) mod debuff;
 pub(crate) mod effect;
 pub(crate) mod ladder;

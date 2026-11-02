@@ -7,6 +7,7 @@ use crate::prepare::aura_helpers::AbsorptionAuraConfig;
 use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger};
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
+use crate::prepare::hotfix_113554;
 use crate::prepare::resolve_aura::aura_config;
 use crate::prepare::resolve_spell::{flags, spell_config};
 use crate::prepare::sim::AuraId;
@@ -62,8 +63,10 @@ impl Mage {
             return;
         }
         let data = spell_data();
-        let rank = data.ice_barrier.highest();
-        let frigid_rank = data.ice_barrier_triggered.by_id(1326891);
+        // Hotfix push 113531 raises both auras' Frost damage under Forever's rules.
+        let rank = hotfix_113554::row(sim.rules, data.ice_barrier.highest().id);
+        let frigid_rank =
+            hotfix_113554::row(sim.rules, data.ice_barrier_triggered.by_id(1326891).id);
         let pct = |row: &'static crate::data::spells::Spell, misc: i32| {
             row.effect(dbcenums::A_ADD_PCT_MODIFIER, misc)
                 .average(CHARACTER_LEVEL)
@@ -138,9 +141,24 @@ impl Mage {
             return;
         }
         let hit = spell_data().elemental_precision.value_at(rank);
+        // Client 1.60.1.70707 turns the talent (Precision, 29438, SpellEffect 704780) from a
+        // miss chance modifier on Fire and Frost spells into spell hit chance (aura 55) for every
+        // school, Arcane included. The Go reference keeps Fire and Frost.
+        let schools: &[SchoolIndex] = match sim.rules {
+            Rules::Forever => &[
+                SchoolIndex::Arcane,
+                SchoolIndex::Fire,
+                SchoolIndex::Frost,
+                SchoolIndex::Holy,
+                SchoolIndex::Nature,
+                SchoolIndex::Shadow,
+            ],
+            Rules::GoReference => &[SchoolIndex::Fire, SchoolIndex::Frost],
+        };
         let pseudo = &mut sim.unit_mut(unit).pseudo_stats;
-        pseudo.school_bonus_hit_chance[SchoolIndex::Fire as usize] += hit;
-        pseudo.school_bonus_hit_chance[SchoolIndex::Frost as usize] += hit;
+        for &school in schools {
+            pseudo.school_bonus_hit_chance[school as usize] += hit;
+        }
     }
 
     fn register_ice_shards(&self, sim: &mut Sim, unit: UnitId) {
@@ -228,7 +246,7 @@ impl Mage {
         let radius_share = data
             .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_RADIUS)
             .fraction_at(rank);
-        for (class_mask, yards) in [
+        let mut ranges = vec![
             (
                 masks::FROSTBOLT,
                 range_share * f64::from(spell_data().frostbolt.highest().max_range),
@@ -246,7 +264,16 @@ impl Mage {
                 masks::FROST_NOVA | masks::CONE_OF_COLD,
                 radius_share * POINT_BLANK_RADIUS,
             ),
-        ] {
+        ];
+        // Hotfix push 113531 adds Ice Lance to the range mask (SpellEffect 694455) under Forever's
+        // rules.
+        if sim.rules == Rules::Forever {
+            ranges.push((
+                masks::ICE_LANCE,
+                range_share * f64::from(spell_data().ice_lance.highest().max_range),
+            ));
+        }
+        for (class_mask, yards) in ranges {
             sim.add_static_mod(
                 unit,
                 SpellModConfig {
@@ -358,7 +385,8 @@ impl Mage {
             return;
         }
         let data = spell_data();
-        let chill_rank = data.winters_chill_triggered.highest();
+        // Hotfix push 113531 raises the stacks' Cone of Cold damage under Forever's rules.
+        let chill_rank = hotfix_113554::row(sim.rules, data.winters_chill_triggered.highest().id);
         let damage_per_stack = chill_rank.effect_n(1).percent();
 
         let damage_mod = sim.add_dynamic_mod(

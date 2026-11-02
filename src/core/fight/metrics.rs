@@ -500,6 +500,10 @@ pub(crate) struct FightReport {
     /// adds to the player's metrics.
     #[serde(skip)]
     pub(crate) presentation: Option<super::rotation_checks::Presentation>,
+    /// The logged fight's strikes that replaced an extra attack, which `sim --rotation-stats`
+    /// adds to the player's metrics.
+    #[serde(skip)]
+    pub(crate) extra_attack_strikes: Vec<serde_json::Value>,
 }
 
 impl<A: Agent> Fight<A> {
@@ -983,6 +987,7 @@ impl<A: Agent> Fight<A> {
             iterations_done: self.totals.iterations,
             elapsed_ns,
             presentation: self.presentation.clone(),
+            extra_attack_strikes: self.extra_attack_strikes.clone(),
         }
     }
 }

@@ -87,7 +87,7 @@ impl Hunter {
     fn register_aspect_of_the_hawk_spell(&mut self, sim: &mut Sim) {
         let data = spell_data();
         let unit = self.unit;
-        let hawk_rank = data.aspect_of_the_hawk.highest();
+        let hawk_rank = data.aspect_of_the_hawk.highest_for(sim.rules);
         let action_id = ActionId::spell(hawk_rank.id);
         let deadly_aspects = self.t("deadly_aspects");
 

@@ -25,7 +25,8 @@ use super::Refusal;
 
 pub(crate) use effects::{
     aura_should_refresh_effects, battle_shout_effect, exclusive_refresh,
-    judgement_of_light_effects, judgement_of_wisdom_effects, sunder_armor_effect,
+    external_expose_armor_effect, judgement_of_light_effects, judgement_of_wisdom_effects,
+    sunder_armor_effect,
 };
 pub(crate) use generated::{apply_generated_buffs, apply_generated_debuffs, GIFT_OF_ARTHAS};
 pub(crate) use windfury_effect::{windfury_totem_effect, windfury_trigger_spells};
@@ -177,6 +178,12 @@ impl Meta {
         talent_points: i32,
         count: f64,
     ) -> AuraId {
+        if sim.rules == Rules::Forever {
+            if let Some(spell) = forever_buff_rank(self.spell) {
+                let meta = Meta { spell, ..*self };
+                return meta.aura(sim, unit, is_player, talent_points, count);
+            }
+        }
         match self.kind {
             MetaKind::Buff => self.buff(
                 sim,
@@ -335,6 +342,24 @@ fn forever_amounts(spell: i32) -> Vec<(i32, f64)> {
     }
 }
 
+/// Buffs whose reference row is not the rank a level 60 caster has under Forever's rules, as the
+/// row to read instead. The Go reference keeps its row.
+///
+/// Trueshot Aura: the reference reads rank 4 (20905, level 50). Its 75 ranged Attack Power was
+/// above rank 5's (20906, level 60, 50) until client 1.60.1.70707 lowered ranks 1 to 4 to 15, 22,
+/// 30 and 40 (SpellEffect 698474 for rank 4), so a level 60 Hunter's aura is rank 5's 50.
+fn forever_buff_rank(spell: i32) -> Option<i32> {
+    match spell {
+        20905 => Some(20906),
+        // Battle Shout VII, Strength of Earth V and Grace of Air III come from Ahn'Qiraj 20
+        // books, so the raid's shout and totems are the rank below.
+        _ => {
+            let known = super::spelldata::book_ranks::known_rank(Rules::Forever, spell);
+            (known != spell).then_some(known)
+        }
+    }
+}
+
 /// `core.MakePermanent(<Buff>Aura(unit, isPlayer, talentPoints))`.
 pub(crate) fn permanent(
     env: &mut Environment,
@@ -366,6 +391,16 @@ pub(crate) fn apply_buff_effects(
     individual: &Message,
 ) -> Result<(), Refusal> {
     let unit = env.player;
+    if env.sim.rules == Rules::Forever {
+        // Hotfix push 113554 removes Greater Blessing of Salvation (25895) and Greater Blessing of
+        // Light (25890) from the game, so under Forever's rules saved settings that still ask for
+        // them get nothing, as wowsims/forever #770 keeps the fields as inert flags.
+        let mut individual = individual.clone();
+        for removed in ["greater_blessing_of_salvation", "greater_blessing_of_light"] {
+            individual.set_bool(removed, false);
+        }
+        return apply_generated_buffs(env, unit, raid_buffs, party_buffs, &individual);
+    }
     apply_generated_buffs(env, unit, raid_buffs, party_buffs, individual)
 }
 

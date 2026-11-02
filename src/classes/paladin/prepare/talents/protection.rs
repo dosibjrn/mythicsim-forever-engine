@@ -5,11 +5,12 @@ use std::rc::Rc;
 use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger, PseudoStatField};
 use crate::prepare::character::constants::DEFENSE_RATING_PER_DEFENSE_LEVEL;
 use crate::prepare::dbcenums;
-use crate::prepare::sim::{AuraConfig, EventCallbacks, Sim, UnitId, NEVER_EXPIRES, SECOND};
+use crate::prepare::sim::{AuraConfig, EventCallbacks, Rules, Sim, UnitId, NEVER_EXPIRES, SECOND};
 use crate::prepare::spell::ProcMask;
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::Stat;
 
+use super::super::hotfix_113554 as hotfix;
 use super::super::masks;
 use super::super::spell_data::spell_data;
 use super::super::util::spell_action;
@@ -51,6 +52,10 @@ impl Paladin {
 
         // Tier 7
         // Holy Shield registered in registerTalentSpells
+
+        // Push 113554's Protection capstone, under Forever's rules. Stoicism shortens Stun and
+        // Charm effects, which the sim never suffers.
+        self.apply_shieldsworn(sim, unit);
     }
 
     /// Toughness: increases your armor value from items by 2/4/6/8/10%.
@@ -89,11 +94,12 @@ impl Paladin {
                 ..AuraConfig::default()
             },
         );
-        sim.attach_stat_buff(
-            redoubt,
-            Stat::BlockPercent,
-            spell_data().redoubt.value_at(points),
-        );
+        // 6% a rank since push 113554 under Forever's rules (was 4%).
+        let block = match sim.rules {
+            Rules::Forever => hotfix::at(&hotfix::REDOUBT, points),
+            Rules::GoReference => spell_data().redoubt.value_at(points),
+        };
+        sim.attach_stat_buff(redoubt, Stat::BlockPercent, block);
         sim.attach_proc_trigger(
             redoubt,
             &ProcTrigger {
@@ -168,10 +174,7 @@ impl Paladin {
         }
         // The client states this as a negative percentage per rank: -2 / -4 / -6, so
         // multiplier_at gives 0.98 / 0.96 / 0.94 and the minus is never written here.
-        let multiplier = spell_data()
-            .improved_righteous_fury
-            .effect(dbcenums::A_ADD_FLAT_MODIFIER, dbcenums::SPELLMOD_EFFECT2)
-            .multiplier_at(points);
+        let multiplier = Self::improved_righteous_fury_multiplier(sim, points);
 
         sim.on_spell_registered(
             unit,
@@ -189,6 +192,18 @@ impl Paladin {
         );
     }
 
+    /// Improved Righteous Fury's damage taken multiplier: -3/-6/-9% since push 113554 under
+    /// Forever's rules, -2/-4/-6% in the reference.
+    pub(in super::super) fn improved_righteous_fury_multiplier(sim: &Sim, points: i32) -> f64 {
+        match sim.rules {
+            Rules::Forever => 1.0 + hotfix::at(&hotfix::IMPROVED_RIGHTEOUS_FURY, points) / 100.0,
+            Rules::GoReference => spell_data()
+                .improved_righteous_fury
+                .effect(dbcenums::A_ADD_FLAT_MODIFIER, dbcenums::SPELLMOD_EFFECT2)
+                .multiplier_at(points),
+        }
+    }
+
     /// Shield Specialization: increases the amount of damage absorbed by your shield, and
     /// gives your blocks a chance to restore a share of your maximum Mana. May only occur once
     /// every 3 sec.
@@ -197,10 +212,16 @@ impl Paladin {
         if points == 0 {
             return;
         }
-        sim.unit_mut(unit).pseudo_stats.block_value_multiplier *= spell_data()
-            .shield_specialization
-            .effect(dbcenums::A_MOD_BLOCK_VALUE_PCT, 0)
-            .multiplier_at(points);
+        // Two ranks since push 113554 under Forever's rules: 15/30% block value.
+        sim.unit_mut(unit).pseudo_stats.block_value_multiplier *= match sim.rules {
+            Rules::Forever => {
+                1.0 + hotfix::at(&hotfix::SHIELD_SPECIALIZATION_BLOCK_VALUE, points) / 100.0
+            }
+            Rules::GoReference => spell_data()
+                .shield_specialization
+                .effect(dbcenums::A_MOD_BLOCK_VALUE_PCT, 0)
+                .multiplier_at(points),
+        };
 
         let label = sim.unit(unit).label.clone();
         sim.make_proc_trigger_aura(
@@ -209,15 +230,24 @@ impl Paladin {
                 name: format!("Shield Specialization{label}"),
                 callback: CallbackMask::ON_SPELL_HIT_TAKEN,
                 outcome: HitOutcome::BLOCK,
-                proc_chance: spell_data()
-                    .shield_specialization
-                    .effect_at(2)
-                    .fraction_at(points),
+                proc_chance: Self::shield_specialization_chance(sim, points),
                 icd: 3 * SECOND,
                 trigger_immediately: true,
                 ..ProcTrigger::default()
             },
         );
+    }
+
+    /// Shield Specialization's mana chance: 50/100% since push 113554 under Forever's rules,
+    /// 33/66/100% in the reference.
+    pub(in super::super) fn shield_specialization_chance(sim: &Sim, points: i32) -> f64 {
+        match sim.rules {
+            Rules::Forever => hotfix::at(&hotfix::SHIELD_SPECIALIZATION_CHANCE, points) / 100.0,
+            Rules::GoReference => spell_data()
+                .shield_specialization
+                .effect_at(2)
+                .fraction_at(points),
+        }
     }
 
     /// Sacred Duty: increases your total Stamina and reduces the cooldown of your Templar's
@@ -227,13 +257,20 @@ impl Paladin {
         if points == 0 {
             return;
         }
-        sim.unit_mut(unit).sdm.multiply_stat(
-            Stat::Stamina,
-            spell_data()
-                .sacred_duty
-                .effect(dbcenums::A_MOD_TOTAL_STAT_PERCENTAGE, 0)
-                .multiplier_at(points),
-        );
+        // Push 113554 trades the Stamina for a shorter Forbearance under Forever's rules, which
+        // register_forbearance reads.
+        if sim.rules == Rules::Forever {
+            self.forbearance_reduction -=
+                hotfix::millis(hotfix::at(&hotfix::SACRED_DUTY_FORBEARANCE_MS, points));
+        } else {
+            sim.unit_mut(unit).sdm.multiply_stat(
+                Stat::Stamina,
+                spell_data()
+                    .sacred_duty
+                    .effect(dbcenums::A_MOD_TOTAL_STAT_PERCENTAGE, 0)
+                    .multiplier_at(points),
+            );
+        }
         sim.add_static_mod(
             unit,
             SpellModConfig {
@@ -276,24 +313,16 @@ impl Paladin {
                     == 0
                 && !retribution_aura.contains(&spell.action_id.spell_id)
         };
-        let takes_on = Rc::new(takes_it);
-        let takes_off = takes_on.clone();
+        // A damage done mod over the spells it takes rather than a custom one: an item swap (the
+        // Manual Crowd Pummeler opener) carries every hand mod, and it carries only built-in kinds.
         let weapon_mod = sim.add_dynamic_mod(
             unit,
             SpellModConfig {
                 // Go SpellSchoolPhysical | SpellSchoolChaos: every school.
                 school: 0x7f,
-                kind: SpellModType::Custom,
-                apply_custom: Some(Rc::new(move |sim: &mut Sim, _, spell| {
-                    if takes_on(sim, spell) {
-                        sim.spell_mut(spell).damage_multiplier *= 1.0 + bonus;
-                    }
-                })),
-                remove_custom: Some(Rc::new(move |sim: &mut Sim, _, spell| {
-                    if takes_off(sim, spell) {
-                        sim.spell_mut(spell).damage_multiplier /= 1.0 + bonus;
-                    }
-                })),
+                kind: SpellModType::DamageDonePct,
+                float_value: bonus,
+                spell_filter: Some(Rc::new(takes_it)),
                 ..SpellModConfig::default()
             },
         );
@@ -354,6 +383,41 @@ impl Paladin {
         );
     }
 
+    /// Iron Creed's damage taken multiplier: -2/-4/-6% over three ranks since push 113554 under
+    /// Forever's rules (the client states it negative), 2-10% over five in the reference.
+    pub(in super::super) fn iron_creed_multiplier(sim: &Sim, points: i32) -> f64 {
+        match sim.rules {
+            Rules::Forever => 1.0 + hotfix::at(&hotfix::IRON_CREED_DAMAGE_TAKEN, points) / 100.0,
+            Rules::GoReference => {
+                1.0 - spell_data()
+                    .iron_creed
+                    .effect(dbcenums::A_PROC_TRIGGER_SPELL_WITH_VALUE, 0)
+                    .fraction_at(points)
+            }
+        }
+    }
+
+    /// Shieldsworn (1328544, push 113554): reduces the cooldown of your Holy Strike by 4 sec.
+    /// Holy Strike now strikes with your shield, triggering your active Holy Shield and Shield
+    /// Specialization without consuming their charges or triggering their cooldowns, and lets you
+    /// block spells for 6 sec. The triggers are the runtime's (`talents/protection.rs`); the sim
+    /// lets only melee and ranged attacks be blocked, so the spell block is not modelled, as in
+    /// upstream #772.
+    fn apply_shieldsworn(&mut self, sim: &mut Sim, unit: UnitId) {
+        if self.new_talent("shieldsworn") == 0 {
+            return;
+        }
+        sim.add_static_mod(
+            unit,
+            SpellModConfig {
+                class_mask: masks::HOLY_STRIKE,
+                kind: SpellModType::CooldownFlat,
+                time_value: hotfix::SHIELDSWORN_HOLY_STRIKE_COOLDOWN,
+                ..SpellModConfig::default()
+            },
+        );
+    }
+
     /// Iron Creed: increases the threat generated by your Holy Strike ability. While
     /// Righteous Fury is active, Holy Strike also reduces your damage taken for 6 sec.
     fn apply_iron_creed(&mut self, sim: &mut Sim, unit: UnitId) {
@@ -366,19 +430,20 @@ impl Paladin {
             SpellModConfig {
                 class_mask: masks::HOLY_STRIKE,
                 kind: SpellModType::ThreatMultiplierPct,
-                float_value: spell_data()
-                    .iron_creed
-                    .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_THREAT)
-                    .fraction_at(points),
+                // Three ranks of 10% since push 113554 under Forever's rules (was 5 of 5%).
+                float_value: match sim.rules {
+                    Rules::Forever => hotfix::at(&hotfix::IRON_CREED_THREAT, points) / 100.0,
+                    Rules::GoReference => spell_data()
+                        .iron_creed
+                        .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_THREAT)
+                        .fraction_at(points),
+                },
                 ..SpellModConfig::default()
             },
         );
 
         let rank = spell_data().iron_creed_triggered.highest();
-        let reduction = spell_data()
-            .iron_creed
-            .effect(dbcenums::A_PROC_TRIGGER_SPELL_WITH_VALUE, 0)
-            .fraction_at(points);
+        let reduction = 1.0 - Self::iron_creed_multiplier(sim, points);
         let label = sim.unit(unit).label.clone();
 
         let iron_creed = sim.register_aura(

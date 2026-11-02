@@ -8,6 +8,7 @@ use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
 use crate::prepare::env::Environment;
 use crate::prepare::export::action_id;
+use crate::prepare::sim::Rules;
 
 use super::poisons::{poison_proc_mask, IMBUES};
 use super::spell_data::spell_data;
@@ -64,7 +65,7 @@ fn rogue_effects(rogue: &Rogue, env: &Environment) -> Vec<Value> {
     }
     // backstab.go: the base, the dagger and behind conditions, and Puncturing Wounds' combo point.
     if rogue.spells.backstab.is_some() {
-        let row = data.backstab.highest();
+        let row = data.backstab.highest_for(env.rules);
         effects.push(json!({
             "kind": "backstab", "spell_id": row.id,
             "base_damage": row.damage_effect().average(CHARACTER_LEVEL),
@@ -156,10 +157,16 @@ fn rogue_effects(rogue: &Rogue, env: &Environment) -> Vec<Value> {
     }
     if let Some(spell) = rogue.spells.deadly_poison {
         let id = &sim.spell(spell).action_id;
+        // Deadly Poison V (dot 25349, 23 a tick) is taught by an Ahn'Qiraj 20 book, so under
+        // Forever's rules the rogue brews rank IV (dot 11354, 18 a tick); see book_ranks.
+        let tick_damage = match env.rules {
+            Rules::Forever => 18.0,
+            Rules::GoReference => 23.0,
+        };
         effects.push(json!({
             "kind": "deadly_poison", "trigger_aura": "Deadly Poison", "spell_id": id.spell_id,
             "tag": id.tag, "proc_mask": hands(IMBUES.deadly), "proc_chance": 0.3 + bonus,
-            "tick_damage": 23.0, "attack_power_share": 0.0045,
+            "tick_damage": tick_damage, "attack_power_share": 0.0045,
         }));
     }
     effects

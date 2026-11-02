@@ -7,6 +7,8 @@ use super::{
 
 /// Go `DamageTakenRageFactor`.
 const DAMAGE_TAKEN_RAGE_FACTOR: f64 = 10.0;
+/// Go `CritRageMultiplier`: under Forever's rules a white crit gives twice its swing's rage.
+const CRIT_RAGE_MULTIPLIER: f64 = 2.0;
 
 /// Go `rageBar`, with the per-hit rage the exporter resolved from the weapons.
 #[derive(Clone, Debug)]
@@ -21,6 +23,9 @@ pub(crate) struct RageBar {
     /// critical swing of a two-hander gives less than twice its rage.
     pub(crate) main_hand_crit_rage: f64,
     pub(crate) off_hand_crit_rage: f64,
+    /// Forever's rules: a critical hit gives `CRIT_RAGE_MULTIPLIER` times the swing's rage, a
+    /// two-hander's factor included, in place of adding the crit rage above.
+    pub(crate) crit_multiplies_swing: bool,
     pub(crate) threat_per_rage: f64,
     /// Go `RageGainThreatMultiplied` (patch 182): a gain counts `threat_per_rage` times the
     /// player's threat multiplier at the gain, split between the targets at the end of the fight.
@@ -170,7 +175,14 @@ impl<A: Agent> Fight<A> {
             Some(Hand::Enemy | Hand::Ranged) | None => return,
         };
         if result.crit() {
-            generated += crit_bonus;
+            // Forever's combat logs of 9 October 2026 hold 21 two-hand crits at exactly twice
+            // the swing's rage (16.2 to 32.4 over 13, 14.8 to 29.7 over 8); the Go rule's share
+            // without the two-hander factor would give 1.77 times.
+            if bar.crit_multiplies_swing {
+                generated *= CRIT_RAGE_MULTIPLIER;
+            } else {
+                generated += crit_bonus;
+            }
         }
         let metrics = match self.spells[spell].cost.map(|cost| cost.kind) {
             Some(_) => self.spells[spell].mana_metrics.expect("cost metrics"),

@@ -769,7 +769,10 @@ fn rake_scales_with_attack_power() {
 fn idol_of_the_dream_extends_rip_by_two_seconds() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures/mage/prepared-v2/production-feral-druid.request.json");
-    let request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let mut request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    // The fixture's talents in hotfix push 113531's order, which Forever's rules read.
+    request["raid"]["parties"][0]["players"][0]["talentsString"] =
+        json!("050022-55000032023012125001-055");
     let rip = |idol: Option<i64>| {
         let mut request = request.clone();
         let items = request["raid"]["parties"][0]["players"][0]["equipment"]["items"]

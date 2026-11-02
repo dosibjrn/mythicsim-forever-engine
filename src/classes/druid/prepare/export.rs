@@ -52,7 +52,6 @@ const BITE_RANKS: [i32; 5] = [22568, 22827, 22828, 22829, 31018];
 const BEAR_ENRAGE_RANK: [i32; 1] = [5229];
 const MAUL_RANKS: [i32; 7] = [6807, 6808, 6809, 8972, 9745, 9880, 9881];
 const LACERATE_RANKS: [i32; 3] = [414644, 1235826, 1235827];
-const PRIMAL_BITE_RANKS: [i32; 4] = [407995, 1238069, 1238070, 1238073];
 const SWIPE_RANKS: [i32; 5] = [779, 780, 769, 9754, 9908];
 
 /// Go `HitOutcome.String` of one flag, which `outcomeNames` lists.
@@ -179,12 +178,12 @@ impl Druid {
             || WRATH_RANKS.contains(&id)
             || id == highest(&BITE_RANKS)
             || id == highest(&MAUL_RANKS)
-            || id == highest(&PRIMAL_BITE_RANKS)
+            || id == super::bear::primal_bite_rank(sim.rules).id
             || id == highest(&MOONFIRE_RANKS);
         if !wanted {
             return None;
         }
-        let row = Ladder::ranked(&[id]).highest();
+        let row = crate::prepare::hotfix_113554::row(sim.rules, id);
         let effect = row.damage_effect();
         if effect.is_nil() {
             return None;
@@ -201,6 +200,25 @@ impl Druid {
         // MythicSim's healer sims (Rust only): the Restoration druid's heals.
         if !self.heals.is_empty() {
             effects.push(crate::prepare::heals::heals_effect(env, &self.heals));
+            effects.extend(self.bloom_effect());
+        }
+
+        // thorns.go: the cast turns the druid's own Thorns on. Forever's rules describe it; Go's
+        // exporter leaves the cast unknown.
+        if sim.rules == crate::prepare::sim::Rules::Forever {
+            let rotation = crate::prepare::rotation::rotation_spells(sim, unit);
+            let thorns = sim.unit(unit).spellbook.iter().copied().find(|&spell| {
+                let state = sim.spell(spell);
+                state.class_spell_mask == masks::THORNS
+                    && rotation.contains(&i64::from(state.action_id.spell_id))
+            });
+            if let Some(aura) = thorns.and_then(|spell| sim.spell(spell).related_self_buff) {
+                effects.push(json!({
+                    "kind": "druid_thorns",
+                    "spell_id": sim.spell(thorns.expect("found")).action_id.spell_id,
+                    "aura": sim.aura(aura).label,
+                }));
+            }
         }
 
         // druid.go RegisterSpell: the forms each spell may be cast in. forms.go: the form the
@@ -472,12 +490,19 @@ impl Druid {
             // ferocious_bite.go: client values, and 3% attack power a point, a Go literal.
             let ladder = Ladder::ranked(&BITE_RANKS);
             let rank = ladder.highest();
-            effects.push(json!({
+            let mut effect = json!({
                 "kind": "ferocious_bite", "spell": spell_position(sim, unit, bite),
                 "damage_per_energy": ladder.effect_at(2).fraction_at(rank.rank_number()),
                 "damage_per_combo_point": f64::from(rank.damage_effect().points_per_resource),
                 "attack_power_per_combo_point": 0.03,
-            }));
+            });
+            // Predatory Discipline (1328613, hotfix push 113531): "Ferocious Bite no longer
+            // converts extra Energy into damage, but still deals extra damage based on excess
+            // Energy". The talent's dummy (20) names no value in the tooltip and is unread.
+            if self.tal.predatory_discipline {
+                effect["keeps_energy"] = json!(true);
+            }
+            effects.push(effect);
         }
         if let Some(shifting_power) = self.shifting_power {
             // shifting_power.go
@@ -668,7 +693,7 @@ impl Druid {
                 // primal_bite.go: Berserk lifts its cooldown, a Go literal.
                 effects.push(json!({
                     "kind": "primal_bite", "spell": spell_position(sim, unit, primal_bite),
-                    "flat_damage": Ladder::ranked(&PRIMAL_BITE_RANKS).highest()
+                    "flat_damage": super::bear::primal_bite_rank(sim.rules)
                         .damage_effect().average(CHARACTER_LEVEL),
                 }));
             }

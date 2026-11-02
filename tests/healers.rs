@@ -26,9 +26,22 @@ fn fixtures() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/healers"))
 }
 
+/// A healer request as Forever's rules read it: the Restoration druid's talents in hotfix push
+/// 113531's order (Reflection and Subtlety swap, Bloom takes Gift of the Earthmother's square).
+fn forever_request(name: &str) -> Vec<u8> {
+    let request = fs::read(fixtures().join(format!("{name}.request.json"))).unwrap();
+    if name != "restoration-druid" {
+        return request;
+    }
+    let mut value: Value = serde_json::from_slice(&request).unwrap();
+    value["raid"]["parties"][0]["players"][0]["talentsString"] =
+        json!("05002001--5053005153113051");
+    serde_json::to_vec(&value).unwrap()
+}
+
 /// The fight's result for a healer request: prepared in Rust, gated and simulated.
 fn run(name: &str) -> Value {
-    let request = fs::read(fixtures().join(format!("{name}.request.json"))).unwrap();
+    let request = forever_request(name);
     let prepared = prepare(&request, "rust").unwrap_or_else(|err| panic!("{name}: {err:?}"));
     check_prepared(&prepared).unwrap_or_else(|err| panic!("{name}: {err:?}"));
     simulate_prepared(&prepared)
@@ -146,9 +159,10 @@ fn holy_priest_heals_as_its_rows_state() {
             "{SpellID: 401859} [DEBUG] HealingPower: 268.2, BaseHealing:287.1, AfterCasterMods:315.8",
             // Power Word: Shield rank 10 (10901): 928 + 0.1 x 268.2 = 954.82, then +20%.
             "{SpellID: 10901} Shield for 1145.790.",
-            // Renew rank 10 (25315): 166 + 0.2 x 268.2 = 219.64 a tick, then 1.10 x 1.15 x 1.05,
-            // 291.750, of which Renew's 16.06% is overhealing.
-            "{SpellID: 25315} tick Hit for 244.895 healing, 46.855 overhealing.",
+            // Renew rank 9 (10929; rank 10, 25315, is an Ahn'Qiraj 20 book rank that Forever's
+            // rules leave out): 134 + 0.2 x 268.2 = 187.64 a tick, then 1.10 x 1.15 x 1.05,
+            // 249.246, of which Renew's 16.06% is overhealing.
+            "{SpellID: 10929} tick Hit for 209.217 healing, 40.029 overhealing.",
         ],
     );
     // Under Forever's rules a charge heals only when the player holding it is hit
@@ -168,7 +182,8 @@ fn holy_priest_heals_as_its_rows_state() {
 }
 
 /// The 46-point Restoration druid: Gift of Nature 5 (10% direct and periodic), Improved
-/// Rejuvenation 3 (15%), Genesis 5 (5% periodic), Nature's Splendor, on 302 healing power.
+/// Rejuvenation 3 (15%), Genesis 5 (10% periodic since hotfix push 113531, which also gives Wild
+/// Growth a cast), Nature's Splendor, on 302 healing power.
 #[test]
 fn restoration_druid_heals_as_its_rows_state() {
     let result = run("restoration-druid");
@@ -176,18 +191,141 @@ fn restoration_druid_heals_as_its_rows_state() {
         "restoration-druid",
         &result,
         &[
-            // Wild Growth rank 3 (1238215): 97 + 0.033 x 302 = 106.97 a tick, then +10%, on
-            // each of five players, 117.663, of which a group heal's 24.58% is overhealing.
-            "{SpellID: 1238215} tick Hit for 88.741 healing, 28.921 overhealing.",
-            // Rejuvenation rank 11 (25299): 194 + 0.2 x 302 = 254.4 a tick, then 1.10 x 1.15 x
-            // 1.05, 337.907, of which Rejuvenation's 17.76% is overhealing.
-            "{SpellID: 25299} tick Hit for 277.895 healing, 60.012 overhealing.",
-            // Swiftmend consumes that Rejuvenation: its five ticks with Nature's Splendor, 1689.5,
-            // then Gift of Nature's 10% on Swiftmend's own direct heal.
-            "{SpellID: 18562} [DEBUG] HealingPower: 302.0, BaseHealing:1689.5, AfterCasterMods:1858.5",
+            // Wild Growth rank 3 (1238215): 97 + 0.033 x 302 = 106.97 a tick, then 1.10 x 1.10
+            // (Gift of Nature, and Genesis 5/5 at 2% a rank, whose first effect names Wild
+            // Growth), on each of five players, 129.429, of which a group heal's 24.58% is
+            // overhealing.
+            "{SpellID: 1238215} tick Hit for 97.615 healing, 31.814 overhealing.",
+            // Rejuvenation rank 10 (9841; rank 11, 25299, is an Ahn'Qiraj 20 book rank that
+            // Forever's rules leave out): 161 + 0.2 x 302 = 221.4 a tick, then 1.10 x 1.15 x 1.10
+            // (Genesis 5/5 at 2% a rank since hotfix push 113531), 308.078, of which
+            // Rejuvenation's 17.76% is overhealing.
+            "{SpellID: 9841} tick Hit for 253.363 healing, 54.715 overhealing.",
+            // Swiftmend consumes that Rejuvenation: its five ticks with Nature's Splendor, 1540.4,
+            // then Gift of Nature's 10% and Genesis's 10% (its second effect names Swiftmend) on
+            // Swiftmend's own direct heal.
+            "{SpellID: 18562} [DEBUG] HealingPower: 302.0, BaseHealing:1540.4, AfterCasterMods:1848.5",
+            // Bloom, when the Regrowth cast at 9 s and the Rejuvenation cast at 21.5 s end by
+            // their duration (27 s and 15 s with Nature's Splendor): 255 Spirit, of which a
+            // heal at once's 5.37% is overhealing. The Swiftmends consumed the rest.
+            "[36.00] [restoration-druid (#1)] [restoration-druid (#1)] {SpellID: 1328621} Hit for 241.306 healing, 13.694 overhealing.",
+            "[36.50] [restoration-druid (#1)] [restoration-druid (#1)] {SpellID: 1328621} Hit for 241.306 healing, 13.694 overhealing.",
         ],
     );
     golden("restoration-druid", &result);
+}
+
+/// Bloom (1328621, hotfix push 113531): a Rejuvenation or Regrowth that ends by its duration
+/// heals the druid's Spirit at once, a flat heal that nothing modifies and nothing crits, as its
+/// own action. The client data states no more (two dummy effects, 100 and 50, and no heal spell).
+#[test]
+fn bloom_heals_the_druids_spirit_when_a_heal_over_time_ends() {
+    // The talent alone: Bloom is the only difference between these two strings.
+    let mut without = request_value("restoration-druid");
+    without["raid"]["parties"][0]["players"][0]["talentsString"] =
+        json!("05002001--5053005053113051");
+    let without = run_value(&without);
+    let with = run("restoration-druid");
+    assert_eq!(action_total(&without, 1328621, "casts"), 0.0);
+    assert!(!without["logs"].as_str().unwrap().contains("1328621"));
+    let spirit = {
+        let prepared = prepare(&forever_request("restoration-druid"), "rust").unwrap();
+        let prepared = serde_json::to_value(&prepared).unwrap();
+        prepared["player"]["stats"]["Spirit"].as_f64().unwrap()
+    };
+    assert_eq!(spirit, 255.0);
+    // Every Bloom is a hit for the whole Spirit less the heal at once's overhealing share, and
+    // nothing else of the druid's heals moves.
+    let blooms = action_total(&with, 1328621, "hits");
+    assert!(blooms > 0.0);
+    assert_eq!(action_total(&with, 1328621, "crits"), 0.0);
+    let healing = action_total(&with, 1328621, "healing");
+    let overhealing = action_total(&with, 1328621, "overhealing");
+    assert!((healing + overhealing - blooms * spirit).abs() < 1e-6);
+    assert!((overhealing / (healing + overhealing) - 0.0537).abs() < 1e-9);
+    for spell in [9889, 6778, 9841, 9858, 1238215, 18562] {
+        assert_eq!(
+            action_total(&with, spell, "healing"),
+            action_total(&without, spell, "healing"),
+            "{spell}"
+        );
+    }
+    let hps = |result: &Value| player(result)["hps"]["avg"].as_f64().unwrap();
+    assert!(hps(&with) > hps(&without));
+
+    // The first fight's Rejuvenation and Regrowth casts that Swiftmend consumed bloom nothing, so
+    // the log holds fewer Blooms than casts of the two.
+    let log = with["logs"].as_str().unwrap();
+    let casts = |spell: i64| {
+        log.lines()
+            .filter(|line| line.contains(&format!("Completed cast {{SpellID: {spell}}}")))
+            .count()
+    };
+    let in_log = log.matches("{SpellID: 1328621} Hit").count();
+    assert!(
+        in_log > 0 && in_log < casts(9841) + casts(9858),
+        "{in_log} Blooms"
+    );
+}
+
+/// A Rejuvenation cast again while it runs goes on another player and the one running goes on
+/// healing its own, so each cast blooms once when it ends: the one it leaves blooms as the new
+/// one goes up, and one cut short by the fight's end blooms nothing.
+#[test]
+fn bloom_follows_every_heal_over_time_to_its_end() {
+    let cast = |condition: Option<Value>| {
+        let mut action = json!({"action": {"castSpell": {
+            "spellId": {"spellId": 9841}, "target": {"type": "Self"}}}});
+        if let Some(condition) = condition {
+            action["action"]["condition"] = condition;
+        }
+        action
+    };
+    let rotation = |items: Vec<Value>| {
+        let mut request = request_value("restoration-druid");
+        rotation_of(&mut request)["priorityList"] = Value::Array(items);
+        run_value(&request)
+    };
+    let counts = |result: &Value| {
+        let log = result["logs"].as_str().unwrap();
+        let casts = log.matches("Completed cast {SpellID: 9841}").count();
+        (casts, log.matches("{SpellID: 1328621} Hit").count())
+    };
+    // Recast every global cooldown: every cast but the first leaves one running.
+    let (casts, blooms) = counts(&rotation(vec![cast(None)]));
+    assert!(casts > 20, "{casts} casts");
+    assert!(
+        (casts - 1..=casts).contains(&blooms),
+        "{blooms} Blooms for {casts} casts"
+    );
+    // Recast only when it has ended: each ends by its duration, Rejuvenation's 12 seconds and
+    // Nature's Splendor's 3, and all bloom but the one the fight cuts short.
+    let after_ending = json!({"not": {"val": {"auraIsActive": {"auraId": {"spellId": 9841}}}}});
+    let result = rotation(vec![cast(Some(after_ending))]);
+    let (casts, blooms) = counts(&result);
+    assert!(casts > 5, "{casts} casts");
+    assert!(
+        (casts - 1..=casts).contains(&blooms),
+        "{blooms} Blooms for {casts} casts"
+    );
+    // A Bloom is 15.00 seconds after a cast that completed then.
+    let log = result["logs"].as_str().unwrap();
+    let time = |line: &str| -> f64 { line[1..line.find(']').unwrap()].parse().unwrap() };
+    let completed: Vec<f64> = log
+        .lines()
+        .filter(|line| line.contains("Completed cast {SpellID: 9841}"))
+        .map(time)
+        .collect();
+    for line in log
+        .lines()
+        .filter(|line| line.contains("{SpellID: 1328621} Hit"))
+    {
+        let at = time(line);
+        assert!(
+            completed.iter().any(|cast| (at - cast - 15.0).abs() < 1e-9),
+            "a Bloom at {at} s follows no cast by 15 s"
+        );
+    }
 }
 
 /// The 40-point Restoration shaman: Purification 5 (10% direct and periodic), Healing Way 3
@@ -199,6 +337,9 @@ fn restoration_shaman_heals_as_its_rows_state() {
     // Chain Heal rank 3 (10623) lands on up to three players, each with its own roll of 473 to
     // 539 plus 0.714 of healing power, the second at half and the third at a quarter. A cast's
     // first heal is the largest, so a heal larger than the one before starts the next cast.
+    // The first player heals 25% more with a Riptide up (the Riptide holder, see
+    // `Shaman::riptide_chain_heal_bonus`): the fixture's Riptide is up for nearly every cast, and
+    // the casts it is not up for read the roll without it.
     let field = |line: &str, name: &str| -> f64 {
         let at = line.find(name).unwrap() + name.len();
         line[at..].split(',').next().unwrap().parse().unwrap()
@@ -219,6 +360,13 @@ fn restoration_shaman_heals_as_its_rows_state() {
         assert!(cast.len() <= 3, "{} Chain Heal jumps", cast.len());
         for (jump, &(healing_power, base)) in cast.iter().enumerate() {
             let roll = base / 0.5f64.powi(jump as i32) - 0.714 * healing_power;
+            let boosted = jump == 0 && !(472.5..=539.5).contains(&roll);
+            let roll = if boosted {
+                // The first player's whole heal, roll and healing power, is 25% larger.
+                base / 1.25 - 0.714 * healing_power
+            } else {
+                roll
+            };
             assert!((472.5..=539.5).contains(&roll), "jump {jump}: roll {roll}");
         }
     }
@@ -272,9 +420,24 @@ fn forever_healer_sims_count_healing_less_overhealing() {
     // overhealing split alone.
     let mut holy: Value = serde_json::from_slice(&request("holy-paladin-healing")).unwrap();
     holy["raid"]["parties"][0]["players"][0]["disableRacials"] = true.into();
+    // Talents that mean the same in the reference's tree and push 113554's, which Forever's
+    // rules read, so both draw the same rolls: Divine Strength 5, Healing Light 3, Infusion of
+    // Light 2, Illumination 5, Divine Favor and Holy Shock; Precision 3, Guardian's Favor 2,
+    // Toughness 5 and Anticipation 3.
+    holy["raid"]["parties"][0]["players"][0]["talentsString"] = "50300000025101-50323".into();
+    // The reference keeps the Ahn'Qiraj 20 book rank the rotation names (Holy Light IX, 25292)
+    // where Forever's rules cast the rank below (Holy Light VIII, 10329), so the reference casts
+    // that rank here too: both draw the same rolls.
+    let reference_request = serde_json::to_string(&holy)
+        .unwrap()
+        .replace("25292", "10329");
+    let reference =
+        prepare_json_with(reference_request.as_bytes(), "rust", Rules::GoReference).unwrap();
+    holy["raid"]["parties"][0]["players"][0]["talentsString"] =
+        "05300015002001-003200005003".into();
     let holy = serde_json::to_vec(&holy).unwrap();
     let forever = prepare_json_with(&holy, "rust", Rules::Forever).unwrap();
-    let reference = prepare_json_with(&holy, "rust", Rules::GoReference).unwrap();
+    assert_eq!(forever["player"]["talents"], reference["player"]["talents"]);
     let share = |spell: i64| {
         forever["player"]["overheal"]
             .as_array()
@@ -283,9 +446,10 @@ fn forever_healer_sims_count_healing_less_overhealing() {
             .find(|entry| entry["spell_id"] == spell)
             .map(|entry| entry["fraction"].as_f64().unwrap())
     };
-    // Flash of Light rank 6, Holy Light rank 9 and the Go reference's Holy Shock heal.
+    // Flash of Light rank 6, Holy Light rank 8 (rank 9 is an Ahn'Qiraj 20 book rank) and the Go
+    // reference's Holy Shock heal.
     assert_eq!(share(19943), Some(0.0699));
-    assert_eq!(share(25292), Some(0.1024));
+    assert_eq!(share(10329), Some(0.1024));
     assert_eq!(share(25903), Some(0.0658));
     // Holy Shock's damage is no heal.
     assert_eq!(share(1311606), None);
@@ -311,7 +475,7 @@ fn forever_healer_sims_count_healing_less_overhealing() {
             .map(|target| target[key].as_f64().unwrap_or(0.0))
             .sum()
     };
-    for (spell, fraction) in [(19943, 0.0699), (25292, 0.1024), (25903, 0.0658)] {
+    for (spell, fraction) in [(19943, 0.0699), (10329, 0.1024), (25903, 0.0658)] {
         let whole = totals(&reference, spell, "healing");
         let healing = totals(&forever, spell, "healing");
         let overhealing = totals(&forever, spell, "overhealing");
@@ -335,7 +499,12 @@ fn forever_healer_sims_count_healing_less_overhealing() {
 #[test]
 fn forever_heal_ticks_crit_as_their_rows_state() {
     let request = fs::read(fixtures().join("restoration-druid.request.json")).unwrap();
-    let forever = prepare_json_with(&request, "rust", Rules::Forever).unwrap();
+    let forever = prepare_json_with(
+        &forever_request("restoration-druid"),
+        "rust",
+        Rules::Forever,
+    )
+    .unwrap();
     let reference = prepare_json_with(&request, "rust", Rules::GoReference).unwrap();
     let flagged = |prepared: &Value, spell: i64| -> bool {
         prepared["effects"]
@@ -348,15 +517,16 @@ fn forever_heal_ticks_crit_as_their_rows_state() {
             .map(|heal| heal["tick_can_crit"] == true)
             .unwrap()
     };
-    // Rejuvenation rank 11, Regrowth rank 9 and Wild Growth rank 3; Healing Touch has no tick.
-    for spell in [25299, 9858, 1238215] {
+    // Rejuvenation rank 10 (rank 11 is an Ahn'Qiraj 20 book rank), Regrowth rank 9 and Wild
+    // Growth rank 3; Healing Touch (rank 10) has no tick.
+    for spell in [9841, 9858, 1238215] {
         assert!(flagged(&forever, spell), "{spell} ticks crit under Forever");
         assert!(
             !flagged(&reference, spell),
             "{spell} ticks never crit in Go"
         );
     }
-    assert!(!flagged(&forever, 25297));
+    assert!(!flagged(&forever, 9889));
 
     let sim = |prepared: &Value| {
         let prepared = serde_json::from_value(prepared.clone()).unwrap();
@@ -375,22 +545,22 @@ fn forever_heal_ticks_crit_as_their_rows_state() {
     };
     // The druid's spell crit, 15.86% and 25.86% while Elune's Light is up: Rejuvenation takes
     // no crit bonus of its own.
-    let crits = totals(&forever, 25299, "critTicks");
-    let share = crits / (crits + totals(&forever, 25299, "ticks"));
+    let crits = totals(&forever, 9841, "critTicks");
+    let share = crits / (crits + totals(&forever, 9841, "ticks"));
     assert!(
         (0.15..0.2586).contains(&share),
         "Rejuvenation crits {share}"
     );
-    for spell in [25299, 9858, 1238215] {
+    for spell in [9841, 9858, 1238215] {
         assert_eq!(totals(&reference, spell, "critTicks"), 0.0, "{spell}");
         assert!(totals(&forever, spell, "critTicks") > 0.0, "{spell}");
     }
-    // A crit tick heals 1.5 times the 337.907 a tick of Rejuvenation rank 11 heals (above),
-    // 506.860, of which Rejuvenation's 17.76% is overhealing.
+    // A crit tick heals 1.5 times the 308.078 a tick of Rejuvenation rank 10 heals (above),
+    // 462.117, of which Rejuvenation's 17.76% is overhealing.
     logs(
         "restoration-druid",
         &forever,
-        &["{SpellID: 25299} tick Crit for 416.842 healing, 90.018 overhealing."],
+        &["{SpellID: 9841} tick Crit for 380.045 healing, 82.072 overhealing."],
     );
 }
 
@@ -524,4 +694,194 @@ fn a_heal_spends_inner_focus() {
             .any(|line| line.contains("Spent") && line.contains("mana from")),
         "no heal paid for mana after the last Inner Focus"
     );
+}
+
+/// A request's result, prepared in Rust under Forever's rules, gated and simulated.
+fn run_value(request: &Value) -> Value {
+    let request = serde_json::to_vec(request).unwrap();
+    let prepared = prepare(&request, "rust").unwrap();
+    check_prepared(&prepared).unwrap();
+    simulate_prepared(&prepared).unwrap().result
+}
+
+/// A healer fixture's request as JSON, for a test to change.
+fn request_value(name: &str) -> Value {
+    serde_json::from_slice(&forever_request(name)).unwrap()
+}
+
+fn rotation_of(request: &mut Value) -> &mut Value {
+    &mut request["raid"]["parties"][0]["players"][0]["rotation"]
+}
+
+/// One action's total of a result key, over its targets.
+fn action_total(result: &Value, spell: i64, key: &str) -> f64 {
+    player(result)["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|action| action["id"]["spellId"] == spell)
+        .flat_map(|action| action["targets"].as_array().unwrap())
+        .map(|target| target[key].as_f64().unwrap_or(0.0))
+        .sum()
+}
+
+/// The `BaseHealing` of each of a spell's heals in the first fight's log, in order.
+fn base_healing(result: &Value, spell: i64) -> Vec<f64> {
+    let marker = format!("{{SpellID: {spell}}} [DEBUG]");
+    result["logs"]
+        .as_str()
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains(&marker))
+        .map(|line| {
+            let at = line.find("BaseHealing:").unwrap() + "BaseHealing:".len();
+            line[at..].split(',').next().unwrap().parse().unwrap()
+        })
+        .collect()
+}
+
+/// The 31/18 Holy Paladin on push 113554's tree with Oath of Light (1328548) and Boundless Light
+/// 2/2, on 305 healing power, sworn on the heal target before the pull and again when under five
+/// seconds are left. The Oath adds its flat bonus to the heal's base amount, before healing power
+/// (the Greater Blessing of Light's 400 and 115 are the same numbers): Holy Light 400, Flash of
+/// Light 115 and Holy Shock 229, the rows' 6.67, 1.92 and 3.83 a level at level 60. While the
+/// Oath is up a heal reaches its holder, the tank, with the tank's share of the party's hits
+/// (`party_damage::tank_share`, 5 in 9), and only those heals carry the bonus: the rest are a
+/// plain roll.
+#[test]
+fn holy_paladin_oath_of_light_adds_its_bonus_to_the_three_heals() {
+    let result = run("holy-paladin");
+    logs(
+        "holy-paladin",
+        &result,
+        &[
+            // Sworn three seconds before the pull for 8% of the paladin's base mana, 120.
+            "Casting {SpellID: 1328548} (Cost = 120.000, Cast Time = 0s, GCD = 1.5s",
+            "Aura gained: {SpellID: 1328548}",
+            // Holy Shock rank 4 (25903) heals 320 and has no roll: 320 + 229 + 0.429 x 305, then
+            // Healing Light's 12%.
+            "{SpellID: 25903} [DEBUG] HealingPower: 305.0, BaseHealing:679.8, AfterCasterMods:761.4",
+        ],
+    );
+    // Without the Oath's cast the same heal is 320 + 0.429 x 305.
+    let mut bare = request_value("holy-paladin");
+    let rotation = rotation_of(&mut bare);
+    rotation["prepullActions"] = json!([]);
+    rotation["priorityList"].as_array_mut().unwrap().remove(1);
+    let bare = run_value(&bare);
+    logs(
+        "holy-paladin (no Oath)",
+        &bare,
+        &["{SpellID: 25903} [DEBUG] HealingPower: 305.0, BaseHealing:450.8, AfterCasterMods:504.9"],
+    );
+    assert!(!bare["logs"].as_str().unwrap().contains("1328548"));
+
+    // Every roll of Holy Light rank 8 (rank 9 is an Ahn'Qiraj 20 book rank) and Flash of Light
+    // rank 6 lands in its row's range plus
+    // the Oath's bonus and the coefficient on healing power.
+    let prepared = prepare(&forever_request("holy-paladin"), "rust").unwrap();
+    let prepared = serde_json::to_value(&prepared).unwrap();
+    let heals = prepared["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|effect| effect["kind"] == "paladin_heals")
+        .unwrap();
+    for (spell, coefficient, bonus) in [(10329, 0.714, 400.0), (19943, 0.429, 115.0)] {
+        let rank = heals["ranks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|rank| rank["spell_id"] == spell)
+            .unwrap();
+        let (min, max) = (rank["min"].as_f64().unwrap(), rank["max"].as_f64().unwrap());
+        let swore = base_healing(&result, spell);
+        let bare = base_healing(&bare, spell);
+        assert!(!swore.is_empty() && !bare.is_empty(), "{spell}");
+        let in_range = |base: f64, plus: f64| {
+            (min - 0.1..=max + 0.1).contains(&(base - coefficient * 305.0 - plus))
+        };
+        // Without the Oath's cast every heal is a plain roll.
+        for &base in &bare {
+            assert!(in_range(base, 0.0), "{spell} without the Oath: {base}");
+        }
+        // With it, a heal is the tank's (the bonus on its roll) or another player's (a plain
+        // roll), the tank's about 5 in 9 of them.
+        let (mut tank, mut others) = (0, 0);
+        for &base in &swore {
+            if in_range(base, bonus) {
+                tank += 1;
+            } else {
+                assert!(in_range(base, 0.0), "{spell} with the Oath: {base}");
+                others += 1;
+            }
+        }
+        assert!(
+            tank > 0 && others > 0,
+            "{spell}: {tank} tank heals, {others} others"
+        );
+        let share = f64::from(tank) / f64::from(tank + others);
+        assert!(
+            (0.3..=0.8).contains(&share),
+            "{spell}: the tank's share {share}"
+        );
+    }
+}
+
+/// Boundless Light's Holy Shock heal crit holds only on an ally without the Oath: while the
+/// paladin's Oath is up, the Holy Shock heals that reach the tank (5 in 9 of them) lose its 30
+/// points of crit and the rest keep it, so the heal crits about 17 points less often. The Oath's
+/// bonuses on the tank's heals outweigh that lost crit and its mana, so healing per second rises.
+#[test]
+fn oath_of_light_takes_boundless_lights_crit_off_the_holy_shock_heal() {
+    let sworn = run("holy-paladin");
+    let mut bare = request_value("holy-paladin");
+    let rotation = rotation_of(&mut bare);
+    rotation["prepullActions"] = json!([]);
+    rotation["priorityList"].as_array_mut().unwrap().remove(1);
+    let bare = run_value(&bare);
+    let crit_share = |result: &Value| {
+        let crits = action_total(result, 25903, "crits");
+        crits / (crits + action_total(result, 25903, "hits"))
+    };
+    let (with, without) = (crit_share(&sworn), crit_share(&bare));
+    assert!(
+        (0.12..=0.22).contains(&(without - with)),
+        "Holy Shock crits {with} with the Oath, {without} without"
+    );
+    let hps = |result: &Value| player(result)["hps"]["avg"].as_f64().unwrap();
+    assert!(
+        hps(&sworn) > hps(&bare) * 1.1,
+        "{} {}",
+        hps(&sworn),
+        hps(&bare)
+    );
+    // The Oath is no heal: one cast every five minutes at most, and it heals nothing itself.
+    assert_eq!(action_total(&sworn, 1328548, "healing"), 0.0);
+    assert!(action_total(&sworn, 1328548, "casts") >= 300.0);
+    golden("holy-paladin", &sworn);
+}
+
+/// An Oath cast on any unit but the player swears it on an ally the sim does not model: it costs
+/// the mana and replaces the Oath on the player, whose heals then carry no bonus.
+#[test]
+fn an_oath_sworn_on_another_unit_bonuses_nothing() {
+    let mut request = request_value("holy-paladin");
+    let rotation = rotation_of(&mut request);
+    // The prepull swears it at the first target, an ally elsewhere, and nothing swears it on
+    // the player.
+    rotation["prepullActions"][0]["action"] = json!({
+        "castSpell": {"spellId": {"spellId": 1328548}}
+    });
+    rotation["priorityList"].as_array_mut().unwrap().remove(1);
+    let elsewhere = run_value(&request);
+    assert!(elsewhere["logs"]
+        .as_str()
+        .unwrap()
+        .contains("Completed cast {SpellID: 1328548}"));
+    assert!(!elsewhere["logs"]
+        .as_str()
+        .unwrap()
+        .contains("Aura gained: {SpellID: 1328548}"));
+    assert_eq!(base_healing(&elsewhere, 25903)[0], 450.8);
 }

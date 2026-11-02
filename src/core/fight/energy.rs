@@ -43,12 +43,15 @@ pub(crate) struct ManaOnCast {
     pub(crate) crit_only: bool,
 }
 
-/// An item proc trigger that restores energy, such as Shadowcraft Armor's.
+/// An item proc trigger that restores energy, such as Shadowcraft Armor's, or mana, such as
+/// Beaststalker Armor's on a class other than a Hunter.
 #[derive(Clone, Debug)]
 pub(crate) struct EnergizeProc {
     pub(crate) label: String,
     /// The proc manager's chance for each spell it hears, by spellbook position.
     pub(crate) chances: Vec<Option<f64>>,
+    /// Energy or mana.
+    pub(crate) resource: super::ResourceKind,
     pub(crate) energy: f64,
     pub(crate) metrics: usize,
     pub(crate) delay: i64,
@@ -140,12 +143,17 @@ impl<A: Agent> Fight<A> {
         }
     }
 
-    /// The energize proc's handler: energy for a character with an energy bar.
+    /// The energize proc's handler: energy for a character with an energy bar, or mana for one
+    /// with a mana bar.
     pub(crate) fn energize_proc_handler(&mut self, index: usize) {
-        if self.energy.is_some() {
-            let proc = &self.energize_procs[index];
-            let (energy, metrics) = (proc.energy, proc.metrics);
-            self.add_energy(energy, metrics);
+        let proc = &self.energize_procs[index];
+        let (resource, amount, metrics) = (proc.resource, proc.energy, proc.metrics);
+        match resource {
+            super::ResourceKind::Mana if self.has_mana_bar() => self.add_mana(amount, metrics),
+            super::ResourceKind::Energy if self.energy.is_some() => {
+                self.add_energy(amount, metrics)
+            }
+            _ => {}
         }
     }
 

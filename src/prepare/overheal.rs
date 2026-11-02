@@ -65,12 +65,18 @@ const ESTIMATED: &[(&str, f64)] = &[
     ("Chain Heal", GROUP),
     ("Tranquility", GROUP),
     ("Penance", DIRECT),
+    ("Desperate Prayer", DIRECT),
     ("Wild Growth", GROUP),
+    ("Light's Vigil", GROUP),
+    // Bloom heals the player a heal over time just ended on, at once and for its Spirit: the
+    // logs hold no Bloom yet (a push 113531 talent), so it takes the share of a heal at once.
+    ("Bloom", DIRECT),
 ];
 
 /// Heals whose spell id has no client row of its own, by their class spell: the Holy Paladin's
-/// Holy Shock heal runs under the Go reference's 25903.
-const CLASS_SPELLS: &[(&str, &str)] = &[("holy_shock_heal", "Holy Shock")];
+/// Holy Shock heal runs under the Go reference's 25903, and the Druid's Bloom under its
+/// talent's id (1328621), which the store lacks.
+const CLASS_SPELLS: &[(&str, &str)] = &[("holy_shock_heal", "Holy Shock"), ("bloom", "Bloom")];
 
 /// Whether the player's spec is one of MythicSim's healer sims.
 pub(crate) fn is_healer(player: &Message) -> bool {

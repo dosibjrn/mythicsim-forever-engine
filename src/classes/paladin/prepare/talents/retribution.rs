@@ -5,11 +5,12 @@ use std::rc::Rc;
 use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger};
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
-use crate::prepare::sim::{AuraConfig, Sim, UnitId, NEVER_EXPIRES};
+use crate::prepare::sim::{AuraConfig, Rules, Sim, UnitId, NEVER_EXPIRES};
 use crate::prepare::spell::{school, ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::Stat;
 
+use super::super::hotfix_113554 as hotfix;
 use super::super::masks;
 use super::super::spell_data::spell_data;
 use super::super::util::{new_enemy_aura_array, spell_action, tagged_action};
@@ -55,6 +56,10 @@ impl Paladin {
 
         // Tier 7
         self.apply_twist_of_light(sim, unit);
+
+        // Push 113554's Retribution capstone, under Forever's rules. Turn Evil changes Turn
+        // Undead, which the sim does not model.
+        self.apply_unsealed_wrath(sim, unit);
     }
 
     /// Deflection: increases your Parry chance by 1/2/3/4/5%.
@@ -128,6 +133,14 @@ impl Paladin {
         if points == 0 {
             return;
         }
+        if sim.rules == Rules::Forever {
+            // Push 113554: three ranks of A_MOD_CRIT_PCT, 2/4/6% crit with every spell and
+            // attack (was five ranks of 1% melee crit).
+            let crit = hotfix::at(&hotfix::CONVICTION, points);
+            sim.add_stat(unit, Stat::PhysicalCritPercent, crit);
+            sim.add_stat(unit, Stat::SpellCritPercent, crit);
+            return;
+        }
         sim.add_stat(
             unit,
             Stat::PhysicalCritPercent,
@@ -169,18 +182,22 @@ impl Paladin {
             sim.attach_stat_buff(aura, Stat::AttackPower, target_attack_power)
         });
 
-        let attack_power_dep =
-            sim.new_dynamic_multiply_stat(unit, Stat::AttackPower, 1.0 + points / 100.0);
-        let self_aura = sim.register_aura(
-            unit,
-            AuraConfig {
-                label: format!("Vindication{label}"),
-                action_id: Some(tagged_action(rank.id, 1)),
-                duration: rank.duration(),
-                ..AuraConfig::default()
-            },
-        );
-        sim.attach_stat_dependency(self_aura, attack_power_dep);
+        // Push 113554 takes the paladin's Attack Power away under Forever's rules: only the
+        // target's debuff is left.
+        if sim.rules == Rules::GoReference {
+            let attack_power_dep =
+                sim.new_dynamic_multiply_stat(unit, Stat::AttackPower, 1.0 + points / 100.0);
+            let self_aura = sim.register_aura(
+                unit,
+                AuraConfig {
+                    label: format!("Vindication{label}"),
+                    action_id: Some(tagged_action(rank.id, 1)),
+                    duration: rank.duration(),
+                    ..AuraConfig::default()
+                },
+            );
+            sim.attach_stat_dependency(self_aura, attack_power_dep);
+        }
 
         sim.make_proc_trigger_aura(
             unit,
@@ -321,6 +338,22 @@ impl Paladin {
             two_hand,
             "HandTypeTwoHand",
         );
+        if sim.rules == Rules::Forever {
+            // Push 113554's effect 1367246: A_MOD_THREAT on every school, -7/-14/-20%, while
+            // the two-hander the talent requires is in the main hand. A threat mod on every
+            // spell that takes mods, which follows the main hand through an item swap as the
+            // damage does.
+            let threat_mod = sim.add_dynamic_mod(
+                unit,
+                SpellModConfig {
+                    school: 0x7f,
+                    kind: SpellModType::ThreatMultiplierPct,
+                    float_value: hotfix::at(&hotfix::TWO_HANDED_THREAT, points) / 100.0,
+                    ..SpellModConfig::default()
+                },
+            );
+            super::follow_main_hand(sim, unit, threat_mod, two_hand, "HandTypeTwoHand");
+        }
     }
 
     /// Vengeance: increases your Physical and Holy damage dealt after landing a non-periodic
@@ -387,6 +420,27 @@ impl Paladin {
         const CHAMPION_OF_THE_LIGHT_INTELLECT_SHARE: f64 = 0.20;
         let points = self.talents.i32("champion_of_the_light");
         if points == 0 {
+            return;
+        }
+        if sim.rules == Rules::Forever {
+            // Push 113554: five ranks of 12% of Intellect, and Instrument of Law's cut to Hammer
+            // of Wrath's cast time, 0.2 sec a rank.
+            let share = hotfix::at(&hotfix::CHAMPION_OF_THE_LIGHT, points) / 100.0;
+            sim.unit_mut(unit)
+                .sdm
+                .add_stat_dependency(Stat::Intellect, Stat::SpellDamage, share);
+            sim.add_static_mod(
+                unit,
+                SpellModConfig {
+                    class_mask: masks::HAMMER_OF_WRATH,
+                    kind: SpellModType::CastTimeFlat,
+                    time_value: hotfix::millis(hotfix::at(
+                        &hotfix::CHAMPION_OF_THE_LIGHT_HAMMER_OF_WRATH_MS,
+                        points,
+                    )),
+                    ..SpellModConfig::default()
+                },
+            );
             return;
         }
         // Client 70425's tables carry the notes' 10/20/30; the hotfix is server side.
@@ -509,5 +563,43 @@ impl Paladin {
             },
         );
         sim.make_permanent(aura);
+    }
+
+    /// Unsealed Wrath (1310735, push 113554's rework of Twist of Light): your melee attacks store
+    /// a copy of your active Seal for 15 sec, stacking up to 3 times. Landing an attack with a
+    /// different Seal consumes all stacks, giving the stored Seal its normal chance to activate
+    /// once per stack. Twist of Light's 20% seal cost cut is gone (the effect's points are 0).
+    ///
+    /// Each copy is its seal's Echo, one aura per seal, as in upstream #772; the stores and
+    /// spends are the runtime's (`talents/unsealed_wrath.rs`). The row's proc flags (0x4) are a
+    /// landed melee auto attack.
+    fn apply_unsealed_wrath(&mut self, sim: &mut Sim, unit: UnitId) {
+        if self.new_talent("unsealed_wrath") == 0 {
+            return;
+        }
+        let label = sim.unit(unit).label.clone();
+        for id in ECHO_IDS {
+            sim.register_aura(
+                unit,
+                AuraConfig {
+                    label: format!("Echo ({id}){label}"),
+                    action_id: Some(spell_action(id)),
+                    duration: hotfix::ECHO_DURATION,
+                    max_stacks: hotfix::ECHO_MAX_STACKS,
+                    ..AuraConfig::default()
+                },
+            );
+        }
+        sim.make_proc_trigger_aura(
+            unit,
+            &ProcTrigger {
+                name: format!("Unsealed Wrath{label}"),
+                callback: CallbackMask::ON_SPELL_HIT_DEALT,
+                proc_mask: ProcMask::MELEE_WHITE_HIT,
+                outcome: HitOutcome::LANDED,
+                trigger_immediately: true,
+                ..ProcTrigger::default()
+            },
+        );
     }
 }

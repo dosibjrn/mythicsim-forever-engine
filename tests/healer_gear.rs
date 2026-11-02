@@ -8,6 +8,9 @@ use forever_engine::{check_prepared, prepare_json_with, simulate_prepared, Rules
 use serde_json::{json, Value};
 use std::{fs, path::Path};
 
+#[path = "support/paladin_113554.rs"]
+mod paladin_113554;
+
 /// A healer fixture's request with `items` put in their equipment slots, by slot index.
 fn request(name: &str, items: &[(usize, i64)]) -> Value {
     let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/healers"))
@@ -384,7 +387,9 @@ fn vestments_of_faith_shield_greater_heal_crits_and_proc_epiphany() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|action| action["id"]["spellId"] == 25314)
+        // Greater Heal IV (10965): Greater Heal V (25314) is an Ahn'Qiraj 20 book rank, so a
+        // Forever priest casts the rank below.
+        .filter(|action| action["id"]["spellId"] == 10965)
         .flat_map(|action| action["targets"].as_array().unwrap().iter())
         .map(|target| target["shielding"].as_f64().unwrap_or(0.0))
         .sum();
@@ -460,7 +465,9 @@ fn a_heal_puts_its_linked_heal_over_time_up() {
         .find(|effect| effect["kind"] == "heals")
         .unwrap();
     for heal in heals_effect["heals"].as_array_mut().unwrap() {
-        if heal["spell_id"] == 25314 {
+        // Greater Heal IV (10965), the rank a Forever priest casts: Greater Heal V (25314) is an
+        // Ahn'Qiraj 20 book rank.
+        if heal["spell_id"] == 10965 {
             heal["then_hot"] = json!(6077);
         }
     }
@@ -607,10 +614,10 @@ fn earthshatterer_and_redemption_read_their_bonuses() {
     heals(&set);
     let redemption = [(0, 22428), (2, 22429), (4, 22425), (5, 22424)];
     let paladin = |items: &[(usize, i64)]| {
-        prepared(
-            &request("../mage/prepared-v2/holy-paladin-healing", items),
-            Rules::Forever,
-        )
+        // The talents read in push 113554's tree, which Forever's rules prepare.
+        let mut request = request("../mage/prepared-v2/holy-paladin-healing", items);
+        paladin_113554::forever_request(&mut request);
+        prepared(&request, Rules::Forever)
     };
     let cooldown = |prepared: &Value| {
         prepared["player"]["spells"]

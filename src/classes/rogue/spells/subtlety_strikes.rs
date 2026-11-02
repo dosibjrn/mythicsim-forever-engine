@@ -54,6 +54,7 @@ pub(crate) fn hemorrhage<A: Agent>(
     if result.landed() {
         let metrics = combo_point_metrics(fight, spell);
         fight.add_combo_points(1, metrics);
+        let debuff = fight.aura_on(debuff, target);
         fight.activate_aura(debuff);
     } else {
         fight.issue_refund(spell);
@@ -104,6 +105,7 @@ impl Garrote {
             let metrics = combo_point_metrics(fight, spell);
             fight.add_combo_points(1, metrics);
             let dot = fight.spells[spell].dot.expect("Garrote has a dot");
+            let dot = fight.dot_on(dot, target);
             fight.apply_dot(dot);
             snapshot = Some(rupture::snapshot_share(
                 fight,

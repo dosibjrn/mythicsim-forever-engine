@@ -16,22 +16,24 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No toolchain input: the action installs the version pinned in rust-toolchain.toml.
+      - name: Install Rust from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           components: rustfmt, clippy
-          targets: wasm32-unknown-unknown, wasm32-wasip1
+          target: wasm32-unknown-unknown, wasm32-wasip1
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt -- --check
-      - run: cargo test --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
       - run: cargo clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
       - run: cargo build --locked --target wasm32-wasip1
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25.6'
           cache: false
@@ -43,3 +45,21 @@ jobs:
       - run: python3 tools/inventory.py check
       - run: python3 tools/prepared_v2.py check
       - run: python3 tools/upstream.py check
+
+  # The test suite is most of the run, so it gets its own job and the
+  # other checks report while it is still going.
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Debug info only slows the test build in CI; a 4 core run compiled
+      # in 93 s without it against 125 s with it. Local builds keep it.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No toolchain input: the action installs the version pinned in rust-toolchain.toml.
+      - name: Install Rust from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked

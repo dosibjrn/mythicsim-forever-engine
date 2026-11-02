@@ -43,6 +43,9 @@ pub(crate) struct ClassGate {
     /// casts there, whose effects and debuffs must land on that target as in Go. None for a
     /// class whose spells have not been checked against it.
     pub(crate) other_target_casts: Option<Limits>,
+    /// The class spells (`class_spell`) that act on the caster alone, whatever unit the rotation
+    /// names: Go casts them at the player as at the target, and the runtime does the same.
+    pub(crate) self_spells: &'static [&'static str],
 }
 
 /// A class check of the input and the spells the rotation can reach: a reason for each
@@ -222,7 +225,6 @@ const COMMON_EFFECTS: &[&str] = &[
     "goblin_sapper",
     "inert_listener",
     "instant_cast_aura",
-    "mana_globes",
     "inert_pet",
     "innervate_regen",
     "item_swap",
@@ -230,6 +232,7 @@ const COMMON_EFFECTS: &[&str] = &[
     "judgement_of_wisdom",
     "health_on_cast",
     "mana_on_cast",
+    "mana_proc",
     "parry_haste",
     "player_movement",
     "potion_mana",
@@ -244,6 +247,7 @@ const COMMON_EFFECTS: &[&str] = &[
     "reckoning",
     "holy_shield",
     "read_ley_line",
+    "skysight",
     "shatter_curse",
     "speed_on_use",
     "spell_cost_aura_on_use",
@@ -261,11 +265,15 @@ const COMMON_EFFECTS: &[&str] = &[
     "health_rage_proc",
     "energy_proc",
     "battle_squawk",
+    "speed_aura",
+    "mob_type_bonus",
     "health_regen_aura",
+    "oil_of_immolation",
     "armor_debuff_proc",
     "damage_on_use",
     "stoneform",
     "sunder_armor_ramp",
+    "external_expose_armor",
     "temporary_stats",
     "touch_of_the_grave",
     "windfury_totem",
@@ -380,11 +388,6 @@ fn common_spell_capability(spell: &Spell, prepared: &PreparedV2) -> Option<&'sta
         {
             Some("instant_cast_aura")
         }
-        Effect::ManaGlobes { spell_id, .. }
-            if *spell_id == id.spell_id && id.item_id == 0 && id.tag == 0 =>
-        {
-            Some("mana_globes")
-        }
         Effect::Berserking { spell_id, .. } if *spell_id == id.spell_id && id.tag == 0 => {
             Some("berserking")
         }
@@ -407,6 +410,9 @@ fn common_spell_capability(spell: &Spell, prepared: &PreparedV2) -> Option<&'sta
         }
         Effect::ReadLeyLine { spell_id, .. } if *spell_id == id.spell_id && id.tag == 0 => {
             Some("read_ley_line")
+        }
+        Effect::Skysight { spell_id, .. } if *spell_id == id.spell_id && id.tag == 0 => {
+            Some("skysight")
         }
         Effect::TemporaryStats {
             spell_id, item_id, ..
@@ -465,6 +471,7 @@ fn common_claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         | Effect::ShatterCurse { aura, .. }
         | Effect::Stoneform { aura, .. }
         | Effect::ReadLeyLine { aura, .. }
+        | Effect::Skysight { aura, .. }
         | Effect::TemporaryStats { aura, .. }
         | Effect::DiamondFlask { aura, .. }
         | Effect::AbsorbOnUse { aura, .. }
@@ -485,7 +492,9 @@ fn common_claims(effect: &Effect) -> Vec<(&'static str, &str)> {
             _ => Vec::new(),
         },
         Effect::PushbackTrigger { aura, .. } => vec![("player", aura)],
-        Effect::EnergizeProc { trigger_aura, .. } => vec![("player", trigger_aura)],
+        Effect::EnergizeProc { trigger_aura, .. } | Effect::ManaProc { trigger_aura, .. } => {
+            vec![("player", trigger_aura)]
+        }
         Effect::Crusader { trigger_aura, .. }
         | Effect::DragonbreathChili { trigger_aura, .. }
         | Effect::SpellDataDamageProc { trigger_aura, .. }
@@ -534,7 +543,11 @@ fn common_claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         Effect::HealthRageProc { trigger_aura, .. } | Effect::EnergyProc { trigger_aura, .. } => {
             vec![("player", trigger_aura)]
         }
-        Effect::BattleSquawk { aura, .. } | Effect::HealthRegenAura { aura, .. } => {
+        Effect::BattleSquawk { aura, .. }
+        | Effect::HealthRegenAura { aura, .. }
+        | Effect::OilOfImmolation { aura, .. }
+        | Effect::SpeedAura { aura, .. }
+        | Effect::MobTypeBonus { aura, .. } => {
             vec![("player", aura)]
         }
         Effect::SpellDataAbsorbProc {
@@ -543,6 +556,7 @@ fn common_claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         Effect::ArmorDebuffProc {
             trigger_aura, aura, ..
         } => vec![("player", trigger_aura), ("target", aura)],
+        Effect::ExternalExposeArmor { aura, .. } => vec![("target", aura)],
         Effect::SpellCostAuraOnUse { aura, .. } | Effect::SpellModAuraOnUse { aura, .. } => {
             vec![("player", aura)]
         }
@@ -553,7 +567,7 @@ fn common_claims(effect: &Effect) -> Vec<(&'static str, &str)> {
             ..
         } => vec![("player", window_aura), ("player", stat_aura)],
         Effect::ShieldOnHeal { aura, .. } => vec![("player", aura)],
-        Effect::InstantCastAura { aura, .. } | Effect::ManaGlobes { aura, .. } => {
+        Effect::InstantCastAura { aura, .. } => {
             vec![("player", aura)]
         }
         Effect::WindfuryTotem {
@@ -810,7 +824,10 @@ fn swap_activated_auras(effect: &Effect) -> Vec<&str> {
 /// value of the weapon in the hand. A field named with a slash is one inside each element of the
 /// field's array.
 const SWAP_EFFECT_FIELDS: &[(&str, &[&str])] = &[
-    ("seal_of_righteousness", &["swing_speed", "hand_multiplier"]),
+    (
+        "seal_of_righteousness",
+        &["swing_speed", "hand_multiplier", "ranks/hit_coefficient"],
+    ),
     ("seal_of_command", &["proc_chance"]),
     // The healing power the heals snapshot, which the swap set's weapon moves.
     ("paladin_heals", &["player", "target"]),
@@ -821,6 +838,8 @@ const SWAP_EFFECT_FIELDS: &[(&str, &[&str])] = &[
     ("thunderfury", &["chances"]),
     ("spell_data_damage_proc", &["chances", "trigger_spells"]),
     ("extra_attack_proc", &["chances"]),
+    ("stacking_cd_on_use", &["chances"]),
+    ("armor_debuff_proc", &["chances"]),
     (
         "rage_bar",
         &[
@@ -932,6 +951,8 @@ fn item_swap_limits(
     let mut crit_mods: Vec<(&[usize], f64, bool, bool)> = Vec::new();
     // The damage modifiers it switches, as Two-Handed Weapon Specialization's for a one-hander.
     let mut damage_mods: Vec<(&[usize], f64, bool, bool)> = Vec::new();
+    // The threat modifiers it switches, as push 113554's Two-Handed Weapon Specialization's.
+    let mut threat_mods: Vec<(&[usize], f64, bool, bool)> = Vec::new();
     for callback in callbacks {
         let (label, toggles) = match callback {
             SwapCallback::Aura {
@@ -956,7 +977,7 @@ fn item_swap_limits(
             SwapCallback::SpellMod { modifier, .. } => {
                 if !matches!(
                     modifier.kind.as_str(),
-                    "damage_done_pct" | "bonus_crit_percent"
+                    "damage_done_pct" | "bonus_crit_percent" | "threat_multiplier_pct"
                 ) {
                     reasons.push(format!(
                         "an item swap switches a spell modifier of kind {}",
@@ -971,10 +992,14 @@ fn item_swap_limits(
                     reasons.push("an item swap's spell modifier names an unknown spell".into());
                 }
                 if let SwapCallback::SpellMod { main, swapped, .. } = callback {
-                    if modifier.kind == "bonus_crit_percent" {
-                        crit_mods.push((&modifier.spells, modifier.value, *main, *swapped));
-                    } else {
-                        damage_mods.push((&modifier.spells, modifier.value, *main, *swapped));
+                    match modifier.kind.as_str() {
+                        "bonus_crit_percent" => {
+                            crit_mods.push((&modifier.spells, modifier.value, *main, *swapped))
+                        }
+                        "threat_multiplier_pct" => {
+                            threat_mods.push((&modifier.spells, modifier.value, *main, *swapped))
+                        }
+                        _ => damage_mods.push((&modifier.spells, modifier.value, *main, *swapped)),
                     }
                 }
                 continue;
@@ -1080,6 +1105,7 @@ fn item_swap_limits(
             &item_spells,
             &crit_mods,
             &damage_mods,
+            &threat_mods,
             aura_effects,
             &displaced_totem,
         ) {
@@ -1138,6 +1164,7 @@ fn swap_change_limit(
     item_spells: &[usize],
     crit_mods: &[(&[usize], f64, bool, bool)],
     damage_mods: &[(&[usize], f64, bool, bool)],
+    threat_mods: &[(&[usize], f64, bool, bool)],
     aura_effects: &[crate::contracts::prepared_v2::SwapAuraEffect],
     displaced_totem: &[&str],
 ) -> Option<String> {
@@ -1161,9 +1188,51 @@ fn swap_change_limit(
         {
             None
         }
+        // The melee speed after the reset, which the item and enchant speed auras the swap
+        // switches multiply in as they are gained and divide out as they fade.
+        ["melee", "melee_speed_multiplier"] => {
+            let mut worn = prepared.melee.melee_speed_multiplier;
+            for effect in &prepared.effects {
+                if let Effect::SpeedAura {
+                    aura,
+                    melee_multiplier,
+                    ..
+                } = effect
+                {
+                    if !switched.contains(&aura.as_str()) {
+                        continue;
+                    }
+                    let active = prepared
+                        .player
+                        .auras
+                        .iter()
+                        .any(|candidate| candidate.label == *aura && candidate.active);
+                    worn = if active {
+                        worn / melee_multiplier
+                    } else {
+                        worn * melee_multiplier
+                    };
+                }
+            }
+            let follows = change
+                .value
+                .as_f64()
+                .is_some_and(|value| (value - worn).abs() <= 1e-12 * worn.abs());
+            if follows {
+                None
+            } else {
+                refuse()
+            }
+        }
         // The crit the player takes on a Goblin Sapper Charge's half, which the swap sets on the
-        // player as its own target. A tank's, which the target's swings read, is not followed.
-        ["player", "pseudo_stats", "reduced_crit_taken_percent"] if prepared.enemy.is_none() => {
+        // player as its own target. A tank's is read by the target's swings, whose rolls follow
+        // the swap's stat aura among the combinations.
+        ["player", "pseudo_stats", "reduced_crit_taken_percent"]
+            if prepared
+                .enemy
+                .as_ref()
+                .is_none_or(|enemy| enemy.rolls.len() > 1) =>
+        {
             None
         }
         // Spirit Weapons' threat, which a Rockbiter aura the swap switches multiplies in as it is
@@ -1257,10 +1326,15 @@ fn swap_change_limit(
             }
         }
         // A spell's damage multiplier as the damage modifiers the swap switches leave it.
-        ["player", "spells", index, "damage_multiplier"] => {
+        ["player", "spells", index, field @ ("damage_multiplier" | "threat_multiplier")] => {
             let index: usize = index.parse().ok()?;
-            let mut multiplier = prepared.player.spells.get(index)?.damage_multiplier;
-            for (spells, value, main, swapped) in damage_mods {
+            let spell = prepared.player.spells.get(index)?;
+            let (mut multiplier, mods) = if *field == "damage_multiplier" {
+                (spell.damage_multiplier, damage_mods)
+            } else {
+                (spell.threat_multiplier, threat_mods)
+            };
+            for (spells, value, main, swapped) in mods {
                 if !spells.contains(&index) || main == swapped {
                     continue;
                 }
@@ -1439,8 +1513,13 @@ fn fixed_stat_aura_changes(prepared: &PreparedV2) -> Vec<String> {
     });
     // Without a tank nothing swings at the player, so its defense is read by no hit; the crit
     // it takes only by a Goblin Sapper Charge's half, whose value an item swap that changes it
-    // sets on the player.
-    let untanked = prepared.enemy.is_none();
+    // sets on the player. A tank's are read by the target's swings, whose rolls preparation
+    // reads under every stat aura combination, so they follow the combination there.
+    let defense_followed = prepared.enemy.is_none()
+        || prepared
+            .enemy
+            .as_ref()
+            .is_some_and(|enemy| enemy.rolls.len() > 1);
     let sapper = prepared
         .effects
         .iter()
@@ -1449,10 +1528,17 @@ fn fixed_stat_aura_changes(prepared: &PreparedV2) -> Vec<String> {
         matches!(effect, Effect::ItemSwap { swapped, .. }
             if swapped.iter().any(|change| change.path == "/player/pseudo_stats/reduced_crit_taken_percent"))
     });
+    // Under Forever's rules the combinations carry the crit the player takes when one changes
+    // it, which the runtime sets on the Goblin Sapper Charge's hit on its thrower.
+    let crit_taken_carried = prepared.effects.iter().any(|effect| {
+        matches!(effect, Effect::StatAuras { combos, .. }
+            if combos.iter().all(|combo| combo.contains_key("PseudoReducedCritTakenPercent")))
+    });
     let inert = move |stat: &str| {
-        untanked
+        defense_followed
             && (stat == "DefenseRating"
-                || (stat == "ReducedCritTakenPercent" && (!sapper || swap_sets_crit_taken)))
+                || (stat == "ReducedCritTakenPercent"
+                    && (!sapper || swap_sets_crit_taken || crit_taken_carried)))
     };
     prepared
         .effects
@@ -2622,10 +2708,21 @@ fn several_target_limits(
     reasons
 }
 
+/// Whether a cast of the spell at the player is one the runtime follows: a helpful spell, which
+/// `castFriendlySpell` casts there, or a class spell that acts on the caster alone.
+fn casts_at_player(gate: &ClassGate, spell: &Spell) -> bool {
+    spell.has_flag("SpellFlagHelpful")
+        || spell
+            .class_spell
+            .as_deref()
+            .is_some_and(|name| gate.self_spells.contains(&name))
+}
+
 /// Go's `castSpell` names the unit it casts on. Rust casts a spell on a target past the first
 /// when its effects, its debuffs and its dot are all of the target they are given, which the
 /// class checks; a channel's dot aura stays on the first target, so a channel with a dot on
-/// its target is never cast elsewhere. A cast on the player is not supported either: `castFriendlySpell` casts there.
+/// its target is never cast elsewhere. A cast on the player is supported only as
+/// `casts_at_player` allows.
 fn other_target_casts(
     prepared: &PreparedV2,
     gate: &ClassGate,
@@ -2661,7 +2758,7 @@ fn other_target_casts(
                 match step.target.resolve(targets) {
                     Some(Unit::Target(0)) if relative(&step.target) => spells.push(spell),
                     None | Some(Unit::Target(0)) => {}
-                    Some(Unit::Player) if spell.has_flag("SpellFlagHelpful") => {}
+                    Some(Unit::Player) if casts_at_player(gate, spell) => {}
                     Some(Unit::Player) => {
                         reasons.insert(format!(
                             "rotation item {}: a step of a sequence casting {} on the player is \
@@ -2720,7 +2817,7 @@ fn other_target_casts(
             // class checks with the rest of its spells. A harmful spell whose dot sits on its
             // target never casts there, as the game refuses it, where Go panics on the
             // player's missing dot. Any other spell on the player is unsupported.
-            if !spell.has_flag("SpellFlagHelpful") && !harmful_target_dot(spell) {
+            if !casts_at_player(gate, spell) && !harmful_target_dot(spell) {
                 reasons.insert(format!(
                     "rotation item {}: castSpell of {id} on the player is unsupported",
                     item.position

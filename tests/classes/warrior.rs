@@ -1288,9 +1288,9 @@ fn rage_bar(value: &Value) -> &Value {
         .unwrap()
 }
 
-/// Fork patches 123 and 124: a critical auto attack pays the swing's rage and, on top, the rage
-/// of the swing before a two-hander's factor times the crit rage multiplier, now 2, less one.
-/// A two-hander's critical swing is not worth twice its swing, a one-hander's is.
+/// Fork patches 123 and 124, the reference's rule: a critical auto attack pays the swing's rage
+/// and, on top, the rage of the swing before a two-hander's factor times the crit rage multiplier,
+/// now 2, less one. A two-hander's critical swing is not worth twice its swing, a one-hander's is.
 #[test]
 fn a_critical_auto_attack_pays_the_swing_and_the_one_handers_rage() {
     // The Arms Warrior's two-hander: 15.75 rage a swing (3.46 x 1.3006 x 3.5), whose crit adds
@@ -1336,6 +1336,62 @@ fn a_critical_auto_attack_pays_the_swing_and_the_one_handers_rage() {
         }
     }
     assert!(hits > 0 && crits > 0, "{hits} hits and {crits} crits");
+}
+
+/// Forever's rules (wowsims/forever 7c28cfa73): a critical white hit gives twice its swing's whole
+/// rage, a two-hander's factor included. Forever's combat logs of 9 October 2026 hold 21 two-hand
+/// crits at exactly 2x (16.2 to 32.4 rage over 13 crits, 14.8 to 29.7 over 8). Forever preparation
+/// writes `crit_multiplies_swing` on the rage bar and the reference's does not, so the Arms
+/// Warrior's two-hander crits for 31.5 rage, not 27.86. A one-hander's crit already gave twice its
+/// swing, so the Fury Warrior's fight is the same with the flag or without.
+#[test]
+fn a_critical_auto_attack_doubles_the_whole_swing_under_forever_rules() {
+    let request = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures/mage/prepared-v2/production-arms-warrior.request.json"),
+    )
+    .unwrap();
+    let forever = forever_engine::prepare_json(&request, "x").unwrap();
+    assert_eq!(rage_bar(&forever)["crit_multiplies_swing"], json!(true));
+    let go = forever_engine::prepare_json_with(&request, "x", forever_engine::Rules::GoReference)
+        .unwrap();
+    assert!(rage_bar(&go).get("crit_multiplies_swing").is_none());
+
+    let mut arms = warrior_fixture("production-arms-warrior");
+    rage_bar_mut(&mut arms)["crit_multiplies_swing"] = json!(true);
+    let logs = first_fight_log(arms);
+    let lines: Vec<&str> = logs.lines().collect();
+    let mut crits = 0;
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains("{OtherID: 3, Tag: 1} Crit for") {
+            continue;
+        }
+        let Some(gain) = lines[index + 1..]
+            .iter()
+            .take(2)
+            .find(|line| line.contains("rage from {OtherID: 3, Tag: 1}"))
+        else {
+            continue;
+        };
+        assert!(gain.contains("Gained 31.500 rage"), "{line}\n{gain}");
+        crits += 1;
+    }
+    assert!(crits > 0, "no main hand crits");
+
+    let fury = warrior_fixture("production-warrior");
+    let mut flagged = fury.clone();
+    rage_bar_mut(&mut flagged)["crit_multiplies_swing"] = json!(true);
+    assert_eq!(first_fight_log(fury), first_fight_log(flagged));
+}
+
+/// The rage bar of a prepared warrior, to change.
+fn rage_bar_mut(value: &mut Value) -> &mut Value {
+    value["effects"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|effect| effect["kind"] == "rage_bar")
+        .unwrap()
 }
 
 /// Fork patch 116: a dual wielder's off hand crit sizes Deep Wounds off the off hand weapon, as
@@ -1598,4 +1654,126 @@ fn rage_gain_threat_takes_the_threat_multiplier_and_splits_between_the_targets()
         (0.43..0.5).contains(&ratio),
         "three targets: x{ratio} of the unsplit"
     );
+}
+
+/// Flurry (12319): with the buff up, every white swing spends a charge whatever its outcome,
+/// and a Heroic Strike or Cleave spends one only when it misses (Forever logs on build
+/// 1.60.1.70450, see src/classes/warrior/talents/flurry.rs). A swing's listeners can run after
+/// a nested extra attack's, so the charges are counted per moment of the log.
+#[test]
+fn flurry_spends_a_charge_on_every_white_swing_and_a_missed_queued_strike() {
+    let mut value = warrior_fixture("production-warrior");
+    effect_mut(&mut value, "warrior_flurry")["every_swing_spends"] = json!(true);
+    let logs = first_fight_log(value);
+    let result = |line: &str| line.contains("] [Target ") && line.contains("(SpellSchool: ");
+    // Either hand's swing, or an extra attack (Windfury's tag), which swings the same way.
+    let white = |line: &str| result(line) && line.contains("{OtherID: 3, Tag: ");
+    let queued_miss = |line: &str| {
+        result(line)
+            && (line.contains("{SpellID: 25286} Miss (")
+                || line.contains("{SpellID: 20569} Miss ("))
+    };
+    let unlanded = |line: &str| {
+        line.contains("} Miss (") || line.contains("} Dodge (") || line.contains("} Parry (")
+    };
+    let mut moments: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in logs.lines() {
+        let time = &line[..line.find(']').unwrap() + 1];
+        match moments.last_mut() {
+            Some((at, lines)) if *at == time => lines.push(line),
+            _ => moments.push((time, vec![line])),
+        }
+    }
+    let (mut spends, mut unlanded_spends, mut faded) = (0, 0, false);
+    for (time, lines) in &moments {
+        let mut spent = 0;
+        for line in lines {
+            if line.ends_with("Aura faded: {SpellID: 12966}") {
+                faded = true;
+            }
+            let Some(stacks) = line.split("{SpellID: 12966} stacks: ").nth(1) else {
+                continue;
+            };
+            let (from, to) = stacks.split_once(" --> ").unwrap();
+            let (from, to): (i32, i32) = (from.parse().unwrap(), to.parse().unwrap());
+            if to == from - 1 && !faded {
+                spent += 1;
+            }
+            faded = false;
+        }
+        let swings: Vec<&&str> = lines.iter().filter(|line| white(line)).collect();
+        let misses = lines.iter().filter(|line| queued_miss(line)).count();
+        assert!(
+            spent <= swings.len() + misses,
+            "{time}: {spent} charges spent by {} swings and {misses} missed strikes",
+            swings.len()
+        );
+        if spent > 0 && misses == 0 && swings.iter().all(|line| unlanded(line)) {
+            unlanded_spends += 1;
+        }
+        spends += spent;
+    }
+    assert!(spends > 10, "{spends} charges spent");
+    assert!(
+        unlanded_spends > 0,
+        "no missed, dodged or parried swing spent a charge"
+    );
+}
+
+/// A queued Heroic Strike that goes out on a Weaponmaster or Windfury Totem extra attack is
+/// listed, under `--rotation-stats`, with the extra attack it replaced, so the application's
+/// timeline can tell it from a strike that took a regular swing (MythicSim Discord #warrior,
+/// 30 October 2026). Each listed strike is a cast at that time in the first fight's log, and
+/// the result without the adapter's additions does not carry the list.
+#[test]
+fn a_strike_on_an_extra_attack_names_the_extra_attack() {
+    let mut sources = std::collections::BTreeSet::new();
+    for seed in 1..=12 {
+        let mut value = warrior_fixture("arms-warrior-warblade-of-caer-darrow");
+        value["sim"]["iterations"] = json!(1);
+        value["sim"]["debug_first_iteration"] = json!(true);
+        value["sim"]["seed"] = json!(seed);
+        // Queue Heroic Strike whenever it can be paid for, as a custom rotation can, rather
+        // than only above 100 rage and in execute.
+        let rotation = value["player"]["rotation"]["priorityList"]
+            .as_array_mut()
+            .unwrap();
+        let strike = rotation
+            .iter_mut()
+            .find(|line| line["action"]["castSpell"]["spellId"]["spellId"] == 25286)
+            .unwrap();
+        strike["action"]
+            .as_object_mut()
+            .unwrap()
+            .remove("condition");
+        let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
+        let mut report = forever_engine::simulate_prepared(&prepared).unwrap();
+        let player = "/raidMetrics/parties/0/players/0";
+        assert!(report
+            .result
+            .pointer(&format!("{player}/extraAttackStrikes"))
+            .is_none());
+        assert!(report.add_rotation_stats());
+        let logs = report.result["logs"].as_str().unwrap().to_string();
+        let strikes = report
+            .result
+            .pointer(&format!("{player}/extraAttackStrikes"))
+            .unwrap();
+        for strike in strikes.as_array().unwrap() {
+            assert_eq!(strike["strike"], "{SpellID: 25286}", "{strike}");
+            let extra = strike["extraAttack"].as_str().unwrap();
+            assert!(
+                extra == "{OtherID: 3, Tag: 1290261}" || extra == "{OtherID: 3, Tag: 25584}",
+                "{strike}"
+            );
+            let time = format!("{:.2}", strike["time"].as_f64().unwrap());
+            assert!(
+                has_line(&logs, &time, "Casting {SpellID: 25286}"),
+                "seed {seed}: no Heroic Strike cast at {time}"
+            );
+            sources.insert(extra.to_string());
+        }
+    }
+    // Both extra attacks hand a queued strike over within these fights.
+    assert_eq!(sources.len(), 2, "{sources:?}");
 }

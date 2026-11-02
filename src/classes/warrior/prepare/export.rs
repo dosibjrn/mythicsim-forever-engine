@@ -190,6 +190,33 @@ impl Warrior {
             effects.push(json!({"kind": "pummel", "spell_id": pummel.id,
                 "base_damage": pummel.damage_effect().average(level)}));
         }
+        // shield_bash.go, mocking_blow.go, disarm.go, victory_rush.go and intercept.go, which
+        // Go's exporter has no effects for either.
+        if sim.rules == Rules::Forever {
+            let shield_bash = data.shield_bash.highest();
+            effects.push(json!({"kind": "shield_bash", "spell_id": shield_bash.id,
+                "base_damage": shield_bash.damage_effect().average(level),
+                "can_block": sim.unit(unit).pseudo_stats.can_block}));
+            let mocking_blow = data.mocking_blow.highest();
+            effects.push(json!({"kind": "mocking_blow", "spell_id": mocking_blow.id,
+                "base_damage": mocking_blow.damage_effect().average(level)}));
+            let disarm = data.disarm.highest();
+            effects.push(json!({"kind": "warrior_disarm", "spell_id": disarm.id,
+                "aura": format!("Disarm-{}", sim.unit(unit).label)}));
+            let victory_rush = data.victory_rush.highest();
+            effects.push(json!({"kind": "victory_rush", "spell_id": victory_rush.id,
+                "aura": "Victorious"}));
+            // The damage sits on the stun the charge triggers, not on Intercept itself.
+            let intercept = data.intercept.highest();
+            if let Some(spell) = Self::spell_of(sim, unit, intercept) {
+                effects.push(
+                    json!({"kind": "warrior_intercept", "spell_id": intercept.id,
+                    "aura": "Intercept", "speed_multiplier": 3.0, "overshoot": 3.5,
+                    "min_range": sim.spell(spell).min_range,
+                    "damage": intercept.effect_n(2).trigger().damage_effect().average(level)}),
+                );
+            }
+        }
         // bloodrage.go: instant and periodic rage scaled by Improved Bloodrage, and a share of
         // base health.
         let bloodrage = data.bloodrage.highest();
@@ -343,12 +370,15 @@ impl Warrior {
         }
         if talent("flurry") > 0 {
             let buff = data.flurry_triggered.highest();
-            effects.push(
-                json!({"kind": "warrior_flurry", "trigger_aura": "Flurry - Trigger",
+            let mut flurry = json!({"kind": "warrior_flurry", "trigger_aura": "Flurry - Trigger",
                 "aura": "Flurry",
                 "melee_speed_multiplier": data.flurry.multiplier_at(talent("flurry")),
-                "charges": i32::from(buff.proc_charges)}),
-            );
+                "charges": i32::from(buff.proc_charges)});
+            // Forever's logs: misses, dodges and parries spend a charge too (flurry.rs).
+            if sim.rules == Rules::Forever {
+                flurry["every_swing_spends"] = json!(true);
+            }
+            effects.push(flurry);
         }
         if self.has_talent("anger_management") {
             let row = data.anger_management.highest();
@@ -399,7 +429,7 @@ impl Warrior {
                 .effect(dbcenums::A_MOD_DAMAGE_PERCENT_TAKEN, 127).multiplier_at(1)}));
         effects.push(json!({"kind": "pseudo_stat_auras", "auras": pseudo_stat_auras}));
         // battle_shout.go: the warrior's own shout, which outbids the party's at an equal value.
-        let battle_shout = data.battle_shout.highest();
+        let battle_shout = data.battle_shout.highest_for(env.rules);
         if let Some(own) = sim.get_spell(unit, &spell_action(battle_shout.id)) {
             let mut value = generated::BATTLE_SHOUT.value(0);
             if self.inputs.use_battle_shout && sim.state_flag(self.has_bs_t2) {
@@ -548,7 +578,7 @@ impl Warrior {
         // base damage the strike adds to a main hand weapon swing.
         let mut strikes = Vec::new();
         for (ladder, cleave) in [(&data.heroic_strike, false), (&data.cleave, true)] {
-            let row = ladder.highest();
+            let row = ladder.highest_for(env.rules);
             let Some(spell) = Self::spell_of(sim, unit, row) else {
                 continue;
             };
@@ -591,11 +621,12 @@ impl Warrior {
                 );
             }
         };
-        // revenge.go
-        if !tanking {
+        // revenge.go. Under Forever's rules a warrior off the target's threat still has the
+        // strike, which no hit taken ever opens.
+        if !tanking && sim.rules != Rules::Forever {
             inert("Revenge - Trigger", &mut effects);
         } else if sim.get_aura(unit, "Revenge - Trigger").is_some() {
-            let row = data.revenge.highest();
+            let row = data.revenge.highest_for(env.rules);
             effects.push(json!({"kind": "revenge", "spell_id": row.id,
                 "trigger_aura": "Revenge - Trigger", "aura": "Revenge",
                 "damage": damage_roll(row), "attack_power_share": 0.25}));

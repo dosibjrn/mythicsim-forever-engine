@@ -1,0 +1,36 @@
+{
+  "actions": {
+    "{\"spellId\":10329}": {
+      "casts": 4010.0,
+      "crit_ticks": 0.0,
+      "crits": 476.0,
+      "healing": 7798127.270649364,
+      "hits": 3534.0,
+      "overhealing": 889625.9274894097,
+      "shielding": 0.0,
+      "ticks": 0.0
+    },
+    "{\"spellId\":19943}": {
+      "casts": 14208.0,
+      "crit_ticks": 0.0,
+      "crits": 2020.0,
+      "healing": 8776291.91592877,
+      "hits": 12188.0,
+      "overhealing": 659566.5035194287,
+      "shielding": 0.0,
+      "ticks": 0.0
+    },
+    "{\"spellId\":25903}": {
+      "casts": 2461.0,
+      "crit_ticks": 0.0,
+      "crits": 877.0,
+      "healing": 2112849.9292798825,
+      "hits": 1584.0,
+      "overhealing": 148817.73212012,
+      "shielding": 0.0,
+      "ticks": 0.0
+    }
+  },
+  "hps": 345.63771154567496,
+  "seconds_oom": 65.37652070189668
+}

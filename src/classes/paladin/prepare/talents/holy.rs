@@ -3,10 +3,11 @@
 use std::rc::Rc;
 
 use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger};
-use crate::prepare::sim::{AuraConfig, Sim, UnitId};
+use crate::prepare::sim::{AuraConfig, Rules, Sim, UnitId};
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::Stat;
 
+use super::super::hotfix_113554 as hotfix;
 use super::super::masks;
 use super::super::spell_data::spell_data;
 use super::super::util::{new_enemy_aura_array, spell_action};
@@ -41,6 +42,10 @@ impl Paladin {
         self.apply_divine_precision(sim, unit);
         // Holy Shock registered in registerTalentSpells
         self.apply_consecrated_ground(sim, unit);
+
+        // Push 113554, under Forever's rules. Oath of Light is a spell the sim does not register,
+        // so no ally carries it and Boundless Light holds on every Holy Shock heal.
+        self.apply_boundless_light(sim, unit);
 
         // Tier 6
         self.apply_holy_power(sim, unit);
@@ -100,7 +105,11 @@ impl Paladin {
         }
         // 20205 names these by class mask; Holy Wrath, Exorcism and the rest are pushed back
         // as usual.
-        let resist = spell_data().spiritual_focus.fraction_at(points);
+        // Five ranks of 14% since push 113554 under Forever's rules (was 35/70).
+        let resist = match sim.rules {
+            Rules::Forever => hotfix::at(&hotfix::SPIRITUAL_FOCUS, points) / 100.0,
+            Rules::GoReference => spell_data().spiritual_focus.fraction_at(points),
+        };
         sim.add_static_mod(
             unit,
             SpellModConfig {
@@ -132,10 +141,19 @@ impl Paladin {
                     | masks::JUDGEMENT_OF_COMMAND
                     | masks::JUDGEMENT_OF_FURY,
                 kind: SpellModType::DamageDoneFlat,
-                float_value: spell_data().improved_seals.fraction_at(points),
+                float_value: Self::improved_seals_bonus(sim, points),
                 ..SpellModConfig::default()
             },
         );
+    }
+
+    /// Improved Seals' bonus at its points: five ranks of 3% since push 113554 under Forever's
+    /// rules, three of 5% in the reference.
+    pub(in super::super) fn improved_seals_bonus(sim: &Sim, points: i32) -> f64 {
+        match sim.rules {
+            Rules::Forever => hotfix::at(&hotfix::IMPROVED_SEALS, points) / 100.0,
+            Rules::GoReference => spell_data().improved_seals.fraction_at(points),
+        }
     }
 
     /// Reverence: allows 10/20/30% of your Mana regeneration to continue while casting.
@@ -144,8 +162,11 @@ impl Paladin {
         if points == 0 {
             return;
         }
-        sim.unit_mut(unit).pseudo_stats.spirit_regen_rate_casting +=
-            spell_data().reverence.fraction_at(points);
+        // Two ranks of 15% since push 113554 under Forever's rules (was 10/20/30).
+        sim.unit_mut(unit).pseudo_stats.spirit_regen_rate_casting += match sim.rules {
+            Rules::Forever => hotfix::at(&hotfix::REVERENCE, points) / 100.0,
+            Rules::GoReference => spell_data().reverence.fraction_at(points),
+        };
     }
 
     /// Purifying Power: reduces the cooldown of your Exorcism and Holy Wrath spells by 17/33%.
@@ -254,7 +275,11 @@ impl Paladin {
             SpellModConfig {
                 class_mask: masks::DIVINE_PRECISION,
                 kind: SpellModType::BonusHitPercent,
-                float_value: spell_data().divine_precision.value_at(points),
+                // Two ranks of 4% since push 113554 under Forever's rules (was 6/12/18).
+                float_value: match sim.rules {
+                    Rules::Forever => hotfix::at(&hotfix::DIVINE_PRECISION, points),
+                    Rules::GoReference => spell_data().divine_precision.value_at(points),
+                },
                 ..SpellModConfig::default()
             },
         );
@@ -295,6 +320,22 @@ impl Paladin {
         if points == 0 {
             return;
         }
+        if sim.rules == Rules::Forever {
+            // Push 113554 turns it into A_MOD_CRITICAL_HEALING_AMOUNT on the Holy school: the
+            // heal crit's bonus grows by 10% a rank, so 5/5 makes a 150% heal crit 225%. Every
+            // paladin heal is Holy. Upstream #772 puts it on the heals as a crit multiplier.
+            sim.add_static_mod(
+                unit,
+                SpellModConfig {
+                    // Holy Power's mask names Light's Vigil, whose party heal is the third.
+                    class_mask: masks::HEALING_SPELLS | masks::LIGHTS_VIGIL_HEAL,
+                    kind: SpellModType::CritMultiplierPct,
+                    float_value: hotfix::at(&hotfix::HOLY_POWER, points) / 100.0,
+                    ..SpellModConfig::default()
+                },
+            );
+            return;
+        }
         sim.add_static_mod(
             unit,
             SpellModConfig {
@@ -324,6 +365,24 @@ impl Paladin {
                 class_mask: masks::HOLY_SHOCK | masks::HOLY_SHOCK_HEAL | masks::HOLY_STRIKE,
                 kind: SpellModType::BonusCritPercent,
                 float_value: spell_data().holy_power.effect_at(2).value_at(points),
+                ..SpellModConfig::default()
+            },
+        );
+    }
+
+    /// Boundless Light (1328550, push 113554): increases the critical strike chance of your Holy
+    /// Shock heal by 15/30% on an ally without your Oath of Light.
+    fn apply_boundless_light(&mut self, sim: &mut Sim, unit: UnitId) {
+        let points = self.new_talent("boundless_light");
+        if points == 0 {
+            return;
+        }
+        sim.add_static_mod(
+            unit,
+            SpellModConfig {
+                class_mask: masks::HOLY_SHOCK_HEAL,
+                kind: SpellModType::BonusCritPercent,
+                float_value: hotfix::at(&hotfix::BOUNDLESS_LIGHT, points),
                 ..SpellModConfig::default()
             },
         );

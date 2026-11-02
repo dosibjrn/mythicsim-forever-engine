@@ -1,0 +1,194 @@
+{
+  "note": "Ahn'Qiraj 20 book ranks the engine reads as the rank below under Forever's rules (src/prepare/spelldata/book_ranks.rs). Generated: UPDATE_BOOK_RANKS=1 cargo test --lib book_ranks.",
+  "ranks": [
+    {
+      "below": 11567,
+      "belowRank": "Rank 8",
+      "book": 25286,
+      "bookRank": "Rank 9",
+      "name": "Heroic Strike"
+    },
+    {
+      "below": 11601,
+      "belowRank": "Rank 5",
+      "book": 25288,
+      "bookRank": "Rank 6",
+      "name": "Revenge"
+    },
+    {
+      "below": 11551,
+      "belowRank": "Rank 6",
+      "book": 25289,
+      "bookRank": "Rank 7",
+      "name": "Battle Shout"
+    },
+    {
+      "below": 19854,
+      "belowRank": "Rank 5",
+      "book": 25290,
+      "bookRank": "Rank 6",
+      "name": "Blessing of Wisdom"
+    },
+    {
+      "below": 19838,
+      "belowRank": "Rank 6",
+      "book": 25291,
+      "bookRank": "Rank 7",
+      "name": "Blessing of Might"
+    },
+    {
+      "below": 10329,
+      "belowRank": "Rank 8",
+      "book": 25292,
+      "bookRank": "Rank 9",
+      "name": "Holy Light"
+    },
+    {
+      "below": 13555,
+      "belowRank": "Rank 8",
+      "book": 25295,
+      "bookRank": "Rank 9",
+      "name": "Serpent Sting"
+    },
+    {
+      "below": 14322,
+      "belowRank": "Rank 6",
+      "book": 25296,
+      "bookRank": "Rank 7",
+      "name": "Aspect of the Hawk"
+    },
+    {
+      "below": 9889,
+      "belowRank": "Rank 10",
+      "book": 25297,
+      "bookRank": "Rank 11",
+      "name": "Healing Touch"
+    },
+    {
+      "below": 9876,
+      "belowRank": "Rank 6",
+      "book": 25298,
+      "bookRank": "Rank 7",
+      "name": "Starfire"
+    },
+    {
+      "below": 9841,
+      "belowRank": "Rank 10",
+      "book": 25299,
+      "bookRank": "Rank 11",
+      "name": "Rejuvenation"
+    },
+    {
+      "below": 11281,
+      "belowRank": "Rank 8",
+      "book": 25300,
+      "bookRank": "Rank 9",
+      "name": "Backstab"
+    },
+    {
+      "below": 10181,
+      "belowRank": "Rank 10",
+      "book": 25304,
+      "bookRank": "Rank 11",
+      "name": "Frostbolt"
+    },
+    {
+      "below": 10151,
+      "belowRank": "Rank 11",
+      "book": 25306,
+      "bookRank": "Rank 12",
+      "name": "Fireball"
+    },
+    {
+      "below": 10212,
+      "belowRank": "Rank 7",
+      "book": 25345,
+      "bookRank": "Rank 8",
+      "name": "Arcane Missiles"
+    },
+    {
+      "below": 10274,
+      "belowRank": "Rank 7",
+      "book": 25346,
+      "bookRank": "Rank 8",
+      "name": "Arcane Missiles"
+    },
+    {
+      "below": 11661,
+      "belowRank": "Rank 9",
+      "book": 25307,
+      "bookRank": "Rank 10",
+      "name": "Shadow Bolt"
+    },
+    {
+      "below": 11668,
+      "belowRank": "Rank 7",
+      "book": 25309,
+      "bookRank": "Rank 8",
+      "name": "Immolate"
+    },
+    {
+      "below": 11672,
+      "belowRank": "Rank 6",
+      "book": 25311,
+      "bookRank": "Rank 7",
+      "name": "Corruption"
+    },
+    {
+      "below": 10965,
+      "belowRank": "Rank 4",
+      "book": 25314,
+      "bookRank": "Rank 5",
+      "name": "Greater Heal"
+    },
+    {
+      "below": 10929,
+      "belowRank": "Rank 9",
+      "book": 25315,
+      "bookRank": "Rank 10",
+      "name": "Renew"
+    },
+    {
+      "below": 10961,
+      "belowRank": "Rank 4",
+      "book": 25316,
+      "bookRank": "Rank 5",
+      "name": "Prayer of Healing"
+    },
+    {
+      "below": 10396,
+      "belowRank": "Rank 9",
+      "book": 25357,
+      "bookRank": "Rank 10",
+      "name": "Healing Wave"
+    },
+    {
+      "below": 10627,
+      "belowRank": "Rank 2",
+      "book": 25359,
+      "bookRank": "Rank 3",
+      "name": "Grace of Air Totem"
+    },
+    {
+      "below": 10626,
+      "belowRank": "Rank 2",
+      "book": 25360,
+      "bookRank": "Rank 3",
+      "name": "Grace of Air"
+    },
+    {
+      "below": 10442,
+      "belowRank": "Rank 4",
+      "book": 25361,
+      "bookRank": "Rank 5",
+      "name": "Strength of Earth Totem"
+    },
+    {
+      "below": 10441,
+      "belowRank": "Rank 4",
+      "book": 25362,
+      "bookRank": "Rank 5",
+      "name": "Strength of Earth"
+    }
+  ]
+}

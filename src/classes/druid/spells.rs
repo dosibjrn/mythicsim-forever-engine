@@ -2,6 +2,7 @@
 
 pub(crate) mod bear;
 pub(crate) mod bear_form;
+pub(crate) mod bloom;
 pub(crate) mod cat_builders;
 pub(crate) mod cat_form;
 pub(crate) mod faerie_fire;

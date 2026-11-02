@@ -34,9 +34,9 @@ pub(crate) mod forever_item_sets;
 pub(crate) mod forever_items;
 pub(crate) mod forever_items_generated;
 pub(crate) mod forever_set_spells_generated;
-pub(crate) mod frost_oil;
 pub(crate) mod healer_gear;
 pub(crate) mod heals;
+pub(crate) mod hotfix_113554;
 pub(crate) mod incapacitate;
 pub(crate) mod item_aura;
 pub(crate) mod item_effects;
@@ -49,6 +49,7 @@ pub(crate) mod itemhelpers;
 pub(crate) mod items;
 pub(crate) mod items_registry;
 pub(crate) mod major_cooldown;
+pub(crate) mod oil_of_immolation;
 pub(crate) mod overheal;
 pub(crate) mod parse_effects;
 pub(crate) mod party_damage;
@@ -56,6 +57,7 @@ pub(crate) mod periodic_action;
 pub(crate) mod pet;
 pub(crate) mod power_infusion;
 pub(crate) mod presets;
+pub(crate) mod proc_oil;
 pub(crate) mod proc_type_mask;
 pub(crate) mod procs;
 pub(crate) mod professions;
@@ -76,6 +78,7 @@ pub(crate) mod spell_mod;
 pub(crate) mod spelldata;
 pub(crate) mod stat_auras;
 pub(crate) mod stats;
+pub(crate) mod talent_layout;
 pub(crate) mod target;
 pub(crate) mod weapon_skill;
 
@@ -136,16 +139,37 @@ pub fn prepare_json_with(
     scenario: &str,
     rules: Rules,
 ) -> Result<serde_json::Value, PrepareError> {
-    let request = Request::from_json(request).map_err(PrepareError::Invalid)?;
+    let bytes = request;
+    let mut request = Request::from_json(bytes).map_err(PrepareError::Invalid)?;
     let options = request.message().message("sim_options");
     if options.is_none_or(|options| options.i32("iterations") <= 0) {
         return Err(PrepareError::Invalid("missing iterations".to_string()));
     }
     let digest = request.sha256();
+    if rules == Rules::Forever {
+        if let Some(known) = known_ranks(bytes)? {
+            request = known;
+        }
+    }
     let mut env =
         env::Environment::with_rules(request.message(), crate::classes::prepare_agent, rules)
             .map_err(PrepareError::Refused)?;
     export::export(&mut env, &digest, scenario).map_err(PrepareError::Refused)
+}
+
+/// The request with every Ahn'Qiraj 20 book rank it names read as the rank below, which is what
+/// a player knows under Forever's rules (`spelldata::book_ranks`), or None when it names none.
+/// The digest stays the one of the request as sent.
+fn known_ranks(bytes: &[u8]) -> Result<Option<Request>, PrepareError> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|err| PrepareError::Invalid(err.to_string()))?;
+    if !spelldata::book_ranks::rewrite_request(&mut value) {
+        return Ok(None);
+    }
+    let bytes = serde_json::to_vec(&value).map_err(|err| PrepareError::Fault(err.to_string()))?;
+    Request::from_json(&bytes)
+        .map(Some)
+        .map_err(PrepareError::Invalid)
 }
 
 /// Prepares a request into the prepared v2 contract.

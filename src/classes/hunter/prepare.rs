@@ -14,8 +14,9 @@ use crate::contracts::request::Message;
 use crate::prepare::agent::{fill_talents, ClassSpellName, PrepAgent};
 use crate::prepare::attack::AutoAttackOptions;
 use crate::prepare::env::{Environment, FinalizeEffect};
-use crate::prepare::sim::{AuraId, Sim, SpellId, UnitId};
+use crate::prepare::sim::{AuraId, Rules, Sim, SpellId, UnitId};
 use crate::prepare::stats::Stat;
+use crate::prepare::talent_layout::{self, talent, LayoutTalent};
 use crate::prepare::Refusal;
 
 pub(crate) use pet::HunterPetState;
@@ -27,6 +28,83 @@ pub(crate) const THORIDAL_THE_STARS_FURY: i32 = 34334;
 
 /// Go `TalentTreeSizes`.
 const TALENT_TREE_SIZES: [usize; 3] = [16, 16, 18];
+
+/// Hotfix push 113554's Hunter tree, which only Forever's rules read: each tree's talents in the
+/// client's order (row, then column). Pathfinding (19559) and Improved Revive Pet (24443) swap
+/// squares in Beast Mastery, so Improved Revive Pet is the fifth talent and Pathfinding, now in
+/// the third row, the sixth. Marksmanship and Survival keep the Go reference's order.
+const FOREVER_BEAST_MASTERY: &[LayoutTalent] = &[
+    talent("deadly_aspects", "Deadly Aspects", 5),
+    talent("endurance_training", "Endurance Training", 5),
+    talent("focused_fire", "Focused Fire", 2),
+    talent(
+        "improved_aspect_of_the_monkey",
+        "Improved Aspect of the Monkey",
+        3,
+    ),
+    talent("improved_revive_pet", "Improved Revive Pet", 2),
+    talent("pathfinding", "Pathfinding", 2),
+    talent("bestial_swiftness", "Bestial Swiftness", 1),
+    talent("unleashed_fury", "Unleashed Fury", 5),
+    talent("improved_mend_pet", "Improved Mend Pet", 2),
+    talent("ferocity", "Ferocity", 5),
+    talent("summon_hawk", "Summon Hawk", 1),
+    talent("spirit_bond", "Spirit Bond", 2),
+    talent("intimidation", "Intimidation", 1),
+    talent("bestial_discipline", "Bestial Discipline", 2),
+    talent("frenzy", "Frenzy", 5),
+    talent("bestial_wrath", "Bestial Wrath", 1),
+];
+
+const FOREVER_MARKSMANSHIP: &[LayoutTalent] = &[
+    talent("hawk_eye", "Hawk Eye", 3),
+    talent("improved_concussive_shot", "Improved Concussive Shot", 5),
+    talent("lethal_attacks", "Lethal Attacks", 5),
+    talent("improved_stings", "Improved Stings", 3),
+    talent("efficiency", "Efficiency", 5),
+    talent("careful_aim", "Careful Aim", 5),
+    talent("rapid_killing", "Rapid Killing", 2),
+    talent("improved_arcane_shot", "Improved Arcane Shot", 5),
+    talent("lone_wolf", "Lone Wolf", 1),
+    talent("trueshot_aura", "Trueshot Aura", 1),
+    talent("mortal_shots", "Mortal Shots", 5),
+    talent("rapid_recuperation", "Rapid Recuperation", 2),
+    talent("barrage", "Barrage", 3),
+    talent("scatter_shot", "Scatter Shot", 1),
+    talent(
+        "ranged_weapon_specialization",
+        "Ranged Weapon Specialization",
+        5,
+    ),
+    talent("sniper_shot", "Sniper Shot", 1),
+];
+
+const FOREVER_SURVIVAL: &[LayoutTalent] = &[
+    talent("improved_tracking", "Improved Tracking", 5),
+    talent("deflection", "Deflection", 5),
+    talent("entrapment", "Entrapment", 5),
+    talent("savage_strikes", "Savage Strikes", 2),
+    talent("survivalist", "Survivalist", 5),
+    talent("improved_wing_clip", "Improved Wing Clip", 3),
+    talent("clever_traps", "Clever Traps", 2),
+    talent("surefooted", "Surefooted", 3),
+    talent("deterrence", "Deterrence", 1),
+    talent("survival_tactics", "Survival Tactics", 2),
+    talent("predators_edge", "Predator's Edge", 5),
+    talent("counterattack", "Counterattack", 1),
+    talent("resourcefulness", "Resourcefulness", 2),
+    talent("expose_prey", "Expose Prey", 2),
+    talent("survivalists_discipline", "Survivalist's Discipline", 2),
+    talent("strider_kick", "Strider Kick", 1),
+    talent("lightning_reflexes", "Lightning Reflexes", 5),
+    talent("lacerating_strikes", "Lacerating Strikes", 1),
+];
+
+pub(crate) const FOREVER_TREES: [&[LayoutTalent]; 3] = [
+    FOREVER_BEAST_MASTERY,
+    FOREVER_MARKSMANSHIP,
+    FOREVER_SURVIVAL,
+];
 
 /// Go's Hunter class mask bits, from hunter.go: `HunterSpellFlagsNone` is 0 and the bit of each
 /// name after it is `1 << iota`, counting from `SpellMaskSpellRanged` at 1.
@@ -267,11 +345,19 @@ pub(crate) fn new_hunter(
     unit: UnitId,
     player: &Message,
 ) -> Result<Box<dyn PrepAgent>, Refusal> {
-    let talents = fill_talents(
-        "proto.HunterTalents",
-        player.str("talents_string"),
-        TALENT_TREE_SIZES,
-    )
+    let talents_string = player.str("talents_string");
+    let talents = match sim.rules {
+        Rules::Forever => talent_layout::fill(
+            "proto.HunterTalents",
+            "hunter",
+            talents_string,
+            &FOREVER_TREES,
+        )
+        .map(|(talents, _)| talents),
+        Rules::GoReference => {
+            fill_talents("proto.HunterTalents", talents_string, TALENT_TREE_SIZES)
+        }
+    }
     .map_err(|err| Refusal::new("talents", err))?;
     let options = class_options(player)?;
     let mut hunter = Hunter {
@@ -363,6 +449,9 @@ impl Hunter {
             "RockshardPellets" => 18.0,
             "Doomshot" => 20.0,
             "MiniatureCannonBalls" => 20.5,
+            // Forever's Engineering ammo, which the reference does not have: "Adds 24.5 damage
+            // per second" on both tooltips (README, Rust-only mechanics).
+            "SwiftfeatherArrow" | "SwiftstrikeShot" => 24.5,
             _ => self.ammo_dps,
         };
     }

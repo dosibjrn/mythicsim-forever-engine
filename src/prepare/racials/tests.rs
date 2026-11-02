@@ -158,8 +158,15 @@ fn blood_fury_is_percent_based_and_reports_its_temporary_stats() {
     assert_eq!(env.sim.spell(spell_id).related_self_buff, Some(blood_fury));
     let icd = env.sim.aura(blood_fury).icd.expect("an ICD");
     assert_eq!(icd, env.sim.spell(spell_id).cd);
-    // 16 October beta notes: three minutes (was two).
-    assert_eq!(icd.duration, 3 * MINUTE);
+    // The 26 October notes' 27 October additions: two minutes (was three).
+    assert_eq!(icd.duration, 2 * MINUTE);
+    // 16 October beta notes: three minutes (was two), which the Go reference keeps.
+    let go = go_warrior("RaceOrc", "");
+    let go_blood_fury = aura(&go, "Blood Fury").expect("Blood Fury");
+    assert_eq!(
+        go.sim.aura(go_blood_fury).icd.expect("an ICD").duration,
+        3 * MINUTE
+    );
 }
 
 #[test]
@@ -179,6 +186,16 @@ fn berserking_is_a_flat_ten_percent_with_no_cost() {
     let mcds = &env.sim.character(unit).initial_major_cooldowns;
     assert_eq!(mcds.len(), 1);
     assert_eq!(mcds[0].cooldown_type, cooldown_type::DPS);
+    // The 26 October notes' 27 October additions: 15 seconds (was 10), which the Go reference
+    // keeps.
+    assert_eq!(env.sim.aura(berserking).duration, 15 * SECOND);
+    let go = go_warrior("RaceTroll", "");
+    assert_eq!(
+        go.sim
+            .aura(aura(&go, "Berserking").expect("Berserking"))
+            .duration,
+        10 * SECOND
+    );
 }
 
 #[test]
@@ -312,8 +329,16 @@ fn touch_of_the_grave_uses_the_melee_variant() {
         Some(1260189)
     );
     assert!(aura.events.on_spell_hit_dealt);
-    // 16 October beta notes: a 25 second internal cooldown (was 1 sec).
-    assert_eq!(aura.icd.map(|icd| icd.duration), Some(25 * SECOND));
+    // The 26 October notes' 27 October additions: 15 seconds (was 25).
+    assert_eq!(aura.icd.map(|icd| icd.duration), Some(15 * SECOND));
+    // 16 October beta notes: 25 seconds (was 1 sec), which the Go reference keeps.
+    let go = go_warrior("RaceUndead", "");
+    let go_touch = go.sim.aura(
+        go.sim
+            .get_aura(go.player, "Touch of the Grave")
+            .expect("Touch of the Grave"),
+    );
+    assert_eq!(go_touch.icd.map(|icd| icd.duration), Some(25 * SECOND));
     assert!(aura.icd.and_then(|icd| icd.timer).is_some());
     assert_eq!(aura.duration, crate::core::time::NEVER_EXPIRES);
     assert!(aura.active);

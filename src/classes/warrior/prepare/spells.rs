@@ -454,7 +454,7 @@ impl Warrior {
 
     /// Go `registerHeroicStrike`.
     pub(super) fn register_heroic_strike(&self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().heroic_strike.highest();
+        let rank = spell_data().heroic_strike.highest_for(sim.rules);
         let spell = sim.register_spell(
             unit,
             SpellConfig {
@@ -735,7 +735,7 @@ impl Warrior {
 
     /// Go `registerRevenge`.
     pub(super) fn register_revenge(&self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().revenge.highest();
+        let rank = spell_data().revenge.highest_for(sim.rules);
         let action = spell_action(rank.id);
         let aura = sim.register_aura(
             unit,

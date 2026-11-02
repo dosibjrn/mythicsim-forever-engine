@@ -25,6 +25,10 @@ use super::util::spell_action;
 use super::Paladin;
 
 /// Go `core.SpellBatchWindow`.
+/// The players Light's Vigil's party heal reaches: the target and its party of five, the party
+/// the healer sims model (`prepare::party_damage`).
+const VIGIL_PARTY: u32 = 5;
+
 const SPELL_BATCH_WINDOW: i64 = 10 * MILLISECOND;
 
 /// Go `sanctifiedJudgementLogScale`: the game returns 10/9 of the stated share of the seal's cost.
@@ -261,11 +265,11 @@ impl Paladin {
             effects.push(json!({
                 "kind": "seal_of_command", "ranks": ranks, "proc_spell_id": proc_rank.id,
                 "weapon_percent": proc_effect.percent()
-                    * data.improved_seals.multiplier_at(talents.i32("improved_seals")),
+                    * (1.0 + Self::improved_seals_bonus(sim, talents.i32("improved_seals"))),
                 "coefficient": proc_effect.coeff(),
                 // Go `SealOfCommandBonusTakesImprovedSeals` (MythicSim patch 169).
                 "target_bonus_coefficient": proc_effect.coeff()
-                    * data.improved_seals.multiplier_at(talents.i32("improved_seals")),
+                    * (1.0 + Self::improved_seals_bonus(sim, talents.i32("improved_seals"))),
                 "proc_chance": dpm.chance(ProcMask::MELEE_MH_AUTO),
                 "rng_label": "Seal of Command", "icd_ns": SECOND, "deal_delay_ns": deal_delay,
             }));
@@ -278,18 +282,35 @@ impl Paladin {
             } else {
                 0.85
             };
+            // The seal's aura holds only the per-hit value (a dummy aura); each hit is computed as
+            // it lands from the weapon in the hand, its spell power share too ($<1h> or $<2h> in
+            // the tooltip), which the registered spell holds for the weapon worn at the pull.
+            // Only a swap between a one-hander and a two-hander moves it, so only then does each
+            // rank carry the share of this weapon.
+            let two_hand = |item: &crate::prepare::items::Item| item.hand_type == "HandTypeTwoHand";
+            let share_follows_swap = sim.item_swap(unit).is_some_and(|swap| {
+                let main_hand = crate::prepare::items::slot::MAIN_HAND;
+                two_hand(&swap.set(false)[main_hand]) != two_hand(&swap.set(true)[main_hand])
+            });
             let mut ranks = Vec::new();
             data.seal_of_righteousness.each(|_, rank| {
                 let judge_rank = data
                     .judgement_of_righteousness
                     .by_id(rank.effect_n(2).base_value() as i32);
-                ranks.push(json!({
+                let mut row = json!({
                     "seal_spell_id": rank.id,
                     "aura": Self::seal_aura_label("Seal of Righteousness", &label, rank),
                     "judgement_spell_id": judge_rank.id,
                     "proc_spell_id": Self::righteousness_proc_id(rank.rank_number()),
                     "per_hit_value": judge_rank.effect_n(2).average(CHARACTER_LEVEL),
-                }));
+                });
+                if share_follows_swap {
+                    row["hit_coefficient"] = json!(super::seals::righteousness_hit_coefficient(
+                        judge_rank.effect_n(2).coeff(),
+                        two_hand(mh)
+                    ));
+                }
+                ranks.push(row);
             });
             effects.push(json!({
                 "kind": "seal_of_righteousness", "ranks": ranks, "hand_multiplier": hand_multiplier,
@@ -377,6 +398,28 @@ impl Paladin {
         if sim.rules == crate::prepare::sim::Rules::Forever && light_reached {
             self.export_seal_of_light(env, &mut effects, notes);
         }
+        // seal_of_wisdom.go and seal_of_justice.go, under Forever's rules where the rotation
+        // reaches a rank.
+        let mut wisdom_reached = false;
+        data.seal_of_wisdom.each(|_, rank| {
+            wisdom_reached |= rotation_spells.contains(&i64::from(rank.id));
+        });
+        if sim.rules == crate::prepare::sim::Rules::Forever && wisdom_reached {
+            self.export_seal_of_wisdom(env, &mut effects);
+        }
+        let justice = data.seal_of_justice.highest();
+        if sim.rules == crate::prepare::sim::Rules::Forever
+            && rotation_spells.contains(&i64::from(justice.id))
+        {
+            let judgement = data
+                .seal_of_justice_triggered
+                .by_id(justice.effect_n(2).base_value() as i32);
+            effects.push(json!({
+                "kind": "seal_of_justice", "seal_spell_id": justice.id,
+                "aura": Self::seal_aura_label("Seal of Justice", &label, justice),
+                "judgement_spell_id": judgement.id, "judgement_aura": "Judgement of Justice",
+            }));
+        }
         // holy_strike.go: the weapon percent of the normalized swing plus the flat roll.
         let mut holy_strikes = Vec::new();
         data.holy_strike.each(|_, rank| {
@@ -384,6 +427,18 @@ impl Paladin {
                 .push(json!({"spell_id": rank.id, "weapon_percent": rank.effect_n(2).percent()}));
         });
         effects.push(json!({"kind": "holy_strike", "ranks": holy_strikes}));
+        // hammer_of_the_righteous.go, under Forever's rules (Go's exporter leaves the cast
+        // unknown): the weapon DPS multiple is the row's effect 3, the targets its chain.
+        if sim.rules == crate::prepare::sim::Rules::Forever {
+            let rank = data.hammer_of_the_righteous.highest();
+            if sim.get_spell(unit, &ActionId::spell(rank.id)).is_some() {
+                effects.push(
+                    json!({"kind": "hammer_of_the_righteous", "spell_id": rank.id,
+                    "weapon_dps": rank.effect_n(3).base_points,
+                    "max_targets": rank.effect_n(1).chain_targets}),
+                );
+            }
+        }
         // hammer_of_wrath.go: the damage rolls are on the spells.
         effects.push(json!({"kind": "hammer_of_wrath"}));
         // exorcism.go and holy_wrath.go: the rolls are on the spells; both hit only an Undead
@@ -427,7 +482,40 @@ impl Paladin {
                 .collect();
             effects.push(json!({"kind": "holy_shock", "ranks": ranks}));
         }
-        if talents.bool("lights_vigil") {
+        let vigil_reached = {
+            let mut reached = false;
+            data.lights_vigil.each(|_, rank| {
+                reached |= rotation_spells.contains(&i64::from(rank.id));
+            });
+            reached
+        };
+        if sim.rules == crate::prepare::sim::Rules::Forever {
+            // Push 113554 makes the vigil friendly only: the next Holy Shock heal on the ally
+            // heals its party, and the enemy strike and refund are gone. The Holy Paladin
+            // healer sim models it; any other build's rotation that reaches it is refused.
+            if talents.bool("lights_vigil") && self.healer {
+                let mut ranks = Vec::new();
+                data.lights_vigil.each(|_, rank| {
+                    let (_, _, heal, _) = LIGHTS_VIGIL_TRIGGERED
+                        .iter()
+                        .copied()
+                        .find(|(n, _, _, _)| *n == rank.rank_number())
+                        .unwrap_or((0, 0, 0, 0));
+                    let heal_rank = data.lights_vigil_triggered.by_id(heal);
+                    let roll = heal_rank.heal_effect();
+                    ranks.push(json!({
+                        "spell_id": rank.id,
+                        "aura": format!("Light's Vigil{label} Rank {}", rank.rank_number()),
+                        "heal_spell_id": heal_rank.id,
+                        "average": roll.average(CHARACTER_LEVEL), "variance": roll.variance,
+                        "players": VIGIL_PARTY,
+                    }));
+                });
+                effects.push(json!({"kind": "lights_vigil_ally", "ranks": ranks}));
+            } else if talents.bool("lights_vigil") && vigil_reached {
+                notes.push("Light's Vigil on an ally (push 113554) is unsupported".to_string());
+            }
+        } else if talents.bool("lights_vigil") {
             // lights_vigil.go: the vigil, its strike and its refund per rank.
             let mut ranks = Vec::new();
             data.lights_vigil.each(|_, rank| {
@@ -455,6 +543,7 @@ impl Paladin {
                 "spells": ["holy_light", "flash_of_light", "holy_shock_heal", "holy_shock"],
             }));
         }
+        effects.extend(self.oath_of_light_effect(&label));
         let vengeance = talents.i32("vengeance");
         if vengeance > 0 {
             // talents_retribution.go applyVengeance: the damage mod's School and ProcMask, as
@@ -472,12 +561,16 @@ impl Paladin {
             }));
         }
         if talents.i32("vindication") > 0 {
-            // talents_retribution.go applyVindication: the chance is a Go literal.
-            effects.push(json!({
+            // talents_retribution.go applyVindication: the chance is a Go literal. Push 113554
+            // takes the paladin's aura away under Forever's rules.
+            let mut vindication = json!({
                 "kind": "vindication", "trigger_aura": format!("Vindication - Trigger{label}"),
-                "proc_chance": 1.0, "aura": format!("Vindication{label}"),
-                "target_aura": format!("Vindication{label}"),
-            }));
+                "proc_chance": 1.0, "target_aura": format!("Vindication{label}"),
+            });
+            if sim.rules == crate::prepare::sim::Rules::GoReference {
+                vindication["aura"] = json!(format!("Vindication{label}"));
+            }
+            effects.push(vindication);
         }
         let sanctified = talents.i32("sanctified_judgement");
         if sanctified > 0 {
@@ -516,6 +609,23 @@ impl Paladin {
             .collect();
             effects.push(json!({
                 "kind": "twist_of_light", "trigger_aura": format!("Twist of Light{label}"),
+                "echoes": echoes,
+            }));
+        }
+        if self.new_talent("unsealed_wrath") > 0 {
+            // Push 113554's Unsealed Wrath, under Forever's rules: the Echoes in upstream #772's
+            // order.
+            let echoes: Vec<Value> = [
+                (1311703, "seal_of_command"),
+                (1311701, "seal_of_fury"),
+                (1311704, "seal_of_righteousness"),
+                (1311705, "seal_of_justice"),
+            ]
+            .iter()
+            .map(|(id, seal)| json!({"aura": format!("Echo ({id}){label}"), "seal": seal}))
+            .collect();
+            effects.push(json!({
+                "kind": "unsealed_wrath", "trigger_aura": format!("Unsealed Wrath{label}"),
                 "echoes": echoes,
             }));
         }
@@ -558,21 +668,30 @@ impl Paladin {
                 notes.push("Lay on Hands restoring the target's mana is unsupported".to_string());
             }
         }
-        // auras.go registerAuraSpell: a Retribution Aura rank's cast turns its aura on. Forever's
-        // rules describe it; Go's exporter leaves the cast unknown.
+        // auras.go registerAuraSpell: an aura rank's cast turns its aura on, for every paladin
+        // aura Go registers. Forever's rules describe it; Go's exporter leaves the cast unknown.
         if sim.rules == crate::prepare::sim::Rules::Forever {
             let mut ranks = Vec::new();
-            data.retribution_aura.each(|_, rank| {
-                if !rotation_spells.contains(&i64::from(rank.id)) {
-                    return;
-                }
-                let aura = sim
-                    .get_spell(unit, &ActionId::spell(rank.id))
-                    .and_then(|spell| sim.spell(spell).related_self_buff);
-                if let Some(aura) = aura {
-                    ranks.push(json!({"spell_id": rank.id, "aura": sim.aura(aura).label}));
-                }
-            });
+            for ladder in [
+                &data.retribution_aura,
+                &data.devotion_aura,
+                &data.concentration_aura,
+                &data.fire_resistance_aura,
+                &data.frost_resistance_aura,
+                &data.shadow_resistance_aura,
+            ] {
+                ladder.each(|_, rank| {
+                    if !rotation_spells.contains(&i64::from(rank.id)) {
+                        return;
+                    }
+                    let aura = sim
+                        .get_spell(unit, &ActionId::spell(rank.id))
+                        .and_then(|spell| sim.spell(spell).related_self_buff);
+                    if let Some(aura) = aura {
+                        ranks.push(json!({"spell_id": rank.id, "aura": sim.aura(aura).label}));
+                    }
+                });
+            }
             if !ranks.is_empty() {
                 effects.push(json!({"kind": "paladin_aura_cast", "ranks": ranks}));
             }
@@ -672,6 +791,46 @@ impl Paladin {
         effects.extend(judgements);
     }
 
+    /// Go `registerSealOfWisdom`'s seal, mana restore and judgement for each rank.
+    fn export_seal_of_wisdom(&self, env: &Environment, effects: &mut Vec<Value>) {
+        let sim = &env.sim;
+        let unit = env.player;
+        let label = sim.unit(unit).label.clone();
+        let data = spell_data();
+        let mut ranks = Vec::new();
+        let mut judgements = Vec::new();
+        data.seal_of_wisdom.each(|_, rank| {
+            let judgement_id = rank.effect_n(2).base_value() as i32;
+            let judgement_mana = data
+                .seal_of_wisdom_triggered
+                .by_id(super::seals::paired(
+                    &super::seals::JUDGEMENT_OF_WISDOM_MANA_IDS,
+                    rank.rank_number(),
+                ))
+                .energize_effect()
+                .average(CHARACTER_LEVEL);
+            let judgement_aura = format!("Judgement of Wisdom Rank {}", rank.rank_number());
+            let proc_rank = rank.refs()[0];
+            ranks.push(json!({
+                "seal_spell_id": rank.id,
+                "aura": Self::seal_aura_label("Seal of Wisdom", &label, rank),
+                "proc_spell_id": proc_rank.id,
+                "mana": proc_rank.energize_effect().average(CHARACTER_LEVEL),
+                "judgement_spell_id": judgement_id, "judgement_aura": judgement_aura,
+            }));
+            // buffs/paladin.go AttachJudgementOfWisdomMana.
+            judgements.push(json!({
+                "kind": "judgement_of_wisdom", "aura": judgement_aura,
+                "proc_chance": crate::prepare::buffs::paladin::JUDGEMENT_PROC_CHANCE,
+                "proc_mask": ProcMask::DIRECT.names(), "mana": judgement_mana,
+                "metrics_action_id": action_id(Some(&ActionId::spell(judgement_id))),
+                "delay_ns": crate::prepare::common_effects::SPELL_BATCH_WINDOW,
+            }));
+        });
+        effects.push(json!({"kind": "seal_of_wisdom", "ranks": ranks}));
+        effects.extend(judgements);
+    }
+
     /// Go `paladinStatAuras`: the paladin auras whose gain or loss changes the stats the
     /// runtime reads or the target's swings at a tanking paladin.
     pub(super) fn export_stat_auras(&self, sim: &Sim, unit: UnitId) -> Vec<String> {
@@ -680,7 +839,8 @@ impl Paladin {
         let rotation_spells = rotation_spells(sim, unit);
         let data = spell_data();
         let mut labels = Vec::new();
-        if talents.i32("vindication") > 0 {
+        // Push 113554 takes the paladin's Vindication aura away under Forever's rules.
+        if talents.i32("vindication") > 0 && sim.rules == crate::prepare::sim::Rules::GoReference {
             labels.push(format!("Vindication{label}"));
         }
         // seal_of_the_crusader.go: the attack power of each rank the rotation names.
@@ -691,6 +851,21 @@ impl Paladin {
         });
         if sim.get_aura(unit, "Reduced avoidance").is_none() {
             return labels;
+        }
+        // auras.go registerAuraSpell, under Forever's rules: a Devotion Aura rank the rotation
+        // casts adds its armor, which the target's swings read.
+        if sim.rules == crate::prepare::sim::Rules::Forever {
+            data.devotion_aura.each(|_, rank| {
+                if !rotation_spells.contains(&i64::from(rank.id)) {
+                    return;
+                }
+                let aura = sim
+                    .get_spell(unit, &ActionId::spell(rank.id))
+                    .and_then(|spell| sim.spell(spell).related_self_buff);
+                if let Some(aura) = aura {
+                    labels.push(sim.aura(aura).label.clone());
+                }
+            });
         }
         if talents.i32("redoubt") > 0 {
             labels.push(format!("Redoubt{label}"));

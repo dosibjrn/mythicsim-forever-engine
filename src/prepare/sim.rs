@@ -437,6 +437,9 @@ pub(crate) struct Sim {
     pub time_slots: Vec<Duration>,
     /// The rules preparation follows where Rust departs from the Go reference.
     pub rules: Rules,
+    /// Each item or enchant speed aura (Go `registerSpeedAura`) and the melee, ranged and cast
+    /// speed multipliers it applies while up.
+    pub speed_auras: Vec<(AuraId, [f64; 3])>,
 }
 
 /// Which rules preparation follows where Rust departs from the Go reference on purpose: Forever's
@@ -480,6 +483,7 @@ impl Sim {
             state_slots: Vec::new(),
             time_slots: Vec::new(),
             rules: Rules::Forever,
+            speed_auras: Vec::new(),
         }
     }
 

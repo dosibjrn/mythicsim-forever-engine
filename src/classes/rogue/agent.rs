@@ -113,7 +113,8 @@ pub(crate) struct RogueAgent {
     stealth: Option<Stealth>,
     ambush: Option<Ambush>,
     rupture: Option<Rc<Rupture>>,
-    rupture_snapshot: rupture::Snapshot,
+    /// What each target's Rupture stored, by target position.
+    rupture_snapshot: [rupture::Snapshot; crate::core::fight::MAX_TARGETS],
     mutilate: Option<Mutilate>,
     cold_blood: Option<Rc<ColdBlood>>,
     premeditation: Option<Premeditation>,
@@ -128,7 +129,8 @@ pub(crate) struct RogueAgent {
     ghostly_dodge: Option<AuraRef>,
     hemorrhage_debuff: Option<AuraRef>,
     garrote: Option<Garrote>,
-    garrote_snapshot: rupture::Snapshot,
+    /// What each target's Garrote stored, by target position.
+    garrote_snapshot: [rupture::Snapshot; crate::core::fight::MAX_TARGETS],
     quietus: Option<Quietus>,
     kidney_shot: Option<KidneyShot>,
     expose_armor: Option<ExposeArmor>,
@@ -743,18 +745,21 @@ impl RogueAgent {
     }
 
     /// Go `isPoisoned`: the rogue's Deadly Poison or Wound Poison is on the target.
-    fn poisoned(fight: &Fight<Self>) -> bool {
+    fn poisoned(fight: &Fight<Self>, target: Side) -> bool {
         let deadly = fight
             .agent
             .deadly_poison
             .as_ref()
             .and_then(|poison| fight.spells[poison.spell].dot)
-            .is_some_and(|dot| fight.aura(fight.dots[dot].aura).active);
+            .is_some_and(|dot| {
+                let dot = fight.dot_on(dot, target);
+                fight.aura(fight.dots[dot].aura).active
+            });
         deadly
             || fight
                 .agent
                 .wound_debuff
-                .is_some_and(|debuff| fight.aura(debuff).active)
+                .is_some_and(|debuff| fight.aura(fight.aura_on(debuff, target)).active)
     }
 
     /// A target aura by label.
@@ -853,7 +858,8 @@ impl Agent for RogueAgent {
                 let rupture = fight.agent.rupture.clone().expect("Rupture is bound");
                 let finisher = Self::finisher(fight);
                 if let Some(snapshot) = rupture.apply(fight, spell, target, &finisher) {
-                    fight.agent.rupture_snapshot = snapshot;
+                    let position = target.target_position().unwrap_or(0);
+                    fight.agent.rupture_snapshot[position] = snapshot;
                 }
             }
             RogueSpell::Mutilate => {
@@ -862,7 +868,7 @@ impl Agent for RogueAgent {
             }
             RogueSpell::MutilateHit => {
                 let mutilate = fight.agent.mutilate.expect("Mutilate is bound");
-                let poisoned = Self::poisoned(fight);
+                let poisoned = Self::poisoned(fight, target);
                 mutilate.hit(fight, spell, target, poisoned);
             }
             RogueSpell::WoundPoison => {
@@ -885,7 +891,8 @@ impl Agent for RogueAgent {
             RogueSpell::Garrote => {
                 let garrote = fight.agent.garrote.expect("Garrote is bound");
                 if let Some(snapshot) = garrote.apply(fight, spell, target) {
-                    fight.agent.garrote_snapshot = snapshot;
+                    let position = target.target_position().unwrap_or(0);
+                    fight.agent.garrote_snapshot[position] = snapshot;
                 }
             }
             RogueSpell::KidneyShot => {
@@ -1023,12 +1030,14 @@ impl Agent for RogueAgent {
             RogueSpell::DeadlyPoison => fight.snapshot_dot_tick(dot),
             RogueSpell::Rupture => {
                 let rupture = fight.agent.rupture.clone().expect("Rupture is bound");
-                let snapshot = fight.agent.rupture_snapshot;
+                let position = fight.dots[dot].side.target_position().unwrap_or(0);
+                let snapshot = fight.agent.rupture_snapshot[position];
                 rupture.tick(fight, dot, snapshot);
             }
             RogueSpell::Garrote => {
                 let garrote = fight.agent.garrote.expect("Garrote is bound");
-                let snapshot = fight.agent.garrote_snapshot;
+                let position = fight.dots[dot].side.target_position().unwrap_or(0);
+                let snapshot = fight.agent.garrote_snapshot[position];
                 rupture::bleed_tick(fight, dot, snapshot, garrote.tick_outcome);
             }
             _ => {}

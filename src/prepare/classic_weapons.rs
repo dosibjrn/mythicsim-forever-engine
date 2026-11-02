@@ -4,8 +4,8 @@
 //! Go `init` registers them in file order, which only matters between IDs the registry would
 //! reject twice; every ID here is distinct from the forever package's.
 //!
-//! Item swapping is refused in preparation, so the `ItemSwap.RegisterProc` calls Go makes after
-//! each aura have nothing to toggle and are not repeated.
+//! Each weapon's proc aura registers with the item swap as Go's `ItemSwap.RegisterProc` does, so a
+//! swap turns it on and off with the weapon.
 
 use std::rc::Rc;
 
@@ -188,7 +188,7 @@ fn dragons_call(env: &mut Environment) {
 /// cooldown, to grant two extra main hand attacks.
 fn ironfoe(env: &mut Environment) {
     let unit = env.player;
-    env.sim.make_proc_trigger_aura(
+    let aura = env.sim.make_proc_trigger_aura(
         unit,
         &ProcTrigger {
             name: "Fury of Forgewright".to_string(),
@@ -202,6 +202,7 @@ fn ironfoe(env: &mut Environment) {
             ..ProcTrigger::default()
         },
     );
+    env.sim.register_item_proc(unit, 11684, aura);
 }
 
 /// Runeblade of Baron Rivendare: Unholy Aura, 8% movement speed, and 60 health every 5 sec.

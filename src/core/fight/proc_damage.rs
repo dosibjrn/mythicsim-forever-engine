@@ -134,10 +134,12 @@ impl ProcDamage {
         if direct.is_some_and(|direct| direct.average == 0.0 && direct.variance == 0.0) {
             return Err("a client effect that deals nothing".to_string());
         }
-        if direct.is_none() && (chain.is_some() || area.is_some() || outcome.is_some()) {
+        if direct.is_none() && (chain.is_some() || outcome.is_some()) {
             return Err("a damage over time alone has no hit to spread or roll".to_string());
         }
-        if periodic.is_some() && (chain.is_some() || area.is_some()) {
+        // An area with no hit is a damage over time put on each target the area reaches, as
+        // Seeping Willow's (17196) is on every enemy around the wielder.
+        if direct.is_some() && periodic.is_some() && (chain.is_some() || area.is_some()) {
             return Err("a spread hit leaves no damage over time".to_string());
         }
         if chain.is_some() && area.is_some() {
@@ -245,17 +247,28 @@ impl<A: Agent> Fight<A> {
         let Some(direct) = params.direct else {
             // `dealOnArrival(..., nil, applyDotIfLanded)`: no result, so the dot goes on. A dot
             // that rolls its application, as Ebon Hilt's Corruption does, goes on if it landed
-            // and deals the roll's result, which has no damage.
-            let Some(dot) = dot else { return };
-            match params.application {
-                Some(outcome) => {
-                    let result = self.calc_outcome(spell, target, outcome);
-                    if result.landed() {
-                        self.apply_dot(dot);
+            // and deals the roll's result, which has no damage. An area dot goes on each target
+            // the area reaches, from the target out where the row caps them.
+            let Some(periodic_dot) = params.periodic.and(self.spells[spell].dot) else {
+                return;
+            };
+            let sides: Vec<Side> = match params.area {
+                Some(area) if area.max_targets > 0 => self.cleave_targets(target, area.max_targets),
+                Some(_) => self.target_sides().collect(),
+                None => vec![target],
+            };
+            for side in sides {
+                let dot = self.dot_on(periodic_dot, side);
+                match params.application {
+                    Some(outcome) => {
+                        let result = self.calc_outcome(spell, side, outcome);
+                        if result.landed() {
+                            self.apply_dot(dot);
+                        }
+                        self.deal_damage(spell, result, false);
                     }
-                    self.deal_damage(spell, result, false);
+                    None => self.apply_dot(dot),
                 }
-                None => self.apply_dot(dot),
             }
             return;
         };

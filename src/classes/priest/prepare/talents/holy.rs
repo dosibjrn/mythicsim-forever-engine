@@ -36,10 +36,12 @@ impl Priest {
         self.apply_holy_reach(sim, unit);
         self.apply_improved_healing(sim, unit);
         self.apply_searing_light(sim, unit);
-        // Binding Heal models nothing in Go either.
+        // Binding Heal models nothing in Go either; under Forever's rules push 113554 makes the
+        // field Holy Binding, which heals.rs puts on Flash Heal.
 
         // Tier 5
-        // Litany of Light and Spirit of Redemption model nothing in Go either.
+        // Litany of Light and Spirit of Redemption model nothing in Go either; the healer's
+        // Litany is in `heals.rs`.
         self.apply_spiritual_guidance(sim, unit);
 
         // Tier 6: Spiritual Healing models nothing in Go either.
