@@ -1,5 +1,5 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
+    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
     simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
@@ -164,8 +164,15 @@ fn run() -> Result<(), Failure> {
         );
         return Ok(());
     }
+    if args.first().is_some_and(|arg| arg == "talent-layout") {
+        if args == ["talent-layout", "--class", "druid"] {
+            println!("{}", forever_druid_talent_layout());
+            return Ok(());
+        }
+        return Err("talent-layout requires exactly --class druid".into());
+    }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine talent-layout --class druid\nforever-engine version");
         return Ok(());
     }
 
