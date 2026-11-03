@@ -249,7 +249,7 @@ impl PriestAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2) -> Result<Fight<PriestAgent>, String> {
+    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<PriestAgent>, String> {
         let auras = class_auras(prepared);
         let unmasked = UnmaskedSpells::of(&prepared.effects);
         let vampiric_embrace = prepared
@@ -258,6 +258,7 @@ impl PriestAgent {
             .any(|effect| matches!(effect, Effect::VampiricEmbrace { .. }));
         let mut fight = Fight::new(
             prepared,
+            rng_mode,
             PriestAgent {
                 humanoid_target: prepared.target.mob_type.as_deref() == Some("MobTypeHumanoid"),
                 ..PriestAgent::default()

@@ -265,7 +265,7 @@ fn forever_roots_native_periodic_ticks_change_with_rank() {
         ).expect("Forever source-native request prepares");
         let prepared: forever_engine::contracts::prepared_v2::PreparedV2 =
             serde_json::from_value(prepared).expect("native prepared contract");
-        let report = forever_engine::simulate_prepared(&prepared)
+        let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
             .expect("selected genuine Rust combat executes Roots");
         let dps = report.result["raidMetrics"]["dps"]["avg"].as_f64()
             .expect("native real combat DPS");

@@ -606,11 +606,11 @@ impl PaladinAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2) -> Result<Fight<PaladinAgent>, String> {
+    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<PaladinAgent>, String> {
         let auras = Self::auras(prepared);
         let target_auras = Self::target_auras(prepared);
         let spell = |exported: &ExportedSpell| PaladinAgent::spell(prepared, exported);
-        let mut fight = Fight::new(prepared, PaladinAgent::default(), spell, |unit, label| {
+        let mut fight = Fight::new(prepared, rng_mode, PaladinAgent::default(), spell, |unit, label| {
             let auras = match unit {
                 "player" => &auras,
                 "target" => &target_auras,

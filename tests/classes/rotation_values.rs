@@ -22,7 +22,7 @@ fn parse(value: Value) -> PreparedV2 {
 fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 

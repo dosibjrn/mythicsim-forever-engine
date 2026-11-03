@@ -44,7 +44,7 @@ fn run(name: &str) -> Value {
     let request = forever_request(name);
     let prepared = prepare(&request, "rust").unwrap_or_else(|err| panic!("{name}: {err:?}"));
     check_prepared(&prepared).unwrap_or_else(|err| panic!("{name}: {err:?}"));
-    simulate_prepared(&prepared)
+    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
         .unwrap_or_else(|err| panic!("{name}: {err:?}"))
         .result
 }
@@ -60,7 +60,7 @@ fn run_reference(name: &str) -> Value {
     );
     let prepared = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap_or_else(|err| panic!("{name}: {err:?}"));
-    simulate_prepared(&prepared)
+    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
         .unwrap_or_else(|err| panic!("{name}: {err:?}"))
         .result
 }
@@ -462,7 +462,7 @@ fn forever_healer_sims_count_healing_less_overhealing() {
     // to what the reference heals, split at its share.
     let sim = |prepared: &Value| {
         let prepared = serde_json::from_value(prepared.clone()).unwrap();
-        simulate_prepared(&prepared).unwrap().result
+        simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
     };
     let (forever, reference) = (sim(&forever), sim(&reference));
     let totals = |result: &Value, spell: i64, key: &str| -> f64 {
@@ -530,7 +530,7 @@ fn forever_heal_ticks_crit_as_their_rows_state() {
 
     let sim = |prepared: &Value| {
         let prepared = serde_json::from_value(prepared.clone()).unwrap();
-        simulate_prepared(&prepared).unwrap().result
+        simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
     };
     let (forever, reference) = (sim(&forever), sim(&reference));
     let totals = |result: &Value, spell: i64, key: &str| -> f64 {
@@ -602,7 +602,7 @@ fn the_first_fights_burst_is_its_best_ten_seconds_of_logged_healing() {
     request["simOptions"]["saveAllValues"] = json!(true);
     let prepared = prepare(request.to_string().as_bytes(), "rust").unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
     let first = player(&result)["burstHps"]["allValues"][0]
         .as_f64()
         .unwrap();
@@ -658,7 +658,7 @@ fn a_heal_spends_inner_focus() {
     request["simOptions"]["iterations"] = json!(1);
     let prepared = prepare(request.to_string().as_bytes(), "rust").unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
     let lines: Vec<&str> = result["logs"].as_str().unwrap().lines().collect();
     let gains: Vec<usize> = lines
         .iter()
@@ -701,7 +701,7 @@ fn run_value(request: &Value) -> Value {
     let request = serde_json::to_vec(request).unwrap();
     let prepared = prepare(&request, "rust").unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared).unwrap().result
+    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
 }
 
 /// A healer fixture's request as JSON, for a test to change.

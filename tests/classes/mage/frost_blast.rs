@@ -71,7 +71,7 @@ fn frost_blast_spends_fingers_of_frost_charges() {
         forever_engine::prepare_json_with(&request(Rules::Forever), "frost-blast", Rules::Forever)
             .unwrap();
     let prepared: PreparedV2 = serde_json::from_value(forever).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     let granted = logs
         .lines()

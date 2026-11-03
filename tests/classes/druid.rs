@@ -39,7 +39,7 @@ fn effect<'a>(value: &'a mut Value, kind: &str) -> &'a mut Value {
 
 fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -469,7 +469,7 @@ fn lion_horn_raises_armor_after_a_swing() {
             effect["callbacks"] = json!(["on_spell_hit_dealt"]);
         }
     }
-    assert!(simulate_prepared(&parse(misheard)).is_err());
+    assert!(simulate_prepared(&parse(misheard), forever_engine::RngMode::Stochastic).is_err());
     let log = first_fight_log(value);
     let lines: Vec<&str> = log.lines().collect();
     let gain = lines
@@ -641,7 +641,7 @@ fn hurricane_and_swipe_need_their_effects() {
 fn a_copy_that_parries_does_not_break_the_fight() {
     let mut value = accepted("feral-bear-druid-primal-bite-3-targets");
     value["sim"]["iterations"] = json!(50);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let parries: f64 = report.result["raidMetrics"]["parties"][0]["players"][0]["actions"]
         .as_array()
         .unwrap()
@@ -797,7 +797,7 @@ fn idol_of_the_dream_extends_rip_by_two_seconds() {
             .expect("Rip's dot");
         let flat = dot["base_duration_flat_ns"].as_i64().unwrap_or(0);
         let period = dot["base_tick_length_ns"].clone();
-        let dps = simulate_prepared(&parse(prepared)).unwrap().result["raidMetrics"]["parties"][0]
+        let dps = simulate_prepared(&parse(prepared), forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"]["parties"][0]
             ["players"][0]["dps"]["avg"]
             .as_f64()
             .unwrap();

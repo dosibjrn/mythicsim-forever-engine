@@ -39,7 +39,7 @@ fn prepare(request: &Value) -> Value {
 fn simulate(request: &Value) -> (Value, Value) {
     let prepared = prepare(request);
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
-    let report = forever_engine::simulate_prepared(&typed).unwrap();
+    let report = forever_engine::simulate_prepared(&typed, forever_engine::RngMode::Stochastic).unwrap();
     (prepared, report.result)
 }
 

@@ -519,7 +519,7 @@ fn check_golden(case: &Golden, golden: &GoldenFile) -> Result<(), String> {
     let read = |name: &str| fs::read(family().join(name)).map_err(|err| format!("{name}: {err}"));
     let prepared: PreparedV2 = serde_json::from_slice(&read(&case.prepared)?)
         .map_err(|err| format!("{}: {err}", case.prepared))?;
-    let report = forever_engine::simulate_prepared(&prepared)
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
         .map_err(|err| format!("{}: simulation failed: {err}", case.id))?;
     let expected: Value = serde_json::from_slice(&read(&golden.file)?)
         .map_err(|err| format!("{}: {err}", golden.file))?;
@@ -736,7 +736,7 @@ fn saved_iteration_values_match_go_exactly() {
             serde_json::from_slice(&read(format!("{case}.prepared.json"))).unwrap();
         assert!(prepared.sim.save_all_values, "{case}");
         let iterations = prepared.sim.iterations as usize;
-        let report = forever_engine::simulate_prepared(&prepared).unwrap();
+        let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
         let go: Value = serde_json::from_slice(&read(format!("{case}.go-result.json"))).unwrap();
         let (mut expected, mut actual) = (Vec::new(), Vec::new());
         all_values(&go, "", &mut expected);
@@ -777,7 +777,7 @@ fn iteration_values_are_reported_only_on_request() {
     let path = family().join("all-values-frost-mage.prepared.json");
     let mut prepared: PreparedV2 = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     prepared.sim.save_all_values = false;
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let mut found = Vec::new();
     all_values(&report.result, "", &mut found);
     assert!(found.is_empty(), "{found:?}");

@@ -90,7 +90,7 @@ fn brand_reads_the_live_school_power() {
     value["sim"]["iterations"] = json!(1);
     let first_brand_base = |value: Value| -> f64 {
         let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-        let report = simulate_prepared(&prepared).unwrap();
+        let report = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
         let logs = report.result["logs"].as_str().unwrap();
         let line = logs
             .lines()

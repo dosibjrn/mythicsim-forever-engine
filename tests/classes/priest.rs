@@ -47,7 +47,7 @@ fn production_shadow_priest_is_supported() {
 fn inert_shadowfiend_is_dismissed_logged_and_reported() {
     let mut value = production();
     value["sim"]["iterations"] = json!(3);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let pet = &player["pets"][0];
     assert_eq!(pet["name"], "Shadowfiend");
@@ -196,7 +196,7 @@ fn power_in_light_needs_a_burning_dot() {
     let mut unlit = value.clone();
     effect(&mut unlit, "power_in_light")["dot_spells"] = json!([]);
     let dps = |value: Value| {
-        simulate_prepared(&parse(value)).unwrap().result["raidMetrics"]["dps"]["avg"]
+        simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"]["dps"]["avg"]
             .as_f64()
             .unwrap()
     };
@@ -214,7 +214,7 @@ fn holy_nova_reads_the_live_healing_power() {
     // Talisman of Ephemeral Power raises healing power for a while, and the heal follows it.
     let mut value = accepted("smite-priest-holy-nova-ephemeral-power");
     value["sim"]["iterations"] = json!(1);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     let mut powers: Vec<&str> = logs
         .lines()
@@ -236,7 +236,7 @@ fn holy_nova_hits_every_target_then_heals_once() {
     ] {
         let mut value = accepted(case);
         value["sim"]["iterations"] = json!(1);
-        let report = simulate_prepared(&parse(value)).unwrap();
+        let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
         let logs = report.result["logs"].as_str().unwrap();
         let casts = logs.matches("Completed cast {SpellID: 27801}").count();
         assert!(casts > 1, "{case}: {casts} casts");
@@ -272,7 +272,7 @@ fn holy_nova_hits_every_target_then_heals_once() {
 fn shadowfiend_inherits_attack_power_and_restores_mana() {
     let mut value = accepted("shadow-priest-shadowfiend");
     value["sim"]["iterations"] = json!(1);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     assert!(logs
         .lines()
@@ -312,7 +312,7 @@ fn multidot_keeps_shadow_word_pain_on_every_target() {
     let mut value = shadow_against(5);
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     for target in 1..=5 {
         let ticks = logs
@@ -349,7 +349,7 @@ fn the_shadowfiend_out_at_the_fights_end_logs_its_stats_without_its_party_auras(
     // The second summon, five minutes after the first, is still out when the fight ends.
     value["encounter"]["duration_ns"] = json!(305_000_000_000_i64);
     value["encounter"]["duration_variation_ns"] = json!(0);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     let lines: Vec<&str> = logs
         .lines()
@@ -402,7 +402,7 @@ fn production_mind_flay(rules: forever_engine::Rules) -> (Value, Value) {
         .find(|effect| effect["kind"] == "improved_mind_flay")
         .unwrap()
         .clone();
-    let report = simulate_prepared(&parse(prepared)).unwrap();
+    let report = simulate_prepared(&parse(prepared), forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let mind_flay = player["actions"]
         .as_array()
@@ -443,7 +443,7 @@ fn improved_mind_flay_compounds_tick_over_tick() {
 /// Shadow Word: Pain's resisted ticks and Mind Blast's resisted hits in a report, with the
 /// player's damage per second.
 fn shadow_resists(value: Value) -> (u64, u64, u64, f64) {
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let target = |spell: u64| {
         &player["actions"]

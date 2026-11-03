@@ -389,7 +389,7 @@ fn lay_on_hands_needs_its_effect() {
 fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -497,7 +497,7 @@ fn immolation_hits_the_copy_that_landed_the_hit() {
 fn eye_for_an_eye_reflects_a_sapper_crit_onto_the_paladin() {
     let prepared: PreparedV2 =
         serde_json::from_value(tank_json("protection-eye-for-an-eye-sapper")).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let paladin = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let reflection = paladin["actions"]
         .as_array()

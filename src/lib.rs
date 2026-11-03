@@ -7,6 +7,7 @@
 //! original public API and prepared v1 JSON contract.
 
 pub mod contracts;
+pub use core::rng::RngMode;
 pub mod report;
 
 mod classes;

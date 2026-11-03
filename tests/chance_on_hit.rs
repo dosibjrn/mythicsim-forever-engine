@@ -105,7 +105,7 @@ fn every_chance_on_hit_item_prepares_and_runs() {
             failures.push(format!("{item} {kind}: gate {error:?}"));
             continue;
         }
-        if let Err(error) = simulate_prepared(&prepared) {
+        if let Err(error) = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic) {
             failures.push(format!("{item} {kind}: run {error:?}"));
         }
     }
@@ -126,7 +126,7 @@ fn run(request: &Value) -> (Value, Value) {
     let value = prepared(request, Rules::Forever).unwrap();
     let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
     (
         value,
         result["raidMetrics"]["parties"][0]["players"][0].clone(),

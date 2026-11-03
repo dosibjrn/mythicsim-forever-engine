@@ -37,7 +37,7 @@ fn run(mut value: Value, forever: bool, items: &[i64]) -> (Vec<f64>, f64) {
         value["player"]["autocast_skips_unready_cooldowns"] = json!(true);
     }
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let uses = items
         .iter()

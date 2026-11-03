@@ -31,7 +31,7 @@ fn reasons(value: Value) -> Vec<String> {
 fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -250,7 +250,7 @@ fn the_whelp_skips_a_spit_it_would_not_finish() {
 fn dragons_call_without_its_summoned_guardian_is_refused() {
     let mut value = fixture("production-survival-hunter");
     value["pets"][0]["summoned"] = json!(false);
-    let error = simulate_prepared(&parse(value)).unwrap_err().to_string();
+    let error = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap_err().to_string();
     assert!(error.contains("is not a simulated summoned pet"), "{error}");
 }
 
@@ -414,7 +414,7 @@ fn cryptstalker_ranged_crits_restore_mana() {
         .find(|line| line.contains("{OtherID: 4} Crit for"))
         .expect("a ranged crit before it");
     assert!((at(lines[gained]) - at(crit) - 0.01).abs() < 1e-9, "{logs}");
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let auras = report.result["raidMetrics"]["parties"][0]["players"][0]["auras"].to_string();
     assert!(!auras.contains("28755"), "{auras}");
 }
@@ -433,7 +433,7 @@ fn a_cat_and_the_whelp_act_as_two_units() {
             "{unit} swings: {logs}"
         );
     }
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let pets = &report.result["raidMetrics"]["parties"][0]["players"][0]["pets"];
     let names: Vec<&str> = pets
         .as_array()
@@ -811,7 +811,7 @@ fn a_move_with_a_speed_aura_is_supported() {
 fn volley_holds_the_melee_swing_until_the_channel_ends() {
     let mut value = fixture("production-survival-hunter-2-targets");
     value["sim"]["iterations"] = json!(1);
-    let logs = simulate_prepared(&parse(value)).unwrap().result["logs"]
+    let logs = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap().result["logs"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1575,7 +1575,7 @@ fn a_queued_spell_that_fails_does_not_run_the_rotation_again_in_forever() {
     quiet["sim"]["debug_first_iteration"] = json!(false);
     quiet["sim"]["debug"] = json!(false);
     let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || sender.send(simulate_prepared(&parse(quiet)).is_ok()));
+    std::thread::spawn(move || sender.send(simulate_prepared(&parse(quiet), forever_engine::RngMode::Stochastic).is_ok()));
     let ended = receiver.recv_timeout(std::time::Duration::from_secs(10));
     assert_eq!(ended, Ok(true), "the fight did not end");
     let logs = first_fight_log(value);
@@ -1612,7 +1612,7 @@ fn a_rotation_without_a_move_keeps_its_gcd_wait_in_forever() {
     assert!(!forever["player"]["rotation"].to_string().contains("\"move"));
     forever["sim"]["iterations"] = json!(200);
     let metrics =
-        |value: Value| simulate_prepared(&parse(value)).unwrap().result["raidMetrics"].clone();
+        |value: Value| simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"].clone();
     let with_rule = metrics(forever.clone());
     forever["player"]
         .as_object_mut()
@@ -1627,7 +1627,7 @@ fn mana_rows(mut value: Value, forever: bool) -> (Vec<(Value, f64, f64)>, f64) {
     if forever {
         value["player"]["casting_regen_at_once"] = json!(true);
     }
-    let report = simulate_prepared(&parse(value)).unwrap();
+    let report = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let rows = player["resources"]
         .as_array()

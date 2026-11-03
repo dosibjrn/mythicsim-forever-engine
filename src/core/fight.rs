@@ -73,7 +73,7 @@ use crate::{
     },
     core::{
         queue::{Handle, PendingQueue},
-        rng::SimRng,
+        rng::{RngMode, SimRng},
         time::{NEVER_EXPIRES, STARTING_CD_TIME},
     },
     mechanics::mana::RegenInputs,
@@ -2352,6 +2352,7 @@ impl<A: Agent> Fight<A> {
     /// `class_spell` and `class_aura` map exported entries to class behavior.
     pub(crate) fn new(
         prepared: &PreparedV2,
+        rng_mode: RngMode,
         agent: A,
         class_spell: impl Fn(&crate::contracts::prepared_v2::Spell) -> Option<A::Spell>,
         class_aura: impl Fn(&str, &str) -> Option<A::Aura>,
@@ -4060,7 +4061,7 @@ impl<A: Agent> Fight<A> {
             pull_started_at: 0,
             execute_phase: 0,
             next_execute: NEVER_EXPIRES,
-            rng: SimRng::new(prepared.sim.labeled_rng, prepared.sim.seed as u64),
+            rng: SimRng::new(rng_mode, prepared.sim.labeled_rng, prepared.sim.seed as u64),
             queue: PendingQueue::default(),
             min_tracker_time: NEVER_EXPIRES,
             min_task_time: NEVER_EXPIRES,
@@ -6743,7 +6744,7 @@ mod tests {
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
                 "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
         ).unwrap();
-        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared).unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
         fight.prepare_first_native_pull();
         let now = fight.now;
         let cap = fight.end_of_combat;
@@ -6767,7 +6768,7 @@ mod tests {
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
                 "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
         ).unwrap();
-        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared).unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
         if !fight.extra_targets_built {
             fight.build_extra_targets();
             fight.build_exclusive_tracking();
@@ -6820,7 +6821,7 @@ mod tests {
         // Both source-backed armor ramps previously scheduled events at t=0
         // after the first pull, so the next native scheduler could rewind.
         for with_sunder in [true, false] {
-            let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared).unwrap();
+            let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
             if !fight.extra_targets_built {
                 fight.build_extra_targets();
                 fight.build_exclusive_tracking();

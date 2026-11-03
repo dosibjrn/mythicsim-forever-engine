@@ -333,14 +333,14 @@ impl PreparedReport {
 }
 
 /// Validate, gate and simulate a prepared v2 input.
-pub fn simulate(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> {
+pub fn simulate(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<PreparedReport, PreparedError> {
     check(prepared)?;
-    run(prepared)
+    run(prepared, rng_mode)
 }
 
 
 /// One selected source-native actor and monotonic gsim ACKs; diagnostic only.
-pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize)
+pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode)
     -> Result<serde_json::Value, PreparedError>
 {
     check(prepared)?;
@@ -353,16 +353,16 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize)
             "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned()));
     }
     crate::core::fight::world_bridge::start(&prepared.request_sha256);
-    crate::classes::native_two_world_targets(prepared, target_count)
+    crate::classes::native_two_world_targets(prepared, target_count, rng_mode)
         .map_err(PreparedError::Invalid)
 }
 
 /// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
-pub fn native_two_pull_windows(prepared: &PreparedV2)
+pub fn native_two_pull_windows(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode)
     -> Result<serde_json::Value, PreparedError>
 {
     check(prepared)?;
-    crate::classes::native_two_pull_windows(prepared).map_err(PreparedError::Invalid)
+    crate::classes::native_two_pull_windows(prepared, rng_mode).map_err(PreparedError::Invalid)
 }
 
 /// What gating a prepared v2 input and simulating it when supported came to.
@@ -378,21 +378,21 @@ pub enum Gated {
 /// that wants both needs one pass over the input instead of a [`refusals`] call and then a
 /// [`simulate`] call that gates it again. A refusal is a result here, not an error; invalid
 /// input is still [`PreparedError::Invalid`].
-pub fn simulate_gated(prepared: &PreparedV2) -> Result<Gated, PreparedError> {
+pub fn simulate_gated(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Gated, PreparedError> {
     validate(prepared).map_err(PreparedError::Invalid)?;
     let refusals = refusals(prepared);
     if !refusals.is_empty() {
         return Ok(Gated::Refused(refusals));
     }
-    run(prepared).map(|report| Gated::Simulated(Box::new(report)))
+    run(prepared, rng_mode).map(|report| Gated::Simulated(Box::new(report)))
 }
 
 /// Simulate an input that is valid and that the gate supports.
-fn run(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> {
+fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<PreparedReport, PreparedError> {
     if crate::core::fight::world_bridge::enabled() {
         crate::core::fight::world_bridge::start(&prepared.request_sha256);
     }
-    let report = classes::run_prepared(prepared).map_err(PreparedError::Invalid)?;
+    let report = classes::run_prepared(prepared, rng_mode).map_err(PreparedError::Invalid)?;
     let elapsed_ns = report.elapsed_ns;
     let presentation = report.presentation.clone();
     let extra_attack_strikes = report.extra_attack_strikes.clone();

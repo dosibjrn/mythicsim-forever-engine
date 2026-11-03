@@ -76,7 +76,7 @@ fn spell(prepared: &Value, spell_id: i64) -> &Value {
 fn simulate(prepared: &Value) -> Value {
     let prepared = serde_json::from_value(prepared.clone()).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared).unwrap().result
+    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
 }
 
 /// What a spell did in every fight together, summed over its targets.
