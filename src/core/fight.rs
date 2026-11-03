@@ -7056,6 +7056,68 @@ mod tests {
         assert_eq!(path.change(0b00, 0b00), 77.0);
     }
 
+    #[test]
+    fn native_level_route_carries_resources_rng_owner_and_global_clock() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        let mut first = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared, crate::core::rng::RngMode::Stochastic
+        ).unwrap();
+        first.prepare_first_native_pull_at(0);
+        first.player.health = first.config.max_health * 0.61;
+        first.player.mana = first.config.max_mana * 0.37;
+        if let Some(energy) = first.energy.as_mut() {
+            energy.current = 17.0;
+            energy.combo_points = 2;
+        }
+        if let Some(rage) = first.rage.as_mut() {
+            rage.current = 13.0;
+        }
+        let expected_health = first.player.health;
+        let expected_mana = first.player.mana;
+        let expected_energy = first.energy.as_ref().map(|bar| (bar.current, bar.combo_points));
+        let expected_rage = first.rage.as_ref().map(|bar| bar.current);
+        let expected_pets = first.active_pets.iter().map(|pet| (
+            pet.unit_index,
+            pet.label.clone(),
+            pet.state.health,
+            pet.state.mana,
+            pet.focus.as_ref().map(|focus| focus.current),
+        )).collect::<Vec<_>>();
+        first.now = 12_345_000_000;
+        let carry = first.take_route_carry();
+
+        let mut next = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared, crate::core::rng::RngMode::Stochastic
+        ).unwrap();
+        let carry_in = next.prepare_with_route_carry(carry).unwrap();
+
+        assert_eq!(next.now, 12_346_000_000);
+        assert_eq!(next.player.health, expected_health);
+        assert_eq!(next.player.mana, expected_mana);
+        assert_eq!(carry_in["clock_ns"].as_i64(), Some(12_345_000_000));
+        if let Some((current, combo_points)) = expected_energy {
+            let energy = next.energy.as_ref().expect("energy bar carried");
+            assert_eq!((energy.current, energy.combo_points), (current, combo_points));
+        }
+        if let Some(current) = expected_rage {
+            assert_eq!(next.rage.as_ref().expect("rage bar carried").current, current);
+        }
+        let actual_pets = next.active_pets.iter().map(|pet| (
+            pet.unit_index,
+            pet.label.clone(),
+            pet.state.health,
+            pet.state.mana,
+            pet.focus.as_ref().map(|focus| focus.current),
+        )).collect::<Vec<_>>();
+        assert_eq!(actual_pets, expected_pets);
+        assert!(next.end_of_combat > next.now);
+        assert!(next.queue.peek_time().is_some_and(|at| at >= next.now),
+            "the next level queued an event before its carried route clock");
+    }
+
     /// Every target and the player come before the pets in per-unit lists, so a spell's
     /// metrics hold one entry for each unit it can hit.
     #[test]
