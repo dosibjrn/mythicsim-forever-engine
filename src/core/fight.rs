@@ -6749,11 +6749,17 @@ mod tests {
 
     #[test]
     fn native_persistent_early_world_kill_clock_boundary() {
-        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
-        ).unwrap();
-        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
         fight.prepare_first_native_pull();
         let now = fight.now;
         let cap = fight.end_of_combat;
@@ -6915,10 +6921,12 @@ mod tests {
     }
     #[test]
     fn native_route_stage_starts_from_carried_health_and_mana() {
-        let mut prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
-        ).unwrap();
+        let mut prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
         let max_health = prepared.player.stats["Health"];
         let expected_health = max_health * 0.41;
         let expected_mana = prepared.player.mana.max * 0.37;
@@ -6928,7 +6936,8 @@ mod tests {
         let mut fight = crate::classes::druid::agent::DruidAgent::fight(
             &prepared,
             crate::core::rng::RngMode::Stochastic,
-        ).unwrap();
+        )
+        .unwrap();
         fight.reset_unit(Side::Player);
 
         assert!((fight.player.health - expected_health).abs() < 1e-9);
@@ -6939,7 +6948,8 @@ mod tests {
         let mut clamped = crate::classes::druid::agent::DruidAgent::fight(
             &prepared,
             crate::core::rng::RngMode::Stochastic,
-        ).unwrap();
+        )
+        .unwrap();
         clamped.reset_unit(Side::Player);
         assert_eq!(clamped.player.health, max_health);
         assert_eq!(clamped.player.mana, prepared.player.mana.max);
@@ -6947,17 +6957,20 @@ mod tests {
 
     #[test]
     fn native_route_stage_starts_from_carried_mana_for_mage() {
-        let mut prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-                "/fixtures/mage/prepared-v2/frost-reference.prepared.json"))
-        ).unwrap();
+        let mut prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/frost-reference.prepared.json"
+            )))
+            .unwrap();
         let expected_mana = prepared.player.mana.max * 0.37;
         prepared.player.mana_at_reset = Some(expected_mana);
 
         let mut fight = crate::classes::mage::agent::MageAgent::fight(
             &prepared,
             crate::core::rng::RngMode::Stochastic,
-        ).unwrap();
+        )
+        .unwrap();
         fight.reset_unit(Side::Player);
 
         assert!((fight.player.mana - expected_mana).abs() < 1e-9);
