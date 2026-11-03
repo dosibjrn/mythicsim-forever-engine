@@ -6124,8 +6124,8 @@ impl<A: Agent> Fight<A> {
                     split[..units].fill(SpellMetrics::default());
                 }
             }
-            self.player.mana = self.mana_at_reset.unwrap_or(self.config.max_mana);
-            self.player.health = self.health_at_reset.unwrap_or(self.config.max_health);
+            self.player.mana = self.mana_at_reset.unwrap_or(self.config.max_mana).min(self.config.max_mana);
+            self.player.health = self.health_at_reset.unwrap_or(self.config.max_health).min(self.config.max_health);
             self.player.mana_regen_multiplier = 1.0;
             self.player.waiting_for_mana = 0.0;
             self.player.waiting_for_mana_start = 0;
@@ -6925,6 +6925,16 @@ mod tests {
 
         assert!((fight.player.health - expected_health).abs() < 1e-9);
         assert!((fight.player.mana - expected_mana).abs() < 1e-9);
+
+        prepared.player.health_at_reset = Some(max_health * 2.0);
+        prepared.player.mana_at_reset = Some(prepared.player.mana.max * 2.0);
+        let mut clamped = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        ).unwrap();
+        clamped.reset_unit(Side::Player);
+        assert_eq!(clamped.player.health, max_health);
+        assert_eq!(clamped.player.mana, prepared.player.mana.max);
     }
 
 
