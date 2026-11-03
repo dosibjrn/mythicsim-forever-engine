@@ -6153,7 +6153,7 @@ impl<A: Agent> Fight<A> {
                 .min(self.end_of_combat);
             if let Some(boundary) = world_bridge::due(next_native, self.end_of_combat) {
                 if boundary > self.now { self.advance_to(boundary); }
-                let (distance, front) = world_bridge::exchange(
+                let (distance, front, moving) = world_bridge::exchange(
                     boundary, self.duration, self.encounter_damage_taken);
                 if distance != self.config.distance {
                     self.config.distance = distance;
@@ -6164,6 +6164,13 @@ impl<A: Agent> Fight<A> {
                 // production invalidation at the native scheduler boundary.
                 if self.config.melee.in_front_of_target != front {
                     self.config.melee.in_front_of_target = front;
+                    self.changed(reads::CASTS);
+                }
+                // The source-Rust spell cast rules already test player.moving;
+                // use the real gsim route status to enforce them, including
+                // between SpatialPlayerMoveStep events, without teleporting.
+                if self.player.moving != moving {
+                    self.player.moving = moving;
                     self.changed(reads::CASTS);
                 }
                 return true;

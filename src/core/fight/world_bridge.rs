@@ -246,7 +246,7 @@ fn string<'a>(value: &'a Value, key: &str) -> &'a str {
 
 /// One retained Rust process. The next native scheduler action cannot execute
 /// before the gsim CombatRuntime applied every real source damage event.
-pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) -> (f64, bool) {
+pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) -> (f64, bool, bool) {
     let mut bridge = BRIDGE.with(|state| state.borrow_mut().take()
         .expect("RUST_WORLD_NOT_STARTED"));
     assert!(clock_ns > bridge.last_tick_ns && clock_ns >= 0,
@@ -273,6 +273,13 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     assert!((0.0..=100.0).contains(&distance), "RUST_WORLD_DISTANCE_INVALID");
     let front = tick["in_front_of_target"].as_bool()
         .expect("RUST_WORLD_FACING_NOT_PROVIDED");
+    // World movement is a live gsim fact, not a native game-rule override.
+    // Existing stationary 2D probes omit movement; retain their false
+    // default. When a live route explicitly supplies movement, reject any
+    // malformed flag rather than silently permitting a noninstant cast.
+    let moving = tick.get("gsim_player_moving").map(|value|
+        value.as_bool().expect("RUST_WORLD_PLAYER_MOVEMENT_INVALID")
+    ).unwrap_or(false);
     let before_health = number(&tick, "world_target_health_before");
     let max_health = number(&tick, "world_target_max_health");
     assert!(before_health > 0.0 && before_health <= max_health,
@@ -301,7 +308,8 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
             "sequence": bridge.sequence, "native_clock_ns": clock_ns,
             "player_index": 0, "applied_yards": distance,
             "native_encounter_damage": cumulative_damage,
-            "facing_applied": true, "in_front_of_target": front
+            "facing_applied": true, "in_front_of_target": front,
+            "gsim_player_moving": moving
         },
         "checkpoint_certified": false
     }));
@@ -330,7 +338,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     bridge.sequence += 1;
     bridge.next_tick_ns = next_world_boundary_ns;
     BRIDGE.with(|state| *state.borrow_mut() = Some(bridge));
-    (distance, front)
+    (distance, front, moving)
 }
 
 pub(crate) fn acknowledged_lethal() -> bool {
