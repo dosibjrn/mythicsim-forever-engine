@@ -44,6 +44,15 @@ impl std::fmt::Display for PreparedError {
     }
 }
 
+fn validate_resource_at_reset(name: &str, value: Option<f64>) -> Result<(), String> {
+    if let Some(value) = value {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{name} must be finite and nonnegative"));
+        }
+    }
+    Ok(())
+}
+
 /// Contract identity and wire limits. These never depend on implemented mechanics.
 pub fn validate(prepared: &PreparedV2) -> Result<(), String> {
     if prepared.schema_version != SCHEMA_VERSION || prepared.contract != CONTRACT {
@@ -118,6 +127,8 @@ pub fn validate(prepared: &PreparedV2) -> Result<(), String> {
             return Err(format!("{name} must be finite and nonnegative"));
         }
     }
+    validate_resource_at_reset("health_at_reset", player.health_at_reset)?;
+    validate_resource_at_reset("mana_at_reset", player.mana_at_reset)?;
     if player.cast_speed == 0.0 {
         return Err("cast_speed must be positive".into());
     }
@@ -409,4 +420,24 @@ fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Pre
         presentation,
         extra_attack_strikes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_resource_at_reset;
+
+    #[test]
+    fn route_stage_resource_snapshots_are_bounded() {
+        assert!(validate_resource_at_reset("health_at_reset", None).is_ok());
+        assert!(validate_resource_at_reset("health_at_reset", Some(0.0)).is_ok());
+        assert!(validate_resource_at_reset("health_at_reset", Some(100.0)).is_ok());
+        assert!(validate_resource_at_reset("health_at_reset", Some(-1.0)).is_err());
+        assert!(validate_resource_at_reset("health_at_reset", Some(f64::NAN)).is_err());
+        assert!(validate_resource_at_reset("health_at_reset", Some(f64::INFINITY)).is_err());
+        assert!(validate_resource_at_reset("mana_at_reset", Some(37.0)).is_ok());
+        assert!(validate_resource_at_reset("mana_at_reset", Some(101.0)).is_ok());
+        assert!(validate_resource_at_reset("mana_at_reset", Some(-1.0)).is_err());
+        assert!(validate_resource_at_reset("mana_at_reset", Some(f64::NAN)).is_err());
+        assert!(validate_resource_at_reset("mana_at_reset", Some(f64::INFINITY)).is_err());
+    }
 }

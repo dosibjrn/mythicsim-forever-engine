@@ -1998,6 +1998,8 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) movement_categories: Vec<usize>,
     /// The player's health when a fight starts, where it differs from the maximum.
     health_at_reset: Option<f64>,
+    /// The player's mana when a fight starts, where it differs from the maximum.
+    mana_at_reset: Option<f64>,
     /// Go `HpPercentForDefensives`, below which survival major cooldowns fire.
     pub(crate) hp_percent_for_defensives: f64,
     /// Forever's rule for casting regeneration auras (see [`casting_regen`]).
@@ -4242,6 +4244,7 @@ impl<A: Agent> Fight<A> {
             movement_category_names: Vec::new(),
             movement_categories: Vec::new(),
             health_at_reset: player.health_at_reset,
+            mana_at_reset: player.mana_at_reset,
             hp_percent_for_defensives: player.hp_percent_for_defensives,
             casting_regen_at_once: player.casting_regen_at_once,
             move_waits_for_queued_cast: player.move_waits_for_queued_cast,
@@ -6121,8 +6124,14 @@ impl<A: Agent> Fight<A> {
                     split[..units].fill(SpellMetrics::default());
                 }
             }
-            self.player.mana = self.config.max_mana;
-            self.player.health = self.health_at_reset.unwrap_or(self.config.max_health);
+            self.player.mana = self
+                .mana_at_reset
+                .unwrap_or(self.config.max_mana)
+                .min(self.config.max_mana);
+            self.player.health = self
+                .health_at_reset
+                .unwrap_or(self.config.max_health)
+                .min(self.config.max_health);
             self.player.mana_regen_multiplier = 1.0;
             self.player.waiting_for_mana = 0.0;
             self.player.waiting_for_mana_start = 0;
@@ -6740,16 +6749,24 @@ mod tests {
 
     #[test]
     fn native_persistent_early_world_kill_clock_boundary() {
-        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
-        ).unwrap();
-        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
         fight.prepare_first_native_pull();
         let now = fight.now;
         let cap = fight.end_of_combat;
-        assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        // World bridge timestamps are nonnegative even when the source
+        // encounter has negative-time prepull actions.
+        let early = now.max(0) + 1_000_000;
+        assert!(cap > early);
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));
@@ -6901,5 +6918,61 @@ mod tests {
         assert_eq!(Side::target(0), Side::Target);
         assert_eq!(Side::Player.target_position(), None);
         assert_eq!(Side::Pet(0).target_position(), None);
+    }
+    #[test]
+    fn native_route_stage_starts_from_carried_health_and_mana() {
+        let mut prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let max_health = prepared.player.stats["Health"];
+        let expected_health = max_health * 0.41;
+        let expected_mana = prepared.player.mana.max * 0.37;
+        prepared.player.health_at_reset = Some(expected_health);
+        prepared.player.mana_at_reset = Some(expected_mana);
+
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.reset_unit(Side::Player);
+
+        assert!((fight.player.health - expected_health).abs() < 1e-9);
+        assert!((fight.player.mana - expected_mana).abs() < 1e-9);
+
+        prepared.player.health_at_reset = Some(max_health * 2.0);
+        prepared.player.mana_at_reset = Some(prepared.player.mana.max * 2.0);
+        let mut clamped = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        clamped.reset_unit(Side::Player);
+        assert_eq!(clamped.player.health, max_health);
+        assert_eq!(clamped.player.mana, prepared.player.mana.max);
+    }
+
+    #[test]
+    fn native_route_stage_starts_from_carried_mana_for_mage() {
+        let mut prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/frost-reference.prepared.json"
+            )))
+            .unwrap();
+        let expected_mana = prepared.player.mana.max * 0.37;
+        prepared.player.mana_at_reset = Some(expected_mana);
+
+        let mut fight = crate::classes::mage::agent::MageAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.reset_unit(Side::Player);
+
+        assert!((fight.player.mana - expected_mana).abs() < 1e-9);
     }
 }
