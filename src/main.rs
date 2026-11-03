@@ -168,15 +168,21 @@ fn run() -> Result<(), Failure> {
         println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine version");
         return Ok(());
     }
+
     if args[0] == "native-world-pulls" {
-        if args.len() != 5 || args[1] != "--infile"
-            || args[3] != "--targets" || args[4] != "2" {
-            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2".into());
+        if args.len() != 5 || args[1] != "--infile" || args[3] != "--targets" {
+            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into());
+        }
+        let target_count = args[4].parse::<usize>()
+            .map_err(|_| "native-world-pulls target count must be an integer")?;
+        if !(2..=100).contains(&target_count) {
+            return Err("native-world-pulls requires --targets 2..100".into());
         }
         let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
         let prepared = prepared_v2(&input)?
             .ok_or("native-world-pulls requires a prepared v2 input")?;
-        let report = native_two_world_targets(&prepared).map_err(|err| err.to_string())?;
+        let report = native_two_world_targets(&prepared, target_count)
+            .map_err(|err| err.to_string())?;
         println!("{}", serde_json::json!({
             "engine": "forever-engine",
             "source_sha256": prepared.request_sha256,
