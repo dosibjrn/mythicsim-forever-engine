@@ -256,6 +256,39 @@ pub fn check(prepared: &PreparedV2) -> Result<(), PreparedError> {
     }
 }
 
+/// Validate the route identity and its consecutive level progression. This is scenario
+/// continuity only: spell/talent legality and combat effects remain owned by prepared-v2/Rust.
+fn validate_route_segments(segments: &[PreparedV2]) -> Result<(), PreparedError> {
+    if !(2..=60).contains(&segments.len()) {
+        return Err(PreparedError::Invalid(
+            "RUST_LEVEL_ROUTE_REQUIRES_2_TO_60_CONSECUTIVE_LEVELS".to_owned(),
+        ));
+    }
+    let first = &segments[0].player;
+    for (index, segment) in segments.iter().enumerate() {
+        let player = &segment.player;
+        if player.class != first.class
+            || player.race != first.race
+            || player.name != first.name
+            || player.index != first.index
+        {
+            return Err(PreparedError::Invalid(format!(
+                "RUST_LEVEL_ROUTE_ACTOR_IDENTITY_CHANGED_AT_SEGMENT_{index}"
+            )));
+        }
+        let expected_level = first.level.checked_add(index as i32).ok_or_else(|| {
+            PreparedError::Invalid("RUST_LEVEL_ROUTE_LEVEL_OVERFLOW".to_owned())
+        })?;
+        if player.level != expected_level {
+            return Err(PreparedError::Invalid(format!(
+                "RUST_LEVEL_ROUTE_LEVEL_SEQUENCE_INVALID_AT_SEGMENT_{index}: expected {expected_level}, got {}",
+                player.level
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Which engine made a result, so results of different engines or builds are never compared by
 /// mistake.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -357,6 +390,35 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_
         .map_err(PreparedError::Invalid)
 }
 
+/// Execute consecutive prepared level segments as one native 2D world route. Each segment
+/// is independently prepared-v2 checked; the world bridge is started once and its lethal ACK
+/// chain, actor resources, pet resources, RNG stream and monotonic clock continue across levels.
+pub fn native_level_route(
+    segments: &[PreparedV2],
+    target_count_per_level: usize,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<serde_json::Value, PreparedError> {
+    if !(2..=100).contains(&target_count_per_level) {
+        return Err(PreparedError::Invalid(
+            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned(),
+        ));
+    }
+    validate_route_segments(segments)?;
+    for segment in segments {
+        check(segment)?;
+    }
+    if !crate::core::fight::world_bridge::enabled() {
+        return Err(PreparedError::Invalid(
+            "RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".to_owned(),
+        ));
+    }
+    // The first prepared request anchors the single bridge session. Per-level request hashes
+    // are all retained in the route report and are checked before any world work begins.
+    crate::core::fight::world_bridge::start(&segments[0].request_sha256);
+    crate::classes::native_level_route(segments, target_count_per_level, rng_mode)
+        .map_err(PreparedError::Invalid)
+}
+
 /// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
 pub fn native_two_pull_windows(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode)
     -> Result<serde_json::Value, PreparedError>
@@ -409,4 +471,47 @@ fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Pre
         presentation,
         extra_attack_strikes,
     })
+}
+
+
+#[cfg(test)]
+mod native_level_route_tests {
+    use super::*;
+
+    fn fixture() -> PreparedV2 {
+        serde_json::from_str(include_str!(
+            "../../fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )).expect("prepared-v2 fixture")
+    }
+
+    #[test]
+    fn native_route_requires_same_actor_and_consecutive_levels() {
+        let mut first = fixture();
+        let mut second = fixture();
+        first.player.level = 59;
+        second.player.level = 60;
+        assert!(validate_route_segments(&[first, second]).is_ok());
+    }
+
+    #[test]
+    fn native_route_rejects_level_gaps_and_actor_changes() {
+        let mut first = fixture();
+        let mut second = fixture();
+        first.player.level = 59;
+        second.player.level = 61;
+        assert!(matches!(
+            validate_route_segments(&[first, second]),
+            Err(PreparedError::Invalid(_))
+        ));
+
+        let mut first = fixture();
+        let mut second = fixture();
+        first.player.level = 59;
+        second.player.level = 60;
+        second.player.class = "ClassMage".to_owned();
+        assert!(matches!(
+            validate_route_segments(&[first, second]),
+            Err(PreparedError::Invalid(_))
+        ));
+    }
 }
