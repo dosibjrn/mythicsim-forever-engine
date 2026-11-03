@@ -5750,6 +5750,12 @@ impl<A: Agent> Fight<A> {
     fn run_once(&mut self) {
         self.prepare_first_native_pull();
         while self.step() {}
+        // A real applied gsim lethal ACK ends this pull even if the saved
+        // encounter's duration has not elapsed. Preserve the actual world
+        // clock in the native result rather than charging an unplayed tail.
+        if world_bridge::enabled() && world_bridge::acknowledged_lethal() {
+            self.duration = self.now.max(1);
+        }
         if world_bridge::enabled() { world_bridge::finish(self.duration, self.encounter_damage_taken); }
         self.cleanup();
     }
@@ -6077,6 +6083,12 @@ impl<A: Agent> Fight<A> {
 
     /// Go `Simulation.Step`. Returns false when the fight is over.
     fn step(&mut self) -> bool {
+        // A committed source-native lethal world ACK must stop scheduling
+        // attacks on the now-dead target. The same actor may later be
+        // continued explicitly using begin_next_target, without a reset.
+        if world_bridge::enabled() && world_bridge::acknowledged_lethal() {
+            return false;
+        }
         if world_bridge::enabled() {
             let next_native = self.queue.peek_time().unwrap_or(NEVER_EXPIRES)
                 .min(self.autos.min_time).min(self.min_task_time)

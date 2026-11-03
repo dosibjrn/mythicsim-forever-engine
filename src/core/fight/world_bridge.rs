@@ -157,6 +157,27 @@ mod persistent_next_target_world_lethal_ack_tests {
     }
 }
 
+#[cfg(test)]
+mod world_lethal_terminal_tests {
+    use super::*;
+
+    #[test]
+    fn world_lethal_terminal_requires_committed_native_world_ack() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
+            iteration: 0, sequence: 1, next_tick_ns: 200,
+            last_tick_ns: 100, last_health: Some(10.0),
+            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
+            event_ordinal: 1, pending: Vec::new(),
+        }));
+        assert!(!acknowledged_lethal());
+        BRIDGE.with(|state| state.borrow_mut().as_mut().unwrap().last_health = Some(0.0));
+        assert!(acknowledged_lethal());
+        BRIDGE.with(|state| state.borrow_mut().as_mut().unwrap().previous_ack_id.clear());
+        assert!(!acknowledged_lethal());
+        BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
+}
+
 pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     BRIDGE.with(|state| {
         let state = state.borrow();
@@ -312,14 +333,30 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     (distance, front)
 }
 
+pub(crate) fn acknowledged_lethal() -> bool {
+    BRIDGE.with(|state| {
+        let state = state.borrow();
+        let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
+        bridge.sequence > 0 && bridge.last_health == Some(0.0)
+            && bridge.previous_ack_id.len() == 64 && bridge.pending.is_empty()
+    })
+}
+
 pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
     // The terminal world flush is at the next representable gsim millisecond.
     // This is an explicit diagnostic boundary, never a claim of P7 parity.
-    let clock = ((duration_ns + 999_999) / 1_000_000) * 1_000_000;
     let last = BRIDGE.with(|state| state.borrow().as_ref()
         .expect("RUST_WORLD_NOT_STARTED").last_tick_ns);
-    let clock = clock.max(last + 1_000_000);
-    let _ = exchange(clock, duration_ns, cumulative_damage);
+    if acknowledged_lethal() {
+        // gsim has already applied the last native event and killed the mob.
+        // Another range tick would address a dead world target and violate
+        // the causal ACK sequence. No fabricated terminal world exchange.
+        assert!(duration_ns == last, "RUST_WORLD_LETHAL_DURATION_NOT_ACK_CLOCK");
+    } else {
+        let clock = ((duration_ns + 999_999) / 1_000_000) * 1_000_000;
+        let clock = clock.max(last + 1_000_000);
+        let _ = exchange(clock, duration_ns, cumulative_damage);
+    }
     BRIDGE.with(|state| {
         let state = state.borrow();
         let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
