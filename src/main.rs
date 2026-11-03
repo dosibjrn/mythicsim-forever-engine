@@ -1,5 +1,6 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
+    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, native_level_route,
+    native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
     simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
@@ -172,10 +173,56 @@ fn run() -> Result<(), Failure> {
         return Err("talent-layout requires exactly --class druid".into());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine talent-layout --class druid\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine native-world-pulls --infile PREPARED_V2.json --targets 2..100 --rng-mode balanced\nforever-engine native-level-route --infile PREPARED_ROUTE_V2.json --targets-per-level 2..100 --rng-mode balanced\nforever-engine talent-layout --class druid\nforever-engine version");
         return Ok(());
     }
 
+    if args[0] == "native-level-route" {
+        if args.len() != 7 || args[1] != "--infile"
+            || args[3] != "--targets-per-level" || args[5] != "--rng-mode" {
+            return Err("native-level-route requires --infile PREPARED_ROUTE_V2.json --targets-per-level 2..100 --rng-mode MODE".into());
+        }
+        let target_count = args[4].parse::<usize>()
+            .map_err(|_| "native-level-route target count must be an integer")?;
+        if !(2..=100).contains(&target_count) {
+            return Err("native-level-route requires --targets-per-level 2..100".into());
+        }
+        let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
+        let segments: Vec<PreparedV2> = serde_json::from_slice(&input)
+            .map_err(|err| format!("prepared route rejected: {err}"))?;
+        let mode = RngMode::parse_cli(&args[6])?;
+        match native_level_route(&segments, target_count, mode) {
+            Ok(report) => {
+                let source_sha256 = segments.first()
+                    .map(|segment| segment.request_sha256.clone());
+                println!("{}", serde_json::json!({
+                    "engine": "forever-engine",
+                    "source_sha256": source_sha256,
+                    "levels": segments.iter().map(|segment| segment.player.level).collect::<Vec<_>>(),
+                    "request_sha256s": segments.iter().map(|segment| segment.request_sha256.clone()).collect::<Vec<_>>(),
+                    "result": report,
+                    "checkpoint_certified": false,
+                }));
+            }
+            Err(PreparedError::Unsupported(reasons)) => {
+                println!("{}", serde_json::json!({
+                    "supported": false,
+                    "refusals": reasons,
+                    "checkpoint_certified": false,
+                }));
+                return Err(Failure { status: EXIT_REFUSED, message: None });
+            }
+            Err(PreparedError::Invalid(reason)) => {
+                println!("{}", serde_json::json!({
+                    "valid": false,
+                    "reason": reason,
+                    "checkpoint_certified": false,
+                }));
+                return Err(Failure { status: EXIT_REJECTED, message: None });
+            }
+        }
+        return Ok(());
+    }
     if args[0] == "native-world-pulls" {
         if args.len() != 7 || args[1] != "--infile" || args[3] != "--targets" || args[5] != "--rng-mode" {
             return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into());
@@ -227,7 +274,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args[0] != "sim" && args[0] != "bench" && args[0] != "prepare" {
-        return Err("expected sim, prepare, bench, check or version".into());
+        return Err("expected sim, prepare, bench, check, native-world-pulls, native-level-route or version".into());
     }
     let mut rng_mode: Option<RngMode> = None;
     let mut infile = None;
