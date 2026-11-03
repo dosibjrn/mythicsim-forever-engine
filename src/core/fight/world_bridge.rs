@@ -95,6 +95,13 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         if at_ns <= bridge.last_tick_ns || at_ns < 0 {
             return Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND");
         }
+        // Expiring a duration does not kill a distinct gsim world mob.
+        // Only the previous source-native effects' committed HP/death/hash ACK
+        // can authorize this retained Rust actor to acquire its next target.
+        if bridge.sequence == 0 || bridge.previous_ack_id.len() != 64
+            || bridge.last_health != Some(0.0) {
+            return Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL");
+        }
         bridge.iteration = bridge.iteration.checked_add(1)
             .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
         bridge.last_health = None; // new world target, not a healed old one
@@ -103,6 +110,51 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         // event_ordinal and source identity across targets.
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod persistent_next_target_world_lethal_ack_tests {
+    use super::*;
+
+    #[test]
+    fn persistent_next_target_requires_real_lethal_world_ack() {
+        // This is the live Rust bridge's real state machine, not a replacement
+        // combat evaluator. Only exchange() can set these ACK-derived fields
+        // in production.
+        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
+            iteration: 0, sequence: 1, next_tick_ns: 200,
+            last_tick_ns: 100, last_health: Some(25.0),
+            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
+            event_ordinal: 9, pending: Vec::new(),
+        }));
+        assert_eq!(begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let state = state.as_mut().unwrap();
+            state.last_health = Some(0.0);
+            state.previous_ack_id.clear();
+        });
+        assert_eq!(begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        BRIDGE.with(|slot| slot.borrow_mut().as_mut().unwrap()
+            .previous_ack_id = "a".repeat(64));
+        assert_eq!(begin_next_target(200), Ok(()));
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            let state = state.as_ref().unwrap();
+            assert_eq!(state.iteration, 1);
+            assert_eq!(state.sequence, 1);
+            assert_eq!(state.event_ordinal, 9);
+            assert_eq!(state.previous_ack_id, "a".repeat(64));
+            assert_eq!(state.last_tick_ns, 100);
+            assert_eq!(state.next_tick_ns, 200);
+            assert_eq!(state.last_health, None);
+        });
+        // The new target cannot be skipped without its own lethal ACK.
+        assert_eq!(begin_next_target(300),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+    }
 }
 
 pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
@@ -291,8 +343,8 @@ mod persistent_next_target_tests {
     fn world_persistent_next_target_preserves_ack_and_monotonic_clock() {
         BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 4, next_tick_ns: 130_000_000,
-            last_tick_ns: 120_000_000, last_health: Some(40.0),
-            previous_ack_id: "ack-from-first-target".into(),
+            last_tick_ns: 120_000_000, last_health: Some(0.0),
+            previous_ack_id: "a".repeat(64),
             source_hash: "a".repeat(64), event_ordinal: 3, pending: Vec::new(),
         }));
         assert_eq!(begin_next_target(120_000_000),
@@ -305,7 +357,7 @@ mod persistent_next_target_tests {
             assert_eq!(bridge.sequence, 4);
             assert_eq!(bridge.last_tick_ns, 120_000_000);
             assert_eq!(bridge.next_tick_ns, 121_000_000);
-            assert_eq!(bridge.previous_ack_id, "ack-from-first-target");
+            assert_eq!(bridge.previous_ack_id, "a".repeat(64));
             assert_eq!(bridge.event_ordinal, 3);
             assert_eq!(bridge.last_health, None);
         });
