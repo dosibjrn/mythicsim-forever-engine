@@ -30,7 +30,7 @@ use crate::prepare::rage::RageBarOptions;
 use crate::prepare::sim::{AuraId, PowerBar, Rules, Sim, SpellId, UnitId};
 use crate::prepare::spell::SpellConfig;
 use crate::prepare::stats::Stat;
-use crate::prepare::talent_layout::{self, new_talent, talent, LayoutTalent};
+use crate::prepare::talent_layout::{self, new_talent_at, talent_at, LayoutTalent};
 use crate::prepare::Refusal;
 
 use talents::Talents;
@@ -42,22 +42,22 @@ const TALENT_TREE_SIZES: [usize; 3] = [16, 20, 16];
 /// client's order (row, then column), with upstream's proto field names (wowsims/forever #769).
 /// Balance keeps the Go reference's order.
 const FOREVER_BALANCE: &[LayoutTalent] = &[
-    talent("improved_wrath", "Improved Wrath", 5),
-    talent("genesis", "Genesis", 5),
-    talent("moonglow", "Moonglow", 3),
-    talent("improved_moonfire", "Improved Moonfire", 2),
-    talent("natures_majesty", "Nature's Majesty", 2),
-    talent("natures_reach", "Nature's Reach", 2),
-    talent("improved_entangling_roots", "Improved Entangling Roots", 3),
-    talent("natures_splendor", "Nature's Splendor", 1),
-    talent("insect_swarm", "Insect Swarm", 1),
-    talent("vengeance", "Vengeance", 5),
-    talent("improved_starfire", "Improved Starfire", 5),
-    talent("overgrowth", "Overgrowth", 2),
-    talent("natures_grace", "Nature's Grace", 1),
-    talent("eclipse", "Eclipse", 3),
-    talent("moonfury", "Moonfury", 5),
-    talent("moonkin_form", "Moonkin Form", 1),
+    talent_at("improved_wrath", "Improved Wrath", 5, 0, 1, None),
+    talent_at("genesis", "Genesis", 5, 0, 2, None),
+    talent_at("moonglow", "Moonglow", 3, 1, 0, None),
+    talent_at("improved_moonfire", "Improved Moonfire", 2, 1, 1, None),
+    talent_at("natures_majesty", "Nature's Majesty", 2, 1, 2, None),
+    talent_at("natures_reach", "Nature's Reach", 2, 1, 3, None),
+    talent_at("improved_entangling_roots", "Improved Entangling Roots", 3, 2, 0, None),
+    talent_at("natures_splendor", "Nature's Splendor", 1, 2, 2, Some(("natures_majesty", 2))),
+    talent_at("insect_swarm", "Insect Swarm", 1, 3, 0, None),
+    talent_at("vengeance", "Vengeance", 5, 3, 1, Some(("improved_moonfire", 2))),
+    talent_at("improved_starfire", "Improved Starfire", 5, 3, 2, None),
+    talent_at("overgrowth", "Overgrowth", 2, 4, 0, None),
+    talent_at("natures_grace", "Nature's Grace", 1, 4, 1, None),
+    talent_at("eclipse", "Eclipse", 3, 4, 2, None),
+    talent_at("moonfury", "Moonfury", 5, 5, 1, None),
+    talent_at("moonkin_form", "Moonkin Form", 1, 6, 1, None),
 ];
 
 /// Berserk (417141) and Improved Shifting Power (1322670) are gone. Furor (17056) takes Heart of
@@ -67,54 +67,56 @@ const FOREVER_BALANCE: &[LayoutTalent] = &[
 /// row; Primal Bite (407995, after Leader of the Pack) and Shifting Power (1322605, after
 /// Predatory Discipline) close the tree in the seventh.
 const FOREVER_FERAL_COMBAT: &[LayoutTalent] = &[
-    talent("ferocity", "Ferocity", 5),
-    talent("furor", "Furor", 5),
-    talent("feral_swiftness", "Feral Swiftness", 2),
-    talent("feral_instinct", "Feral Instinct", 3),
-    talent("brutal_impact", "Brutal Impact", 2),
-    talent("thick_hide", "Thick Hide", 3),
-    talent("shredding_attacks", "Shredding Attacks", 3),
-    talent("savage_fury", "Savage Fury", 2),
-    talent("feral_charge", "Feral Charge", 1),
-    talent("sharpened_claws", "Sharpened Claws", 2),
-    talent("predatory_strikes", "Predatory Strikes", 3),
-    new_talent("lacerate", "Lacerate", 1),
-    new_talent("predatory_discipline", "Predatory Discipline", 1),
-    talent("blood_frenzy", "Blood Frenzy", 2),
-    talent("leader_of_the_pack", "Leader of the Pack", 1),
-    talent("natural_instinct", "Natural Instinct", 2),
-    talent("rend_and_tear", "Rend and Tear", 5),
-    talent("natural_reaction", "Natural Reaction", 5),
-    talent("primal_bite", "Primal Bite", 1),
-    talent("shifting_power", "Shifting Power", 1),
+    talent_at("ferocity", "Ferocity", 5, 0, 1, None),
+    talent_at("furor", "Furor", 5, 0, 2, None),
+    talent_at("feral_swiftness", "Feral Swiftness", 2, 1, 0, None),
+    talent_at("feral_instinct", "Feral Instinct", 3, 1, 1, None),
+    talent_at("brutal_impact", "Brutal Impact", 2, 1, 2, None),
+    talent_at("thick_hide", "Thick Hide", 3, 1, 3, None),
+    talent_at("shredding_attacks", "Shredding Attacks", 3, 2, 0, None),
+    talent_at("savage_fury", "Savage Fury", 2, 2, 1, None),
+    talent_at("feral_charge", "Feral Charge", 1, 2, 2, None),
+    talent_at("sharpened_claws", "Sharpened Claws", 2, 2, 3, None),
+    talent_at("predatory_strikes", "Predatory Strikes", 3, 3, 0, None),
+    new_talent_at("lacerate", "Lacerate", 1, 3, 1, Some(("savage_fury", 2))),
+    new_talent_at("predatory_discipline", "Predatory Discipline", 1, 3, 2, None),
+    talent_at("blood_frenzy", "Blood Frenzy", 2, 3, 3, Some(("sharpened_claws", 2))),
+    talent_at("leader_of_the_pack", "Leader of the Pack", 1, 4, 1, None),
+    talent_at("natural_instinct", "Natural Instinct", 2, 4, 3, None),
+    talent_at("rend_and_tear", "Rend and Tear", 5, 5, 0, Some(("predatory_strikes", 3))),
+    talent_at("natural_reaction", "Natural Reaction", 5, 5, 3, None),
+    talent_at("primal_bite", "Primal Bite", 1, 6, 1, Some(("leader_of_the_pack", 1))),
+    talent_at("shifting_power", "Shifting Power", 1, 6, 2, Some(("predatory_discipline", 1))),
 ];
 
 /// Gift of the Earthmother (414673) is gone and Bloom (1328621) takes its square. Heart of the
 /// Wild (17003) takes Furor's square, and Reflection (17106) and Subtlety (17118) swap.
 const FOREVER_RESTORATION: &[LayoutTalent] = &[
-    talent("natures_focus", "Nature's Focus", 5),
-    talent("heart_of_the_wild", "Heart of the Wild", 5),
-    talent("naturalist", "Naturalist", 5),
-    talent("reflection", "Reflection", 3),
-    talent("natural_shapeshifter", "Natural Shapeshifter", 3),
-    talent("subtlety", "Subtlety", 3),
-    talent("gift_of_nature", "Gift of Nature", 5),
-    new_talent("bloom", "Bloom", 1),
-    talent("tranquil_spirit", "Tranquil Spirit", 5),
-    talent("improved_rejuvenation", "Improved Rejuvenation", 3),
-    talent("swiftmend", "Swiftmend", 1),
-    talent("natures_swiftness", "Nature's Swiftness", 1),
-    talent("living_spirit", "Living Spirit", 3),
-    talent("improved_tranquility", "Improved Tranquility", 2),
-    talent("improved_regrowth", "Improved Regrowth", 5),
-    talent("wild_growth", "Wild Growth", 1),
+    talent_at("natures_focus", "Nature's Focus", 5, 0, 1, None),
+    talent_at("heart_of_the_wild", "Heart of the Wild", 5, 0, 2, None),
+    talent_at("naturalist", "Naturalist", 5, 1, 0, None),
+    talent_at("reflection", "Reflection", 3, 1, 1, None),
+    talent_at("natural_shapeshifter", "Natural Shapeshifter", 3, 1, 2, None),
+    talent_at("subtlety", "Subtlety", 3, 2, 1, None),
+    talent_at("gift_of_nature", "Gift of Nature", 5, 2, 2, None),
+    new_talent_at("bloom", "Bloom", 1, 2, 3, None),
+    talent_at("tranquil_spirit", "Tranquil Spirit", 5, 3, 1, None),
+    talent_at("improved_rejuvenation", "Improved Rejuvenation", 3, 3, 2, None),
+    talent_at("swiftmend", "Swiftmend", 1, 3, 3, None),
+    talent_at("natures_swiftness", "Nature's Swiftness", 1, 4, 0, Some(("naturalist", 5))),
+    talent_at("living_spirit", "Living Spirit", 3, 4, 1, None),
+    talent_at("improved_tranquility", "Improved Tranquility", 2, 4, 3, None),
+    talent_at("improved_regrowth", "Improved Regrowth", 5, 5, 2, Some(("improved_rejuvenation", 3))),
+    talent_at("wild_growth", "Wild Growth", 1, 6, 1, Some(("living_spirit", 3))),
 ];
 
 pub(crate) const FOREVER_TREES: [&[LayoutTalent]; 3] =
     [FOREVER_BALANCE, FOREVER_FERAL_COMBAT, FOREVER_RESTORATION];
 
-/// Versioned metadata for clients that must serialize the native Forever tree
-/// layout. This is not a candidate-legality or rank-validation API.
+/// Versioned native candidate options for the current Forever Druid talent trees.
+/// Positions and prerequisite links are projected from the current client tree; the prerequisite
+/// rank is the parent's maximum rank. Candidate search consumes this metadata, while native
+/// prepare/sim remains the authority for executing the resulting build.
 pub(crate) fn forever_talent_layout_json() -> serde_json::Value {
     let names = ["balance", "feral", "restoration"];
     let trees = names
@@ -124,11 +126,21 @@ pub(crate) fn forever_talent_layout_json() -> serde_json::Value {
             let entries = talents
                 .iter()
                 .map(|talent| {
+                    let prerequisites = talent
+                        .prerequisite
+                        .map(|(field, min_rank)| {
+                            vec![serde_json::json!({"field": field, "min_rank": min_rank})]
+                        })
+                        .unwrap_or_default();
                     serde_json::json!({
                         "field": talent.field,
                         "name": talent.name,
                         "max_ranks": talent.max_ranks,
                         "in_proto": talent.in_proto,
+                        "row": talent.row,
+                        "column": talent.column,
+                        "tier_points": u32::from(talent.row) * 5,
+                        "prerequisites": prerequisites,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -136,9 +148,14 @@ pub(crate) fn forever_talent_layout_json() -> serde_json::Value {
         })
         .collect::<Vec<_>>();
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "class": "druid",
         "ruleset": "forever",
+        "source": {
+            "repository": "wowsims/forever",
+            "revision": "7069f354ec3385f0690ed6979830890ee296543a",
+            "path": "ui/sim/talents/trees/druid.json",
+        },
         "trees": trees,
     })
 }
