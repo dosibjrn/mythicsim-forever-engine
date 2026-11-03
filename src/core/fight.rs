@@ -6937,5 +6937,24 @@ mod tests {
         assert_eq!(clamped.player.mana, prepared.player.mana.max);
     }
 
+    #[test]
+    fn native_route_stage_starts_from_carried_mana_for_mage() {
+        let mut prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/frost-reference.prepared.json"))
+        ).unwrap();
+        let expected_mana = prepared.player.mana.max * 0.37;
+        prepared.player.mana_at_reset = Some(expected_mana);
+
+        let mut fight = crate::classes::mage::agent::MageAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        ).unwrap();
+        fight.reset_unit(Side::Player);
+
+        assert!((fight.player.mana - expected_mana).abs() < 1e-9);
+    }
+
+
 
 }
