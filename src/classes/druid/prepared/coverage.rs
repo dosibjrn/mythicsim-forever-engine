@@ -71,6 +71,7 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "wrath" if spell.damage_effect.is_some() => Some("wrath"),
         "moonfire" if spell.damage_effect.is_some() => Some("moonfire"),
         "insect_swarm" if spell.dot.is_some() => Some("insect_swarm"),
+        "entangling_roots" if spell.dot.is_some() => Some("entangling_roots"),
         "innervate" => Some("innervate"),
         "cat_form" => Some("cat_form"),
         "bear_form" => Some("bear_form"),

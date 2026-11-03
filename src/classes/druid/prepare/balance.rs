@@ -28,6 +28,7 @@ const STARFIRE_RANKS: [i32; 7] = [2912, 8949, 8950, 8951, 9875, 9876, 25298];
 const WRATH_RANKS: [i32; 8] = [5176, 5177, 5178, 5179, 5180, 6780, 8905, 9912];
 const MOONFIRE_RANKS: [i32; 10] = [8921, 8924, 8925, 8926, 8927, 8928, 8929, 9833, 9834, 9835];
 const INSECT_SWARM_RANKS: [i32; 5] = [5570, 24974, 24975, 24976, 24977];
+const ENTANGLING_ROOTS_RANKS: [i32; 6] = [339, 1062, 5195, 5196, 9852, 9853];
 const HURRICANE_RANKS: [i32; 3] = [16914, 17401, 17402];
 const HURRICANE_TRIGGERED: [i32; 3] = [1278965, 1278968, 1278759];
 
@@ -55,6 +56,58 @@ impl Druid {
         }
         self.register_hurricane_spell(sim);
         self.register_faerie_fire_spell(sim);
+        // The Go oracle does not register this Forever-only client spell.
+        if sim.rules == Rules::Forever {
+            self.register_entangling_roots_spell(sim);
+        }
+    }
+
+
+    /// Source-native Forever Roots periodic damage, not yet root/break/2D CC behavior.
+    /// Keep GoReference preparation unchanged for the pinned Go goldens.
+    fn register_entangling_roots_spell(&mut self, sim: &mut Sim) {
+        let rank = Ladder::ranked(&ENTANGLING_ROOTS_RANKS).highest();
+        let tick = rank.periodic_effect();
+        self.register_spell(
+            sim,
+            HUMANOID | MOONKIN,
+            SpellConfig {
+                action_id: ActionId::spell(rank.id),
+                spell_school: rank.spell_school(),
+                defense_type: rank.defense_type_core(),
+                proc_mask: ProcMask::SPELL_DAMAGE,
+                class_spell_mask: masks::ENTANGLING_ROOTS,
+                flags: SpellFlag::APL | SpellFlag::BINARY,
+                rank: rank.rank_number(),
+                damage_multiplier: 1.0,
+                threat_multiplier: 1.0,
+                max_range: f64::from(rank.max_range),
+                cost: flat_mana(rank),
+                cast: CastConfig {
+                    default_cast: Cast {
+                        gcd: rank.gcd(),
+                        cast_time: rank.cast_time(),
+                        ..Cast::default()
+                    },
+                    ..CastConfig::default()
+                },
+                dot: DotConfig {
+                    aura: AuraConfig {
+                        label: "Entangling Roots".to_string(),
+                        ..AuraConfig::default()
+                    },
+                    number_of_ticks: (rank.duration() / tick.period()) as i32,
+                    tick_length: tick.period(),
+                    affected_by_cast_speed: false,
+                    bonus_coefficient: tick.coeff(),
+                    // Forever: +25/50/75% periodic damage at talent ranks 1/2/3.
+                    periodic_damage_multiplier: 1.0
+                        + 0.25 * f64::from(self.tal.improved_entangling_roots),
+                    ..DotConfig::default()
+                },
+                ..SpellConfig::default()
+            },
+        );
     }
 
     /// Go `registerStarfireSpell`: every rank is registered.
