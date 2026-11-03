@@ -50,6 +50,68 @@ pub(crate) fn native_two_world_targets(
     }
 }
 
+/// Progress one logical native actor through consecutive prepared level segments.
+pub(crate) fn native_level_route(
+    segments: &[crate::contracts::prepared_v2::PreparedV2],
+    target_count_per_level: usize,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<serde_json::Value, String> {
+    macro_rules! run_route {
+        ($make_fight:expr) => {{
+            let mut make_fight = $make_fight;
+            let mut carry: Option<crate::core::fight::RouteCarry> = None;
+            let mut target_offset = 0usize;
+            let mut reports = Vec::with_capacity(segments.len());
+            for (segment_index, prepared) in segments.iter().enumerate() {
+                let mut fight = make_fight(prepared, rng_mode)?;
+                let (report, next_carry) = fight.native_world_route_segment(
+                    target_count_per_level,
+                    target_offset,
+                    segment_index,
+                    Some(prepared.player.level),
+                    Some(&prepared.request_sha256),
+                    carry,
+                    segment_index + 1 == segments.len(),
+                ).map_err(str::to_string)?;
+                reports.push(report);
+                carry = Some(next_carry);
+                target_offset += target_count_per_level;
+            }
+            Ok(serde_json::json!({
+                "scope": "MULTI_LEVEL_GSIM_2D_ROUTE_RESOURCE_CARRY_NOT_GATE",
+                "actor_identity_continues": true,
+                "resource_carry_across_levels": true,
+                "world_ack_chain_continuous": true,
+                "actual_2d_ack": true,
+                "combat_instance_rebuilt_at_level_transition": true,
+                "class_state_reinitialized_per_level": true,
+                "cooldowns_carried": false,
+                "paid_recovery": false,
+                "targets_per_level": target_count_per_level,
+                "world_targets_killed": target_offset,
+                "levels": segments.iter().map(|segment| segment.player.level).collect::<Vec<_>>(),
+                "request_sha256s": segments.iter().map(|segment| segment.request_sha256.clone()).collect::<Vec<_>>(),
+                "segments": reports,
+                "checkpoint_certified": false,
+            }))
+        }};
+    }
+
+    match segments.first().map(|segment| segment.player.class.as_str()) {
+        Some("ClassMage") => run_route!(|prepared, mode| mage::agent::MageAgent::fight(prepared, mode)),
+        Some("ClassDruid") => run_route!(|prepared, mode| druid::agent::DruidAgent::fight(prepared, mode)),
+        Some("ClassWarlock") => run_route!(|prepared, mode| warlock::agent::WarlockAgent::fight(prepared, mode)),
+        Some("ClassShaman") => run_route!(|prepared, mode| shaman::agent::ShamanAgent::fight(prepared, mode)),
+        Some("ClassPaladin") => run_route!(|prepared, mode| paladin::agent::PaladinAgent::fight(prepared, mode)),
+        Some("ClassPriest") => run_route!(|prepared, mode| priest::agent::PriestAgent::fight(prepared, mode)),
+        Some("ClassRogue") => run_route!(|prepared, mode| rogue::agent::RogueAgent::fight(prepared, mode)),
+        Some("ClassWarrior") => run_route!(|prepared, mode| warrior::agent::WarriorAgent::fight(prepared, mode)),
+        Some("ClassHunter") => run_route!(|prepared, mode| hunter::agent::HunterAgent::fight(prepared, mode)),
+        Some(other) => Err(format!("class {other} has no native route agent")),
+        None => Err("native level route has no prepared segments".to_string()),
+    }
+}
+
 /// Run the same native actor through two source-backed combat windows.
 /// This is a bounded diagnostic, not a live-2D or leveling gate.
 pub(crate) fn native_two_pull_windows(
