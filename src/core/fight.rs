@@ -1712,6 +1712,7 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) now: i64,
     pub(crate) duration: i64,
     end_of_combat: i64,
+    pull_started_at: i64,
     /// Go `executePhase` and `nextExecuteDuration` for a fight timed by duration.
     pub(crate) execute_phase: i32,
     next_execute: i64,
@@ -4056,6 +4057,7 @@ impl<A: Agent> Fight<A> {
             now: 0,
             duration: config.base_duration,
             end_of_combat: config.base_duration,
+            pull_started_at: 0,
             execute_phase: 0,
             next_execute: NEVER_EXPIRES,
             rng: SimRng::new(prepared.sim.labeled_rng, prepared.sim.seed as u64),
@@ -5748,6 +5750,35 @@ impl<A: Agent> Fight<A> {
         self.cleanup();
     }
 
+    /// Begin a second distinct world target on the SAME native actor.
+    /// No iteration reset, resource reset, cooldown reset, aura reset or queue clear.
+    /// Until paid downtime is implemented in the native session, accept only
+    /// an immediate next pull; skipping scheduled recovery events is illegal.
+    pub(crate) fn begin_next_target(&mut self, at_ns: i64, next_end_ns: i64)
+        -> Result<(), &'static str>
+    {
+        if at_ns != self.end_of_combat || at_ns < self.now || next_end_ns <= at_ns {
+            return Err("RUST_NEXT_TARGET_CLOCK_INVALID");
+        }
+        if world_bridge::enabled() {
+            world_bridge::begin_next_target(at_ns)?;
+        }
+        self.advance_to(at_ns);
+        // Target auras/armor are new; player, pets, timers and queued
+        // native actions remain exactly those of the preceding encounter.
+        // A defeated target can still have active debuffs. End ONLY its aura
+        // lifetime before reset; never call global cleanup on the actor.
+        self.aura_done_iteration(Side::Target);
+        self.reset_unit(Side::Target);
+        self.pull_started_at = at_ns;
+        self.duration = next_end_ns;
+        self.end_of_combat = next_end_ns;
+        self.execute_phase = 0;
+        self.next_execute_phase();
+        self.schedule(at_ns, PRIORITY_PREPULL + 1, Action::EncounterStart);
+        Ok(())
+    }
+
     /// Go `Simulation.reset` and `Environment.reset`.
     fn reset(&mut self) {
         self.in_prepull = true;
@@ -5766,9 +5797,10 @@ impl<A: Agent> Fight<A> {
         for batch in &mut self.travel_batches {
             batch.clear();
         }
+        self.pull_started_at = 0;
+        self.end_of_combat = self.duration;
         self.execute_phase = 0;
         self.next_execute_phase();
-        self.end_of_combat = self.duration;
         self.now = 0;
         self.min_tracker_time = NEVER_EXPIRES;
         self.min_task_time = NEVER_EXPIRES;
@@ -5973,7 +6005,8 @@ impl<A: Agent> Fight<A> {
             phase => panic!("executePhase = {phase} invalid"),
         };
         self.execute_phase = phase;
-        self.next_execute = ((1.0 - proportion) * self.duration as f64) as i64;
+        self.next_execute = self.pull_started_at +
+            ((1.0 - proportion) * (self.end_of_combat - self.pull_started_at) as f64) as i64;
     }
 
     /// Go `IsExecutePhase20`.
@@ -6534,6 +6567,56 @@ impl<A: Agent> Fight<A> {
 #[cfg(test)]
 mod tests {
     use super::{Mp5Path, Side, DEFENDERS, MAX_TARGETS};
+
+    #[test]
+    fn native_persistent_next_target_retains_actor_and_native_queue() {
+        use super::{Action, PRIORITY_PREPULL, PRIORITY_REGEN};
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared).unwrap();
+        if !fight.extra_targets_built {
+            fight.build_extra_targets();
+            fight.build_exclusive_tracking();
+            fight.apply_enemy_slow_priorities();
+        }
+        eprintln!("NATIVE_NEXT_TARGET_STAGE=initial_reset");
+        fight.reset();
+        fight.schedule(0, PRIORITY_PREPULL + 1, Action::EncounterStart);
+        let mut steps = 0;
+        while fight.step() {
+            steps += 1;
+            assert!(steps < 100_000, "first native pull did not terminate");
+        }
+        assert!(steps > 1, "native combat did not execute");
+        eprintln!("NATIVE_NEXT_TARGET_STAGE=first_pull_done");
+        let first_end = fight.end_of_combat;
+        let kept_mana = fight.config.max_mana * 0.37;
+        let kept_health = fight.config.max_health * 0.61;
+        fight.player.mana = kept_mana;
+        fight.player.health = kept_health;
+        let kept_timer = fight.timers.first().copied();
+        let future = fight.queue.push(first_end + 5_000_000, PRIORITY_REGEN, Action::ManaTick);
+        let old_now = fight.now;
+        assert_eq!(fight.begin_next_target(first_end - 1, first_end + 2_000_000_000),
+            Err("RUST_NEXT_TARGET_CLOCK_INVALID"));
+        assert_eq!(fight.now, old_now);
+        eprintln!("NATIVE_NEXT_TARGET_STAGE=transition");
+        fight.begin_next_target(first_end, first_end + 2_000_000_000).unwrap();
+        assert_eq!(fight.player.mana, kept_mana);
+        assert_eq!(fight.player.health, kept_health);
+        assert_eq!(fight.timers.first().copied(), kept_timer);
+        assert!(fight.queue.cancel(future), "queued native future action was lost");
+        assert!(fight.next_execute >= first_end);
+        let mut second_steps = 0;
+        while fight.step() {
+            second_steps += 1;
+            assert!(second_steps < 100_000, "second native pull did not terminate");
+        }
+        assert!(second_steps > 0, "second target did not run native combat");
+        assert!(fight.now >= first_end, "native clock reset on second target");
+    }
 
     /// Go adds a bonus to the raw stats and takes it away again: 77 plus Mana Tide Totem's
     /// 483.33 and minus it again is a few ulps short of 77, and the path keeps that.

@@ -82,6 +82,29 @@ pub(crate) fn begin_iteration(iteration: u32) {
     });
 }
 
+/// Switch the acknowledged world target without restarting the native clock
+/// or ACK ancestry. Only a future same-actor session may call this; legacy
+/// independent iterations intentionally continue to use begin_iteration().
+pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
+    BRIDGE.with(|state| {
+        let mut state = state.borrow_mut();
+        let bridge = state.as_mut().ok_or("RUST_WORLD_NOT_STARTED")?;
+        if !bridge.pending.is_empty() {
+            return Err("RUST_WORLD_UNACKNOWLEDGED_DAMAGE");
+        }
+        if at_ns <= bridge.last_tick_ns || at_ns < 0 {
+            return Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND");
+        }
+        bridge.iteration = bridge.iteration.checked_add(1)
+            .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
+        bridge.last_health = None; // new world target, not a healed old one
+        bridge.next_tick_ns = at_ns;
+        // Deliberately preserve sequence, previous_ack_id, last_tick_ns,
+        // event_ordinal and source identity across targets.
+        Ok(())
+    })
+}
+
 pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     BRIDGE.with(|state| {
         let state = state.borrow();
@@ -258,4 +281,34 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
             "native_total_damage": cumulative_damage,
         }));
     });
+}
+
+#[cfg(test)]
+mod persistent_next_target_tests {
+    use super::{begin_next_target, Bridge, BRIDGE};
+
+    #[test]
+    fn world_persistent_next_target_preserves_ack_and_monotonic_clock() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
+            iteration: 0, sequence: 4, next_tick_ns: 130_000_000,
+            last_tick_ns: 120_000_000, last_health: Some(40.0),
+            previous_ack_id: "ack-from-first-target".into(),
+            source_hash: "a".repeat(64), event_ordinal: 3, pending: Vec::new(),
+        }));
+        assert_eq!(begin_next_target(120_000_000),
+            Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND"));
+        begin_next_target(121_000_000).unwrap();
+        BRIDGE.with(|state| {
+            let state = state.borrow();
+            let bridge = state.as_ref().unwrap();
+            assert_eq!(bridge.iteration, 1);
+            assert_eq!(bridge.sequence, 4);
+            assert_eq!(bridge.last_tick_ns, 120_000_000);
+            assert_eq!(bridge.next_tick_ns, 121_000_000);
+            assert_eq!(bridge.previous_ack_id, "ack-from-first-target");
+            assert_eq!(bridge.event_ordinal, 3);
+            assert_eq!(bridge.last_health, None);
+        });
+        BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
 }
