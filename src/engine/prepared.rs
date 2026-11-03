@@ -428,9 +428,9 @@ mod tests {
 
     #[test]
     fn route_stage_resource_snapshots_are_bounded() {
-        assert!(validate_resource_at_reset("health_at_reset", None, 100.0).is_ok());
-        assert!(validate_resource_at_reset("health_at_reset", Some(0.0), 100.0).is_ok());
-        assert!(validate_resource_at_reset("health_at_reset", Some(100.0), 100.0).is_ok());
+        assert!(validate_resource_at_reset("health_at_reset", None).is_ok());
+        assert!(validate_resource_at_reset("health_at_reset", Some(0.0)).is_ok());
+        assert!(validate_resource_at_reset("health_at_reset", Some(100.0)).is_ok());
         assert!(validate_resource_at_reset("mana_at_reset", Some(37.0)).is_ok());
         assert!(validate_resource_at_reset("mana_at_reset", Some(101.0)).is_ok());
         assert!(validate_resource_at_reset("mana_at_reset", Some(-1.0)).is_err());
