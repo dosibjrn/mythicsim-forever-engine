@@ -5989,12 +5989,12 @@ impl<A: Agent> Fight<A> {
             unit.armor = self.config.melee.defender_armor;
             unit.armor_delta = 0.0;
             if self.sunder.is_some() {
-                self.schedule(0, PRIORITY_DOT, Action::SunderTick(position as u8, 0));
+                self.schedule(self.now, PRIORITY_DOT, Action::SunderTick(position as u8, 0));
             }
             if let Some(expose) = &self.external_expose {
                 let delay = expose.delay;
                 self.targets[position].armor = expose.armor_before;
-                self.schedule(delay, PRIORITY_DOT, Action::ExternalExpose(position as u8));
+                self.schedule(self.now + delay, PRIORITY_DOT, Action::ExternalExpose(position as u8));
             }
         }
         if side == Side::Player {
@@ -6661,6 +6661,47 @@ mod tests {
         }
         assert!(second_steps > 0, "second target did not run native combat");
         assert!(fight.now >= first_end, "native clock reset on second target");
+    }
+
+    #[test]
+    fn native_persistent_next_target_offsets_target_armor_events() {
+        use super::{AuraRef, ExternalExpose, SunderRamp};
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        // Both source-backed armor ramps previously scheduled events at t=0
+        // after the first pull, so the next native scheduler could rewind.
+        for with_sunder in [true, false] {
+            let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared).unwrap();
+            if !fight.extra_targets_built {
+                fight.build_extra_targets();
+                fight.build_exclusive_tracking();
+                fight.apply_enemy_slow_priorities();
+            }
+            fight.prepare_first_native_pull();
+            let mut steps = 0;
+            while fight.step() {
+                steps += 1;
+                assert!(steps < 100_000, "first native pull did not terminate");
+            }
+            let at = fight.end_of_combat;
+            assert!(at > 1_000_000_000);
+            let aura = AuraRef { side: Side::Target, index: 0 };
+            if with_sunder {
+                fight.sunder = Some(SunderRamp {
+                    aura, period: 2_000_000_000, ticks: 1,
+                    armor_by_stacks: vec![0.0], blocked: false,
+                });
+            } else {
+                fight.external_expose = Some(ExternalExpose {
+                    aura, delay: 1_000_000_000, armor_before: 0.0,
+                });
+            }
+            fight.begin_next_target(at, at + 3_000_000_000).unwrap();
+            assert!(fight.queue.peek_time().unwrap() >= at,
+                "second target queued source armor event before its own spawn");
+        }
     }
 
     /// Go adds a bonus to the raw stats and takes it away again: 77 plus Mana Tide Totem's
