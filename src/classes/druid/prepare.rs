@@ -113,6 +113,37 @@ const FOREVER_RESTORATION: &[LayoutTalent] = &[
 pub(crate) const FOREVER_TREES: [&[LayoutTalent]; 3] =
     [FOREVER_BALANCE, FOREVER_FERAL_COMBAT, FOREVER_RESTORATION];
 
+/// Versioned metadata for clients that must serialize the native Forever tree
+/// layout. This is not a candidate-legality or rank-validation API.
+pub(crate) fn forever_talent_layout_json() -> serde_json::Value {
+    let names = ["balance", "feral", "restoration"];
+    let trees = names
+        .iter()
+        .zip(FOREVER_TREES.iter())
+        .map(|(key, talents)| {
+            let entries = talents
+                .iter()
+                .map(|talent| {
+                    serde_json::json!({
+                        "field": talent.field,
+                        "name": talent.name,
+                        "max_ranks": talent.max_ranks,
+                        "in_proto": talent.in_proto,
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({"key": key, "talents": entries})
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "schema_version": 1,
+        "class": "druid",
+        "ruleset": "forever",
+        "trees": trees,
+    })
+}
+
+
 /// Which of Go's three registered Druid specs the player is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Spec {

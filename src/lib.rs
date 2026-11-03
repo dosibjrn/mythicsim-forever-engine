@@ -43,3 +43,41 @@ pub use report::{Counts, Report, TraceEvent, Work};
 
 /// The pinned Go reference revision, from upstream/sources.json.
 pub const SOURCE_REVISION: &str = env!("FOREVER_REFERENCE_REVISION");
+
+/// Return native Druid talent-layout metadata for wire serialization only.
+pub fn forever_druid_talent_layout() -> serde_json::Value {
+    classes::druid::prepare::forever_talent_layout_json()
+}
+
+#[cfg(test)]
+mod druid_talent_layout_api_tests {
+    #[test]
+    fn exports_a_lossless_versioned_layout_projection() {
+        let value = crate::forever_druid_talent_layout();
+        assert_eq!(value["schema_version"].as_u64(), Some(1));
+        assert_eq!(value["class"].as_str(), Some("druid"));
+        assert_eq!(value["ruleset"].as_str(), Some("forever"));
+
+        let trees = value["trees"].as_array().expect("layout trees");
+        assert_eq!(trees.len(), crate::classes::druid::prepare::FOREVER_TREES.len());
+        let keys = trees
+            .iter()
+            .map(|tree| tree["key"].as_str().expect("tree key"))
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec!["balance", "feral", "restoration"]);
+
+        for (tree, source_tree) in trees
+            .iter()
+            .zip(crate::classes::druid::prepare::FOREVER_TREES.iter())
+        {
+            let entries = tree["talents"].as_array().expect("talent metadata");
+            assert_eq!(entries.len(), source_tree.len());
+            for (entry, source) in entries.iter().zip(source_tree.iter()) {
+                assert_eq!(entry["field"].as_str(), Some(source.field));
+                assert_eq!(entry["name"].as_str(), Some(source.name));
+                assert_eq!(entry["max_ranks"].as_u64(), Some(u64::from(source.max_ranks)));
+                assert_eq!(entry["in_proto"].as_bool(), Some(source.in_proto));
+            }
+        }
+    }
+}
