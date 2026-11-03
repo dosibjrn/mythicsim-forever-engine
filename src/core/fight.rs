@@ -5783,6 +5783,9 @@ impl<A: Agent> Fight<A> {
         self.prepare_first_native_pull();
         let mut windows = Vec::with_capacity(target_count);
         let mut previous_damage = 0.0;
+        let mut previous_health_damage = 0.0_f64;
+        let mut previous_health_damage_events = 0;
+
         for index in 0..target_count {
             if index != 0 {
                 // No free actor reset. This intentionally retains the current
@@ -5799,14 +5802,27 @@ impl<A: Agent> Fight<A> {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
             }
             let total_damage = self.encounter_damage_taken;
+            // Only native Rust owns player damage and its resource metrics.
+            // Health may regenerate between attacks; remaining HP is not damage taken.
+            let health_damage = -self.resources[self.damage_taken_health].gain;
+            let health_damage_events = self.resources[self.damage_taken_health].events;
+            if health_damage < previous_health_damage
+                || health_damage_events < previous_health_damage_events
+            {
+                return Err("RUST_WORLD_HEALTH_DAMAGE_RECEIPT_NONMONOTONIC");
+            }
             windows.push(serde_json::json!({
                 "index": index,
                 "native_kill_ns": self.now,
                 "native_damage": total_damage - previous_damage,
                 "actor_mana": self.player.mana,
                 "actor_health": self.player.health,
+                "native_health_damage_taken": health_damage - previous_health_damage,
+                "native_health_damage_events": health_damage_events - previous_health_damage_events,
             }));
             previous_damage = total_damage;
+            previous_health_damage = health_damage;
+            previous_health_damage_events = health_damage_events;
         }
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
