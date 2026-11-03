@@ -245,6 +245,11 @@ impl Druid {
             let moonfire = Ladder::ranked(&MOONFIRE_RANKS).highest();
             effects.push(json!({"kind": "moonfire", "rank": periodic_rank(moonfire)}));
         }
+        // A real, registered Forever-only native Druid spell; this typed
+        // capability authorizes the existing Rust cast/DoT handler.
+        if sim.rules == crate::prepare::sim::Rules::Forever {
+            effects.push(json!({"kind": "entangling_roots"}));
+        }
         let target = env.encounter.targets[0];
         if self.tal.insect_swarm {
             let rank = Ladder::ranked(&INSECT_SWARM_RANKS).highest();

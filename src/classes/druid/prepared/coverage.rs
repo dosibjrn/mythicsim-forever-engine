@@ -32,6 +32,7 @@ const EFFECTS: &[&str] = &[
     "druid_thorns",
     "eclipse",
     "enrage",
+    "entangling_roots",
     "faerie_fire",
     "ferocious_bite",
     "frenzied_regeneration",
