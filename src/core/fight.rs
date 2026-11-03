@@ -5804,7 +5804,7 @@ impl<A: Agent> Fight<A> {
         }
         for saved in pets {
             if let Some(pet) = self.active_pets.iter_mut().find(|pet| {
-                pet.unit_index == saved.unit_index && pet.label == saved.label
+                pet.unit_index == saved.unit_index && pet.label.as_str() == saved.label.as_str()
             }) {
                 pet.state.health = saved.health.clamp(0.0, pet.config.max_health);
                 pet.state.mana = saved.mana.clamp(0.0, pet.config.max_mana);
@@ -6132,8 +6132,8 @@ impl<A: Agent> Fight<A> {
         self.pull_started_at = start_at_ns;
         self.end_of_combat = start_at_ns.saturating_add(self.duration);
         self.execute_phase = 0;
-        self.next_execute_phase();
         self.now = start_at_ns;
+        self.next_execute_phase();
         self.min_tracker_time = NEVER_EXPIRES;
         self.min_task_time = NEVER_EXPIRES;
         // Go Environment.reset always rolls the pet heartbeat offset, even without pets.
