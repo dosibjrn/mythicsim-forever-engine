@@ -5799,10 +5799,21 @@ impl<A: Agent> Fight<A> {
     /// No iteration reset, resource reset, cooldown reset, aura reset or queue clear.
     /// Until paid downtime is implemented in the native session, accept only
     /// an immediate next pull; skipping scheduled recovery events is illegal.
+    /// Native-only duration windows continue at the old exact end timestamp.
+    /// A live world may kill its target earlier, but only the separate
+    /// world_bridge::begin_next_target() validates the actual lethal ACK.
+    fn accepts_next_target_clock(&self, at_ns: i64, next_end_ns: i64,
+        live_world: bool) -> bool
+    {
+        at_ns >= self.now && at_ns >= 0 && next_end_ns > at_ns
+            && (if live_world { at_ns <= self.end_of_combat }
+                else { at_ns == self.end_of_combat })
+    }
+
     pub(crate) fn begin_next_target(&mut self, at_ns: i64, next_end_ns: i64)
         -> Result<(), &'static str>
     {
-        if at_ns != self.end_of_combat || at_ns < self.now || next_end_ns <= at_ns {
+        if !self.accepts_next_target_clock(at_ns, next_end_ns, world_bridge::enabled()) {
             return Err("RUST_NEXT_TARGET_CLOCK_INVALID");
         }
         if world_bridge::enabled() {
@@ -6612,6 +6623,29 @@ impl<A: Agent> Fight<A> {
 #[cfg(test)]
 mod tests {
     use super::{Mp5Path, Side, DEFENDERS, MAX_TARGETS};
+
+    #[test]
+    fn native_persistent_early_world_kill_clock_boundary() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared).unwrap();
+        fight.prepare_first_native_pull();
+        let now = fight.now;
+        let cap = fight.end_of_combat;
+        assert!(cap > now + 2_000_000);
+        let early = now + 1_000_000;
+        // A real early gsim world kill can be the next pull timestamp,
+        // but the unchanged native-only duration-window cannot.
+        assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));
+        assert!(!fight.accepts_next_target_clock(early, early + 2_000_000, false));
+        assert!(fight.accepts_next_target_clock(cap, cap + 2_000_000, false));
+        assert!(!fight.accepts_next_target_clock(cap + 1, cap + 2_000_000, true));
+        assert!(!fight.accepts_next_target_clock(now - 1, cap + 1, true));
+        assert!(!fight.accepts_next_target_clock(early, early, true));
+        // This test does not fake a lethal source event or certify a hybrid mob.
+    }
 
     #[test]
     fn native_persistent_next_target_retains_actor_and_native_queue() {
