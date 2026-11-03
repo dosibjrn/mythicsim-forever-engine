@@ -916,7 +916,8 @@ pub struct Player {
     /// The health a fight starts with, where it differs from the maximum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_at_reset: Option<f64>,
-    /// Mana carried into a prepared route stage; absent means a full bar. Values above the new maximum are clamped.
+    /// Mana carried into a prepared route stage; absent means a full bar.
+    /// Values above the new maximum are clamped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mana_at_reset: Option<f64>,
     /// Go `HpPercentForDefensives`: survival major cooldowns wait for the health share to

@@ -6124,8 +6124,14 @@ impl<A: Agent> Fight<A> {
                     split[..units].fill(SpellMetrics::default());
                 }
             }
-            self.player.mana = self.mana_at_reset.unwrap_or(self.config.max_mana).min(self.config.max_mana);
-            self.player.health = self.health_at_reset.unwrap_or(self.config.max_health).min(self.config.max_health);
+            self.player.mana = self
+                .mana_at_reset
+                .unwrap_or(self.config.max_mana)
+                .min(self.config.max_mana);
+            self.player.health = self
+                .health_at_reset
+                .unwrap_or(self.config.max_health)
+                .min(self.config.max_health);
             self.player.mana_regen_multiplier = 1.0;
             self.player.waiting_for_mana = 0.0;
             self.player.waiting_for_mana_start = 0;
@@ -6751,8 +6757,10 @@ mod tests {
         fight.prepare_first_native_pull();
         let now = fight.now;
         let cap = fight.end_of_combat;
-        assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        // World bridge timestamps are nonnegative even when the source
+        // encounter has negative-time prepull actions.
+        let early = now.max(0) + 1_000_000;
+        assert!(cap > early);
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));
@@ -6954,7 +6962,4 @@ mod tests {
 
         assert!((fight.player.mana - expected_mana).abs() < 1e-9);
     }
-
-
-
 }
