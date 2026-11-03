@@ -5785,6 +5785,8 @@ impl<A: Agent> Fight<A> {
         let mut previous_damage = 0.0;
         let mut previous_health_damage = 0.0_f64;
         let mut previous_health_damage_events = 0;
+        let mut previous_mana_regen_gain = 0.0_f64;
+        let mut previous_mana_regen_events = 0_i32;
 
         for index in 0..target_count {
             if index != 0 {
@@ -5811,6 +5813,18 @@ impl<A: Agent> Fight<A> {
             {
                 return Err("RUST_WORLD_HEALTH_DAMAGE_RECEIPT_NONMONOTONIC");
             }
+            // Existing source-native 2-second mana ticks own these gains.
+            // These events include in-combat ticks, NOT paid between-pull rest.
+            let mana_regen_gain = self.resources[self.mana_regen_casting].actual_gain
+                + self.resources[self.mana_regen_not_casting].actual_gain;
+            let mana_regen_events = self.resources[self.mana_regen_casting].events
+                + self.resources[self.mana_regen_not_casting].events;
+            if !mana_regen_gain.is_finite()
+                || mana_regen_gain < previous_mana_regen_gain - 1e-8
+                || mana_regen_events < previous_mana_regen_events
+            {
+                return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
+            }
             windows.push(serde_json::json!({
                 "index": index,
                 "native_kill_ns": self.now,
@@ -5819,10 +5833,16 @@ impl<A: Agent> Fight<A> {
                 "actor_health": self.player.health,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
+                "native_combat_mana_regen_actual_gain":
+                    (mana_regen_gain - previous_mana_regen_gain).max(0.0),
+                "native_combat_mana_regen_events":
+                    mana_regen_events - previous_mana_regen_events,
             }));
             previous_damage = total_damage;
             previous_health_damage = health_damage;
             previous_health_damage_events = health_damage_events;
+            previous_mana_regen_gain = mana_regen_gain;
+            previous_mana_regen_events = mana_regen_events;
         }
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
