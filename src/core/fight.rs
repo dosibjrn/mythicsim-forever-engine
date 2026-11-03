@@ -1713,6 +1713,8 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) duration: i64,
     end_of_combat: i64,
     pull_started_at: i64,
+    /// Absolute offset of this level segment's local pull clock in the retained route clock.
+    pull_time_offset: i64,
     /// Go `executePhase` and `nextExecuteDuration` for a fight timed by duration.
     pub(crate) execute_phase: i32,
     next_execute: i64,
@@ -2345,6 +2347,47 @@ pub(crate) fn unit_config(prepared: &PreparedV2, unit: &UnitSource) -> Result<Co
             .as_ref()
             .map_or(0.0, |ranged| ranged.defender_bonus_ranged_attack_power),
     })
+}
+
+/// The actor state that must survive a prepared-build transition in a native route.
+/// The class Fight is rebuilt for the next level, but resources, pets, RNG and world time persist.
+pub(crate) struct RouteCarry {
+    now: i64,
+    health: f64,
+    mana: f64,
+    energy: Option<(f64, i32)>,
+    rage: Option<f64>,
+    pets: Vec<PetRouteCarry>,
+    rng: SimRng,
+}
+
+struct PetRouteCarry {
+    unit_index: i32,
+    label: String,
+    health: f64,
+    mana: f64,
+    focus: Option<f64>,
+}
+
+impl RouteCarry {
+    fn summary(&self) -> serde_json::Value {
+        serde_json::json!({
+            "clock_ns": self.now,
+            "health": self.health,
+            "mana": self.mana,
+            "energy": self.energy.map(|(current, combo_points)| serde_json::json!({
+                "current": current, "combo_points": combo_points
+            })),
+            "rage": self.rage,
+            "pets": self.pets.iter().map(|pet| serde_json::json!({
+                "unit_index": pet.unit_index,
+                "label": pet.label,
+                "health": pet.health,
+                "mana": pet.mana,
+                "focus": pet.focus,
+            })).collect::<Vec<_>>(),
+        })
+    }
 }
 
 impl<A: Agent> Fight<A> {
@@ -4059,6 +4102,7 @@ impl<A: Agent> Fight<A> {
             duration: config.base_duration,
             end_of_combat: config.base_duration,
             pull_started_at: 0,
+            pull_time_offset: 0,
             execute_phase: 0,
             next_execute: NEVER_EXPIRES,
             rng: SimRng::new(rng_mode, prepared.sim.labeled_rng, prepared.sim.seed as u64),
@@ -5701,20 +5745,89 @@ impl<A: Agent> Fight<A> {
         self.report(first_duration, total_duration, logs, elapsed_ns)
     }
 
+    fn take_route_carry(&mut self) -> RouteCarry {
+        let pets = self.active_pets.iter().map(|pet| PetRouteCarry {
+            unit_index: pet.unit_index,
+            label: pet.label.clone(),
+            health: pet.state.health,
+            mana: pet.state.mana,
+            focus: pet.focus.as_ref().map(|focus| focus.current),
+        }).collect();
+        let rng = std::mem::replace(
+            &mut self.rng,
+            SimRng::new(RngMode::Stochastic, false, 0),
+        );
+        RouteCarry {
+            now: self.now,
+            health: self.player.health,
+            mana: self.player.mana,
+            energy: self.energy.as_ref().map(|bar| (bar.current, bar.combo_points)),
+            rage: self.rage.as_ref().map(|bar| bar.current),
+            pets,
+            rng,
+        }
+    }
+
+    fn prepare_with_route_carry(
+        &mut self,
+        carry: RouteCarry,
+    ) -> Result<serde_json::Value, &'static str> {
+        let summary = carry.summary();
+        let relative_start = self.first_native_pull_relative_start();
+        let start_at = carry.now.checked_add(1_000_000)
+            .and_then(|at| at.checked_sub(relative_start))
+            .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+        let RouteCarry { health, mana, energy, rage, pets, rng, .. } = carry;
+        // Restore the prior native RNG stream before reset/prepull consumes any randomness.
+        self.rng = rng;
+        self.prepare_first_native_pull_at(start_at);
+        self.apply_route_resources(health, mana, energy, rage, &pets);
+        Ok(summary)
+    }
+
+    fn apply_route_resources(
+        &mut self,
+        health: f64,
+        mana: f64,
+        energy: Option<(f64, i32)>,
+        rage: Option<f64>,
+        pets: &[PetRouteCarry],
+    ) {
+        self.player.health = health.clamp(0.0, self.config.max_health);
+        self.player.mana = mana.clamp(0.0, self.config.max_mana);
+        if let (Some((current, combo_points)), Some(bar)) = (energy, self.energy.as_mut()) {
+            bar.current = current.clamp(0.0, bar.max);
+            bar.combo_points = combo_points.clamp(0, bar.max_combo_points);
+        }
+        if let (Some(current), Some(bar)) = (rage, self.rage.as_mut()) {
+            bar.current = current.clamp(0.0, bar.max);
+        }
+        for saved in pets {
+            if let Some(pet) = self.active_pets.iter_mut().find(|pet| {
+                pet.unit_index == saved.unit_index && pet.label == saved.label
+            }) {
+                pet.state.health = saved.health.clamp(0.0, pet.config.max_health);
+                pet.state.mana = saved.mana.clamp(0.0, pet.config.max_mana);
+                if let (Some(current), Some(focus)) = (saved.focus, pet.focus.as_mut()) {
+                    focus.current = current.clamp(0.0, focus.max);
+                }
+            }
+        }
+    }
+
     /// Go `runOnce`: reset, prepull, the event loop and cleanup.
     fn prepare_first_native_pull(&mut self) {
-        self.reset();
+        self.prepare_first_native_pull_at(0);
+    }
+
+    /// Prepare a pull on the route's monotonic clock. Pre-pull actions remain relative to the
+    /// level segment, while every scheduled event is placed on the retained world timeline.
+    fn prepare_first_native_pull_at(&mut self, start_at_ns: i64) {
+        self.reset_at(start_at_ns);
         // Go PrePull: time starts at the first prepull action; later ones run first at a tie.
         let count = self.prepull.len() as i32;
-        // Forever's Oil of Immolation rule: the oil is used before the pull, even with no prepull.
-        let start = match (self.prepull.first(), self.oil_of_immolation_start()) {
-            (Some(&(first, _)), Some(oil)) => Some(first.min(oil)),
-            (Some(&(first, _)), None) => Some(first),
-            (None, oil) => oil,
-        };
-        if let Some(start) = start {
-            self.now = start;
-        }
+        let relative_start = self.first_native_pull_relative_start();
+        self.now = start_at_ns.saturating_add(relative_start);
         for index in 0..self.prepull.len() {
             let (at, act) = self.prepull[index];
             let action = match act {
@@ -5743,9 +5856,18 @@ impl<A: Agent> Fight<A> {
                     Action::PrepullMoveDuration(duration)
                 }
             };
-            self.schedule(at, PRIORITY_PREPULL + count - index as i32, action);
+            self.schedule(start_at_ns.saturating_add(at), PRIORITY_PREPULL + count - index as i32, action);
         }
-        self.schedule(0, PRIORITY_PREPULL + count + 1, Action::EncounterStart);
+        self.schedule(start_at_ns, PRIORITY_PREPULL + count + 1, Action::EncounterStart);
+    }
+
+    fn first_native_pull_relative_start(&self) -> i64 {
+        match (self.prepull.first(), self.oil_of_immolation_start()) {
+            (Some(&(first, _)), Some(oil)) => first.min(oil),
+            (Some(&(first, _)), None) => first,
+            (None, Some(oil)) => oil,
+            (None, None) => 0,
+        }
     }
 
     fn run_once(&mut self) {
@@ -5767,6 +5889,26 @@ impl<A: Agent> Fight<A> {
     pub(crate) fn native_two_world_targets(&mut self, target_count: usize)
         -> Result<serde_json::Value, &'static str>
     {
+        self.native_world_route_segment(
+            target_count, 0, 0, None, None, None, true,
+        ).map(|(report, _carry)| report)
+    }
+
+    /// One level segment in a native multi-level world route. A level transition rebuilds the
+    /// class combat instance from the next prepared input, while carrying the logical actor's
+    /// resources, pet resources, RNG stream and monotonic world clock into that new instance.
+    /// Temporary class state/cooldowns are reinitialized by the new prepared build and are
+    /// explicitly reported as such; no paid recovery is invented here.
+    pub(crate) fn native_world_route_segment(
+        &mut self,
+        target_count: usize,
+        target_offset: usize,
+        segment_index: usize,
+        level: Option<i32>,
+        request_sha256: Option<&str>,
+        carry: Option<RouteCarry>,
+        last_segment: bool,
+    ) -> Result<(serde_json::Value, RouteCarry), &'static str> {
         if !world_bridge::enabled() {
             return Err("RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM");
         }
@@ -5778,10 +5920,19 @@ impl<A: Agent> Fight<A> {
             self.build_exclusive_tracking();
             self.apply_enemy_slow_priorities();
         }
-        self.rng.reseed(self.config.seed as u64);
         self.log = None;
-        world_bridge::begin_iteration(0);
-        self.prepare_first_native_pull();
+        let resource_carry_in = carry.as_ref().map(RouteCarry::summary);
+        if let Some(carry) = carry {
+            self.prepare_with_route_carry(carry)?;
+            // The prior segment ended on a real lethal ACK. This advances the same world
+            // session to its next target; the new Fight starts at the carried global clock.
+            world_bridge::begin_next_target(self.now)?;
+        } else {
+            self.rng.reseed(self.config.seed as u64);
+            world_bridge::begin_iteration(0);
+            self.prepare_first_native_pull_at(0);
+        }
+
         let mut windows = Vec::with_capacity(target_count);
         let mut previous_damage = 0.0;
         let mut previous_health_damage = 0.0_f64;
@@ -5791,9 +5942,8 @@ impl<A: Agent> Fight<A> {
 
         for index in 0..target_count {
             if index != 0 {
-                // No free actor reset. This intentionally retains the current
-                // no-downtime diagnostic clock until real paid travel/recovery
-                // is coupled through the same native/world timeline.
+                // No free actor reset. The same native/world ACK chain continues between
+                // targets and across level segments; paid travel/recovery remains unclaimed.
                 let next_at = self.now.checked_add(1_000_000)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
                 let next_end = next_at.checked_add(self.config.base_duration)
@@ -5827,7 +5977,9 @@ impl<A: Agent> Fight<A> {
                 return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
             }
             windows.push(serde_json::json!({
-                "index": index,
+                "index": target_offset + index,
+                "segment_index": segment_index,
+                "level": level,
                 "native_kill_ns": self.now,
                 "native_damage": total_damage - previous_damage,
                 "actor_mana": self.player.mana,
@@ -5845,14 +5997,31 @@ impl<A: Agent> Fight<A> {
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
+
+        let carry_out = self.take_route_carry();
         let report = serde_json::json!({
-            "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
-            "continuous_native_actor": true, "actual_2d_ack": true,
-            "paid_recovery": false, "world_targets_killed": target_count,
+            "scope": if level.is_some() {
+                "MULTI_LEVEL_GSIM_2D_ROUTE_SEGMENT_RESOURCE_CARRY_NOT_GATE"
+            } else {
+                "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6"
+            },
+            "segment_index": segment_index,
+            "level": level,
+            "request_sha256": request_sha256,
+            "actor_identity_continues": true,
+            "combat_instance_rebuilt_at_level_transition": resource_carry_in.is_some(),
+            "resource_carry_in": resource_carry_in,
+            "resource_carry_out": carry_out.summary(),
+            "cooldowns_carried": false,
+            "actual_2d_ack": true,
+            "paid_recovery": false,
+            "world_targets_killed": target_count,
             "windows": windows,
         });
-        self.cleanup();
-        Ok(report)
+        if last_segment {
+            self.cleanup();
+        }
+        Ok((report, carry_out))
     }
 
     /// Callable two-window source-Rust continuation smoke, NOT a 100-mob/2D gate.
@@ -5938,7 +6107,13 @@ impl<A: Agent> Fight<A> {
 
     /// Go `Simulation.reset` and `Environment.reset`.
     fn reset(&mut self) {
+        self.reset_at(0);
+    }
+
+    /// Reset a newly configured level segment at an absolute point on the retained route clock.
+    fn reset_at(&mut self, start_at_ns: i64) {
         self.in_prepull = true;
+        self.pull_time_offset = start_at_ns;
         self.duration = self.config.base_duration;
         if self.config.duration_variation != 0 {
             let variation = self.config.duration_variation * 2;
@@ -5954,16 +6129,18 @@ impl<A: Agent> Fight<A> {
         for batch in &mut self.travel_batches {
             batch.clear();
         }
-        self.pull_started_at = 0;
-        self.end_of_combat = self.duration;
+        self.pull_started_at = start_at_ns;
+        self.end_of_combat = start_at_ns.saturating_add(self.duration);
         self.execute_phase = 0;
         self.next_execute_phase();
-        self.now = 0;
+        self.now = start_at_ns;
         self.min_tracker_time = NEVER_EXPIRES;
         self.min_task_time = NEVER_EXPIRES;
         // Go Environment.reset always rolls the pet heartbeat offset, even without pets.
         let roll = self.random("Pet Stat Inheritance");
-        let prepull_start = self.prepull.first().map_or(0, |&(at, _)| at);
+        let prepull_start = start_at_ns.saturating_add(
+            self.prepull.first().map_or(0, |&(at, _)| at),
+        );
         self.heartbeat_offset = prepull_start - pet::PET_UPDATE_INTERVAL
             + crate::rotation::duration_from_seconds(pet::PET_UPDATE_INTERVAL_SECONDS * roll);
         self.encounter_damage_taken = 0.0;
@@ -5986,7 +6163,9 @@ impl<A: Agent> Fight<A> {
         let pet_mana_bar = self.active_pets.iter().any(|pet| pet.config.max_mana > 0.0)
             || self.pets.iter().any(|pet| pet.tto.is_some());
         if self.has_mana_bar() || pet_mana_bar {
-            let prepull_start = self.prepull.first().map_or(0, |&(at, _)| at);
+            let prepull_start = start_at_ns.saturating_add(
+                self.prepull.first().map_or(0, |&(at, _)| at),
+            );
             self.schedule(
                 prepull_start + 2 * crate::core::time::NS_PER_SECOND,
                 PRIORITY_REGEN,
@@ -6128,7 +6307,9 @@ impl<A: Agent> Fight<A> {
             self.player.waiting_for_mana_start = 0;
             self.update_mana_regen_rates();
             // Go energyBar.reset, after the mana and health bars.
-            let prepull_start = self.prepull.first().map_or(0, |&(at, _)| at);
+            let prepull_start = self.pull_time_offset.saturating_add(
+                self.prepull.first().map_or(0, |&(at, _)| at),
+            );
             self.reset_energy(prepull_start);
             self.reset_rage();
         }
