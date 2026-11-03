@@ -1998,6 +1998,8 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) movement_categories: Vec<usize>,
     /// The player's health when a fight starts, where it differs from the maximum.
     health_at_reset: Option<f64>,
+    /// The player's mana when a fight starts, where it differs from the maximum.
+    mana_at_reset: Option<f64>,
     /// Go `HpPercentForDefensives`, below which survival major cooldowns fire.
     pub(crate) hp_percent_for_defensives: f64,
     /// Forever's rule for casting regeneration auras (see [`casting_regen`]).
@@ -4242,6 +4244,7 @@ impl<A: Agent> Fight<A> {
             movement_category_names: Vec::new(),
             movement_categories: Vec::new(),
             health_at_reset: player.health_at_reset,
+            mana_at_reset: player.mana_at_reset,
             hp_percent_for_defensives: player.hp_percent_for_defensives,
             casting_regen_at_once: player.casting_regen_at_once,
             move_waits_for_queued_cast: player.move_waits_for_queued_cast,
@@ -6121,7 +6124,7 @@ impl<A: Agent> Fight<A> {
                     split[..units].fill(SpellMetrics::default());
                 }
             }
-            self.player.mana = self.config.max_mana;
+            self.player.mana = self.mana_at_reset.unwrap_or(self.config.max_mana);
             self.player.health = self.health_at_reset.unwrap_or(self.config.max_health);
             self.player.mana_regen_multiplier = 1.0;
             self.player.waiting_for_mana = 0.0;
@@ -6902,4 +6905,27 @@ mod tests {
         assert_eq!(Side::Player.target_position(), None);
         assert_eq!(Side::Pet(0).target_position(), None);
     }
+    #[test]
+    fn native_route_stage_starts_from_carried_health_and_mana() {
+        let mut prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        let max_health = prepared.player.stats["Health"];
+        let expected_health = max_health * 0.41;
+        let expected_mana = prepared.player.mana.max * 0.37;
+        prepared.player.health_at_reset = Some(expected_health);
+        prepared.player.mana_at_reset = Some(expected_mana);
+
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        ).unwrap();
+        fight.reset_unit(Side::Player);
+
+        assert!((fight.player.health - expected_health).abs() < 1e-9);
+        assert!((fight.player.mana - expected_mana).abs() < 1e-9);
+    }
+
+
 }
