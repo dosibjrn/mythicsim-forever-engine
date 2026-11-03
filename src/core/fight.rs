@@ -6027,6 +6027,11 @@ impl<A: Agent> Fight<A> {
             self.advance_tasks();
             return true;
         }
+        // Preserve scheduled post-pull events for a continuing native session.
+        // The existing one-shot iteration still resets the queue on its next run.
+        if next > self.end_of_combat {
+            return false;
+        }
         let Some((time, handle, action)) = self.queue.pop() else {
             return false;
         };
