@@ -20,6 +20,12 @@ pub(crate) struct LayoutTalent {
     pub name: &'static str,
     /// TraitNodeEntry MaxRanks.
     pub max_ranks: u32,
+    /// Client tree row, zero-based.
+    pub row: u8,
+    /// Client tree column, zero-based.
+    pub column: u8,
+    /// Prerequisite field and the minimum rank required (the prerequisite's max rank).
+    pub prerequisite: Option<(&'static str, u32)>,
     /// Whether the pinned proto has the field; a talent new since the pin has not.
     pub in_proto: bool,
 }
@@ -30,12 +36,7 @@ pub(crate) const fn talent(
     name: &'static str,
     max_ranks: u32,
 ) -> LayoutTalent {
-    LayoutTalent {
-        field,
-        name,
-        max_ranks,
-        in_proto: true,
-    }
+    talent_at(field, name, max_ranks, 0, 0, None)
 }
 
 /// A talent new since the pin: no proto field, so it is read into the extras.
@@ -44,10 +45,45 @@ pub(crate) const fn new_talent(
     name: &'static str,
     max_ranks: u32,
 ) -> LayoutTalent {
+    new_talent_at(field, name, max_ranks, 0, 0, None)
+}
+
+/// A talent with the client's tree position and optional full-rank prerequisite.
+pub(crate) const fn talent_at(
+    field: &'static str,
+    name: &'static str,
+    max_ranks: u32,
+    row: u8,
+    column: u8,
+    prerequisite: Option<(&'static str, u32)>,
+) -> LayoutTalent {
     LayoutTalent {
         field,
         name,
         max_ranks,
+        row,
+        column,
+        prerequisite,
+        in_proto: true,
+    }
+}
+
+/// A talent new since the pin, with the client's tree position and prerequisite.
+pub(crate) const fn new_talent_at(
+    field: &'static str,
+    name: &'static str,
+    max_ranks: u32,
+    row: u8,
+    column: u8,
+    prerequisite: Option<(&'static str, u32)>,
+) -> LayoutTalent {
+    LayoutTalent {
+        field,
+        name,
+        max_ranks,
+        row,
+        column,
+        prerequisite,
         in_proto: false,
     }
 }
