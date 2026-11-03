@@ -338,6 +338,14 @@ pub fn simulate(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> 
     run(prepared)
 }
 
+/// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
+pub fn native_two_pull_windows(prepared: &PreparedV2)
+    -> Result<serde_json::Value, PreparedError>
+{
+    check(prepared)?;
+    crate::classes::native_two_pull_windows(prepared).map_err(PreparedError::Invalid)
+}
+
 /// What gating a prepared v2 input and simulating it when supported came to.
 #[derive(Debug)]
 pub enum Gated {

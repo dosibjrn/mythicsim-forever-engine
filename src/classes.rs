@@ -28,6 +28,25 @@ pub(crate) fn run_prepared(
     }
 }
 
+/// Run the same native actor through two source-backed combat windows.
+/// This is a bounded diagnostic, not a live-2D or leveling gate.
+pub(crate) fn native_two_pull_windows(
+    prepared: &crate::contracts::prepared_v2::PreparedV2,
+) -> Result<serde_json::Value, String> {
+    match prepared.player.class.as_str() {
+        "ClassMage" => mage::agent::MageAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassDruid" => druid::agent::DruidAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassWarlock" => warlock::agent::WarlockAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassShaman" => shaman::agent::ShamanAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassPaladin" => paladin::agent::PaladinAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassPriest" => priest::agent::PriestAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassRogue" => rogue::agent::RogueAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassWarrior" => warrior::agent::WarriorAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        "ClassHunter" => hunter::agent::HunterAgent::fight(prepared)?.native_two_pull_windows().map_err(str::to_string),
+        other => Err(format!("class {other} has no native fight agent")),
+    }
+}
+
 /// The class agent Rust preparation builds for a player: Go's agent factory.
 pub(crate) fn prepare_agent(
     sim: &mut crate::prepare::sim::Sim,

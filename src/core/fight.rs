@@ -5701,7 +5701,7 @@ impl<A: Agent> Fight<A> {
     }
 
     /// Go `runOnce`: reset, prepull, the event loop and cleanup.
-    fn run_once(&mut self) {
+    fn prepare_first_native_pull(&mut self) {
         self.reset();
         // Go PrePull: time starts at the first prepull action; later ones run first at a tie.
         let count = self.prepull.len() as i32;
@@ -5745,9 +5745,54 @@ impl<A: Agent> Fight<A> {
             self.schedule(at, PRIORITY_PREPULL + count - index as i32, action);
         }
         self.schedule(0, PRIORITY_PREPULL + count + 1, Action::EncounterStart);
+    }
+
+    fn run_once(&mut self) {
+        self.prepare_first_native_pull();
         while self.step() {}
         if world_bridge::enabled() { world_bridge::finish(self.duration, self.encounter_damage_taken); }
         self.cleanup();
+    }
+
+    /// Callable two-window source-Rust continuation smoke, NOT a 100-mob/2D gate.
+    /// Both windows use real native scheduler actions and the same player/queue.
+    /// This diagnostic is duration-bounded; no mob death or paid downtime is claimed.
+    pub(crate) fn native_two_pull_windows(&mut self)
+        -> Result<serde_json::Value, &'static str>
+    {
+        if world_bridge::enabled() {
+            return Err("RUST_TWO_WINDOW_2D_CONTROLLER_NOT_CONNECTED");
+        }
+        if !self.extra_targets_built {
+            self.build_extra_targets();
+            self.build_exclusive_tracking();
+            self.apply_enemy_slow_priorities();
+        }
+        self.rng.reseed(self.config.seed as u64);
+        self.log = None;
+        self.prepare_first_native_pull();
+        while self.step() {}
+        let first_end_ns = self.end_of_combat;
+        let first = serde_json::json!({
+            "index": 0, "end_ns": first_end_ns,
+            "actor_mana": self.player.mana, "actor_health": self.player.health,
+        });
+        let second_end_ns = first_end_ns.checked_add(self.config.base_duration)
+            .ok_or("RUST_TWO_WINDOW_DURATION_OVERFLOW")?;
+        self.begin_next_target(first_end_ns, second_end_ns)?;
+        while self.step() {}
+        let second = serde_json::json!({
+            "index": 1, "end_ns": self.end_of_combat,
+            "actor_mana": self.player.mana, "actor_health": self.player.health,
+        });
+        let report = serde_json::json!({
+            "scope": "NATIVE_TWO_DURATION_WINDOWS_DIAGNOSTIC_NOT_GATE",
+            "selected_native_combat": true,
+            "actual_2d_ack": false, "paid_recovery": false,
+            "continuous_actor": true, "windows": [first, second],
+        });
+        self.cleanup();
+        Ok(report)
     }
 
     /// Begin a second distinct world target on the SAME native actor.

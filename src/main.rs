@@ -1,5 +1,5 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, prepare_json_with, prepared_refusals, simulate,
+    contracts::prepared_v2::PreparedV2, native_two_pull_windows, prepare_json_with, prepared_refusals, simulate,
     simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, Rules, SOURCE_REVISION,
 };
@@ -166,6 +166,24 @@ fn run() -> Result<(), Failure> {
     }
     if args.is_empty() || args == ["--help"] {
         println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine version");
+        return Ok(());
+    }
+    if args[0] == "native-pulls" {
+        if args.len() != 5 || args[1] != "--infile"
+            || args[3] != "--targets" || args[4] != "2" {
+            return Err("native-pulls requires --infile PREPARED_V2.json --targets 2".into());
+        }
+        let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
+        let prepared = prepared_v2(&input)?
+            .ok_or("native-pulls requires a prepared v2 input")?;
+        let windows = native_two_pull_windows(&prepared).map_err(|err| err.to_string())?;
+        println!("{}", serde_json::json!({
+            "engine": "forever-engine",
+            "source_sha256": prepared.request_sha256,
+            "scenario_id": prepared.scenario_id,
+            "result": windows,
+            "checkpoint_certified": false,
+        }));
         return Ok(());
     }
     if args.len() == 3 && args[0] == "check" && args[1] == "--infile" {
