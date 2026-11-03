@@ -54,7 +54,7 @@ mod druid_talent_layout_api_tests {
     #[test]
     fn exports_a_lossless_versioned_layout_projection() {
         let value = crate::forever_druid_talent_layout();
-        assert_eq!(value["schema_version"].as_u64(), Some(1));
+        assert_eq!(value["schema_version"].as_u64(), Some(2));
         assert_eq!(value["class"].as_str(), Some("druid"));
         assert_eq!(value["ruleset"].as_str(), Some("forever"));
 
@@ -65,6 +65,20 @@ mod druid_talent_layout_api_tests {
             .map(|tree| tree["key"].as_str().expect("tree key"))
             .collect::<Vec<_>>();
         assert_eq!(keys, vec!["balance", "feral", "restoration"]);
+
+        // The restoration tree changed positions in the current client data; the
+        // native projection must not silently preserve the old Python slot names.
+        assert_eq!(trees[2]["talents"][1]["field"].as_str(), Some("heart_of_the_wild"));
+        assert_eq!(trees[2]["talents"][1]["row"].as_u64(), Some(0));
+        assert_eq!(trees[2]["talents"][1]["column"].as_u64(), Some(2));
+        let lacerate = trees[1]["talents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|talent| talent["field"] == "lacerate")
+            .expect("Lacerate metadata");
+        assert_eq!(lacerate["prerequisites"][0]["field"].as_str(), Some("savage_fury"));
+        assert_eq!(lacerate["prerequisites"][0]["min_rank"].as_u64(), Some(2));
 
         for (tree, source_tree) in trees
             .iter()
@@ -77,6 +91,19 @@ mod druid_talent_layout_api_tests {
                 assert_eq!(entry["name"].as_str(), Some(source.name));
                 assert_eq!(entry["max_ranks"].as_u64(), Some(u64::from(source.max_ranks)));
                 assert_eq!(entry["in_proto"].as_bool(), Some(source.in_proto));
+                assert_eq!(entry["row"].as_u64(), Some(u64::from(source.row)));
+                assert_eq!(entry["column"].as_u64(), Some(u64::from(source.column)));
+                assert_eq!(
+                    entry["tier_points"].as_u64(),
+                    Some(u64::from(source.row) * 5)
+                );
+                let expected_prerequisites = source
+                    .prerequisite
+                    .map(|(field, min_rank)| {
+                        serde_json::json!([{"field": field, "min_rank": min_rank}])
+                    })
+                    .unwrap_or_else(|| serde_json::json!([]));
+                assert_eq!(entry["prerequisites"], expected_prerequisites);
             }
         }
     }
