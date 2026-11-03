@@ -5760,6 +5760,61 @@ impl<A: Agent> Fight<A> {
         self.cleanup();
     }
 
+    /// Two genuinely distinct gsim world mobs, one selected source-Rust actor.
+    /// Both must die from native damage with a committed world HP/hash ACK.
+    /// No paid recovery is simulated; this is not P4-P6 certification.
+    pub(crate) fn native_two_world_targets(&mut self)
+        -> Result<serde_json::Value, &'static str>
+    {
+        if !world_bridge::enabled() {
+            return Err("RUST_TWO_WORLD_TARGETS_REQUIRES_GSIM");
+        }
+        if !self.extra_targets_built {
+            self.build_extra_targets();
+            self.build_exclusive_tracking();
+            self.apply_enemy_slow_priorities();
+        }
+        self.rng.reseed(self.config.seed as u64);
+        self.log = None;
+        world_bridge::begin_iteration(0);
+        self.prepare_first_native_pull();
+        while self.step() {}
+        if !world_bridge::acknowledged_lethal() {
+            return Err("RUST_FIRST_WORLD_TARGET_NOT_NATIVE_LETHAL");
+        }
+        let first_clock = self.now;
+        let first_damage = self.encounter_damage_taken;
+        let first = serde_json::json!({
+            "index": 0, "native_kill_ns": first_clock,
+            "native_damage": first_damage,
+            "actor_mana": self.player.mana, "actor_health": self.player.health,
+        });
+        // The next gsim boundary is one representable millisecond after the
+        // acknowledged kill; no fabricated free travel or resource reset.
+        let next_at = first_clock.checked_add(1_000_000)
+            .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+        let next_end = next_at.checked_add(self.config.base_duration)
+            .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
+        self.begin_next_target(next_at, next_end)?;
+        while self.step() {}
+        if !world_bridge::acknowledged_lethal() {
+            return Err("RUST_SECOND_WORLD_TARGET_NOT_NATIVE_LETHAL");
+        }
+        let second = serde_json::json!({
+            "index": 1, "native_kill_ns": self.now,
+            "native_damage": self.encounter_damage_taken - first_damage,
+            "actor_mana": self.player.mana, "actor_health": self.player.health,
+        });
+        let report = serde_json::json!({
+            "scope": "TWO_REAL_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
+            "continuous_native_actor": true, "actual_2d_ack": true,
+            "paid_recovery": false, "world_targets_killed": 2,
+            "windows": [first, second],
+        });
+        self.cleanup();
+        Ok(report)
+    }
+
     /// Callable two-window source-Rust continuation smoke, NOT a 100-mob/2D gate.
     /// Both windows use real native scheduler actions and the same player/queue.
     /// This diagnostic is duration-bounded; no mob death or paid downtime is claimed.

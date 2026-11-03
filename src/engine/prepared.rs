@@ -338,6 +338,19 @@ pub fn simulate(prepared: &PreparedV2) -> Result<PreparedReport, PreparedError> 
     run(prepared)
 }
 
+/// Same selected native actor across two real world-lethal ACKs, not a gate.
+pub fn native_two_world_targets(prepared: &PreparedV2)
+    -> Result<serde_json::Value, PreparedError>
+{
+    check(prepared)?;
+    if !crate::core::fight::world_bridge::enabled() {
+        return Err(PreparedError::Invalid(
+            "RUST_TWO_WORLD_TARGETS_REQUIRES_GSIM".to_owned()));
+    }
+    crate::core::fight::world_bridge::start(&prepared.request_sha256);
+    crate::classes::native_two_world_targets(prepared).map_err(PreparedError::Invalid)
+}
+
 /// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
 pub fn native_two_pull_windows(prepared: &PreparedV2)
     -> Result<serde_json::Value, PreparedError>
