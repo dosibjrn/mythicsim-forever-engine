@@ -1,4 +1,5 @@
 name: Work2 native ItemSparse source import
+# Revalidate the merged Work2 head without mutating source files during tests.
 
 on:
   push:
