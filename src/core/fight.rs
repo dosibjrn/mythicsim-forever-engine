@@ -6784,7 +6784,7 @@ mod tests {
         let now = fight.now;
         let cap = fight.end_of_combat;
         assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        let early = now.max(0) + 1_000_000;
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));
