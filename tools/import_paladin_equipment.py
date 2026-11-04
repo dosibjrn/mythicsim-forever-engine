@@ -17,6 +17,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 PALADIN_CLASS_ID = 2
 PALADIN_CLASS_MASK = 1 << (PALADIN_CLASS_ID - 1)
+EQUIPMENT_SKILL_LINE_NAMES = {
+    "Axes", "Swords", "Maces", "Daggers", "Fist Weapons",
+    "Two-Handed Axes", "Two-Handed Swords", "Two-Handed Maces", "Polearms",
+    "Staves", "Bows", "Guns", "Crossbows", "Thrown",
+    "Cloth", "Leather", "Mail", "Plate Mail", "Shield",
+}
 
 
 def digest(path):
@@ -164,6 +170,13 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         })
     skills.sort(key=lambda item: (item["name"].casefold(), item["skill_id"]))
 
+    projected_skill_lines = {
+        skill_id: info
+        for skill_id, info in skill_lines.items()
+        if info["name"] in EQUIPMENT_SKILL_LINE_NAMES
+    }
+    skills = [skill for skill in skills if skill["name"] in EQUIPMENT_SKILL_LINE_NAMES]
+
     output = {
         "schema_version": 2,
         "client_build": client_build,
@@ -171,12 +184,12 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         "class_id": PALADIN_CLASS_ID,
         "class_mask": PALADIN_CLASS_MASK,
         "race_policy": "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
-        # Complete SkillLine index distinguishes a known unavailable proficiency from a
-        # missing/unsupported source mapping in the native consumer.
-        "skill_line_ids": sorted(skill_lines),
+        # The source CSV is hashed and row-counted in the manifest; the runtime projection
+        # retains only the complete equipment proficiency index used by ItemSparse filtering.
+        "skill_line_ids": sorted(projected_skill_lines),
         "skill_line_names": [
-            {"skill_id": skill_id, "name": skill_lines[skill_id]["name"]}
-            for skill_id in sorted(skill_lines)
+            {"skill_id": skill_id, "name": projected_skill_lines[skill_id]["name"]}
+            for skill_id in sorted(projected_skill_lines)
         ],
         "skills": skills,
     }
@@ -207,7 +220,8 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         "class_mask": PALADIN_CLASS_MASK,
         "paladin_class_skill_row_count": paladin_class_rows,
         "skill_race_class_availability_counts": dict(sorted(availability_counts.items())),
-        "skill_line_id_count": len(skill_lines),
+        "source_skill_line_id_count": len(skill_lines),
+        "projected_skill_line_id_count": len(projected_skill_lines),
         "projected_skill_count": len(skills),
         "class_wide_skill_count": sum(skill["min_level"] is not None for skill in skills),
         "race_specific_or_unavailable_skill_count": sum(skill["min_level"] is None for skill in skills),
@@ -224,7 +238,8 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
     return {
         "client_build": client_build,
         "paladin_class_skill_row_count": paladin_class_rows,
-        "skill_line_id_count": len(skill_lines),
+        "source_skill_line_id_count": len(skill_lines),
+        "projected_skill_line_id_count": len(projected_skill_lines),
         "projected_skill_count": len(skills),
         "class_wide_skill_count": source_manifest["class_wide_skill_count"],
         "race_specific_or_unavailable_skill_count": source_manifest["race_specific_or_unavailable_skill_count"],
