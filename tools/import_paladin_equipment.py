@@ -86,7 +86,12 @@ def race_mask_is_unrestricted(mask):
     return mask in (0, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
 
 
-def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=DATA):
+def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=DATA, *,
+                             class_name="paladin", class_id=PALADIN_CLASS_ID):
+    """Project source-backed, class-wide item proficiencies for one selected class."""
+    if not class_name.isalpha() or not 1 <= class_id <= 12:
+        raise ValueError("invalid class identity for equipment projection")
+    class_mask = 1 << (class_id - 1)
     data_dir = Path(data_dir)
     main_manifest_path = data_dir / "manifest.json"
     main_manifest = json.loads(main_manifest_path.read_text(encoding="utf-8"))
@@ -116,7 +121,7 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         skill_lines[skill_id] = {"name": name, "category_id": category_id}
 
     by_skill = {}
-    paladin_class_rows = 0
+    class_skill_rows = 0
     availability_counts = {}
     for line_number, row in enumerate(skill_info_rows, 2):
         skill_id = integer(row, ("SkillID",), "SkillRaceClassInfo", line_number)
@@ -126,10 +131,10 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         availability = integer(row, ("Availability",), "SkillRaceClassInfo", line_number)
         availability_counts[str(availability)] = availability_counts.get(str(availability), 0) + 1
 
-        if class_mask != 0 and not (class_mask & PALADIN_CLASS_MASK):
+        if class_mask != 0 and not (class_mask & class_mask):
             continue
-        if class_mask & PALADIN_CLASS_MASK:
-            paladin_class_rows += 1
+        if class_mask & class_mask:
+            class_skill_rows += 1
         by_skill.setdefault(skill_id, []).append({
             "class_mask": class_mask,
             "race_mask": mask,
@@ -139,8 +144,8 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
             "availability": availability,
         })
 
-    if not paladin_class_rows:
-        raise ValueError("SkillRaceClassInfo contains no rows for Paladin class mask 2")
+    if not class_skill_rows:
+        raise ValueError(f"SkillRaceClassInfo contains no rows for {class_name} class mask {class_mask}")
     if not skill_lines:
         raise ValueError("SkillLine contains no rows")
 
@@ -153,7 +158,7 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
             raise ValueError(f"SkillLine ID {skill_id} has no display name")
         class_rows = [
             row for row in rows
-            if row["class_mask"] == 0 or row["class_mask"] & PALADIN_CLASS_MASK
+            if row["class_mask"] == 0 or row["class_mask"] & class_mask
         ]
         unrestricted_rows = [row for row in class_rows if row["race_unrestricted"]]
         min_level = min((row["min_level"] for row in unrestricted_rows), default=None)
@@ -180,9 +185,9 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
     output = {
         "schema_version": 2,
         "client_build": client_build,
-        "class": "paladin",
-        "class_id": PALADIN_CLASS_ID,
-        "class_mask": PALADIN_CLASS_MASK,
+        "class": class_name,
+        "class_id": class_id,
+        "class_mask": class_mask,
         "race_policy": "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
         # The source CSV is hashed and row-counted in the manifest; the runtime projection
         # retains only the complete equipment proficiency index used by ItemSparse filtering.
@@ -193,7 +198,7 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         ],
         "skills": skills,
     }
-    output_path = data_dir / "paladin-equipment-skills.json"
+    output_path = data_dir / f"{class_name}-equipment-skills.json"
     write_json(output_path, output)
 
     source_manifest = {
@@ -216,9 +221,9 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
                 },
             },
         },
-        "class_id": PALADIN_CLASS_ID,
-        "class_mask": PALADIN_CLASS_MASK,
-        "paladin_class_skill_row_count": paladin_class_rows,
+        "class_id": class_id,
+        "class_mask": class_mask,
+        f"{class_name}_class_skill_row_count": class_skill_rows,
         "skill_race_class_availability_counts": dict(sorted(availability_counts.items())),
         "source_skill_line_id_count": len(skill_lines),
         "projected_skill_line_id_count": len(projected_skill_lines),
@@ -226,18 +231,18 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         "class_wide_skill_count": sum(skill["min_level"] is not None for skill in skills),
         "race_specific_or_unavailable_skill_count": sum(skill["min_level"] is None for skill in skills),
     }
-    source_manifest_path = data_dir / "paladin-equipment-skills.manifest.json"
+    source_manifest_path = data_dir / f"{class_name}-equipment-skills.manifest.json"
     write_json(source_manifest_path, source_manifest)
 
     main_manifest.setdefault("files", {})
-    main_manifest["files"]["paladin-equipment-skills.json"] = digest(output_path)
-    main_manifest["files"]["paladin-equipment-skills.manifest.json"] = digest(source_manifest_path)
+    main_manifest["files"][f"{class_name}-equipment-skills.json"] = digest(output_path)
+    main_manifest["files"][f"{class_name}-equipment-skills.manifest.json"] = digest(source_manifest_path)
     main_manifest["files"] = dict(sorted(main_manifest["files"].items()))
     write_json(main_manifest_path, main_manifest)
 
     return {
         "client_build": client_build,
-        "paladin_class_skill_row_count": paladin_class_rows,
+        f"{class_name}_class_skill_row_count": class_skill_rows,
         "source_skill_line_id_count": len(skill_lines),
         "projected_skill_line_id_count": len(projected_skill_lines),
         "projected_skill_count": len(skills),
