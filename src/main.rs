@@ -1,9 +1,8 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, native_item_options, native_player_context,
-    native_talent_options,
-    native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals,
-    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
-    PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    native_talent_options, native_two_pull_windows, native_two_world_targets, prepare_json_with,
+    prepared_refusals, simulate, simulate_prepared, simulate_prepared_gated, validate_prepared,
+    Gated, PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -199,7 +198,8 @@ fn run() -> Result<(), Failure> {
         let mut index = 1;
         while index < args.len() {
             let flag = args[index].as_str();
-            let value = args.get(index + 1)
+            let value = args
+                .get(index + 1)
                 .ok_or_else(|| format!("{flag} requires a value"))?;
             match flag {
                 "--class" => {
@@ -219,8 +219,11 @@ fn run() -> Result<(), Failure> {
         }
         let class = class.ok_or("talent-options requires --class")?;
         let level = level.ok_or("talent-options requires --level")?;
-        println!("{}", serde_json::to_string_pretty(&native_talent_options(&class, level))
-            .map_err(|err| err.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&native_talent_options(&class, level))
+                .map_err(|err| err.to_string())?
+        );
         return Ok(());
     }
     if args[0] == "player-context" {
