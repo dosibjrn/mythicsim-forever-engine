@@ -5,7 +5,8 @@
 //! comes off before Natural Shapeshifter's percentage. Go's pinned engine registers neither item.
 
 use forever_engine::{
-    check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared, RngMode, Rules,
+    check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared,
+    RngMode, Rules,
 };
 use serde_json::Value;
 use std::{fs, path::Path};
@@ -125,7 +126,9 @@ fn a_feral_with_both_casts_shifting_power_at_least_as_often() {
         let prepared: PreparedV2 =
             serde_json::from_value(self::prepared(request, Rules::Forever)).unwrap();
         check_prepared(&prepared).unwrap_or_else(|error| panic!("{error:?}"));
-        let result = simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result;
+        let result = simulate_prepared(&prepared, RngMode::Stochastic)
+            .unwrap()
+            .result;
         let player = &result["raidMetrics"]["parties"][0]["players"][0];
         let total: f64 = player["actions"]
             .as_array()
