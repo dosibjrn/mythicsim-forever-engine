@@ -1,5 +1,5 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
+    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, get_options, OptionsClass, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
     simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
@@ -171,8 +171,18 @@ fn run() -> Result<(), Failure> {
         }
         return Err("talent-layout requires exactly --class druid".into());
     }
+    if args.first().is_some_and(|arg| arg == "options") {
+        if args.len() != 5 || args[1] != "--class" || args[3] != "--level" {
+            return Err("options requires --class CLASS --level LEVEL".into());
+        }
+        let class: OptionsClass = args[2].parse()?;
+        let level: u8 = args[4].parse().map_err(|_| "options level must be an integer 1..=60")?;
+        let options = get_options(level, class)?;
+        println!("{}", serde_json::to_string_pretty(&options).map_err(|err| err.to_string())?);
+        return Ok(());
+    }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine talent-layout --class druid\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine talent-layout --class druid\nforever-engine options --class CLASS --level LEVEL\nforever-engine version");
         return Ok(());
     }
 
