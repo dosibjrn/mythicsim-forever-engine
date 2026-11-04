@@ -8,7 +8,10 @@ use std::rc::Rc;
 
 use crate::{
     contracts::prepared_v2::{Effect, PreparedV2, Spell as ExportedSpell},
-    core::fight::{Agent, AuraRef, DotId, Fight, Side, SpellId, SpellResult},
+    core::fight::{
+        poised::{self, Poised},
+        Agent, AuraRef, DotId, Fight, Side, SpellId, SpellResult,
+    },
 };
 
 use super::{
@@ -22,6 +25,7 @@ use super::{
         mutilate::Mutilate,
         poisons::{self, PoisonProc},
         rupture::{self, Rupture},
+        shank::{self, Shank},
         sinister_strike,
         slice_and_dice::SliceAndDice,
         stealth::Stealth,
@@ -31,6 +35,7 @@ use super::{
         adrenaline_rush::AdrenalineRush,
         blade_flurry::BladeFlurry,
         cold_blood::{self, ColdBlood},
+        death_mark::{self, DeathMark, Mark},
         procs::{self, Handler, Proc},
         quietus::{self, Quietus},
         riposte::Riposte,
@@ -70,6 +75,8 @@ pub(crate) enum RogueSpell {
     KidneyShot,
     ExposeArmor,
     Riposte,
+    Shank,
+    DeathMark,
 }
 
 /// Class auras with Rust behavior.
@@ -82,12 +89,14 @@ pub(crate) enum RogueAura {
     AdrenalineRush,
     ColdBlood,
     ThousandCuts,
+    Poised,
     WoundPoisonTrigger,
     Venom,
     Quietus,
     KidneyShotStun,
     ExposeArmor,
     RiposteTrigger,
+    DeathMark,
     /// A talent proc trigger, by its index in the agent's triggers.
     Proc(usize),
 }
@@ -120,6 +129,11 @@ pub(crate) struct RogueAgent {
     premeditation: Option<Premeditation>,
     preparation: Option<Rc<Preparation>>,
     thousand_cuts: Option<Rc<ThousandCuts>>,
+    poised: Option<Rc<Poised>>,
+    shank: Option<Shank>,
+    death_mark: Option<Rc<DeathMark>>,
+    /// The mark Death Mark has on its target.
+    mark: Mark,
     procs: Vec<Rc<Proc>>,
     wound_poison: Option<Rc<PoisonProc>>,
     wound_debuff: Option<AuraRef>,
@@ -127,6 +141,10 @@ pub(crate) struct RogueAgent {
     /// Go `additivePoisonBonusChance`, which Venom raises while it is up.
     poison_bonus: f64,
     ghostly_dodge: Option<AuraRef>,
+    /// Forever's rules: Ghostly Strike's aura that lets Ambush and Garrote out of Stealth.
+    ghostly_ready: Option<AuraRef>,
+    /// Forever's rules: Ghostly Strike's damage is normalized.
+    ghostly_normalized: bool,
     hemorrhage_debuff: Option<AuraRef>,
     garrote: Option<Garrote>,
     /// What each target's Garrote stored, by target position.
@@ -199,6 +217,8 @@ impl RogueAgent {
             "kidney_shot" if energy && has("kidney_shot") => Some(RogueSpell::KidneyShot),
             "expose_armor" if energy && has("expose_armor") => Some(RogueSpell::ExposeArmor),
             "riposte" if energy && has("riposte") => Some(RogueSpell::Riposte),
+            "shank" if energy && has("shank") => Some(RogueSpell::Shank),
+            "death_mark" if energy && has("death_mark") => Some(RogueSpell::DeathMark),
             "garrote" if energy && spell.dot.is_some() && has("garrote") => {
                 Some(RogueSpell::Garrote)
             }
@@ -225,6 +245,7 @@ impl RogueAgent {
                 }
                 Effect::ColdBlood { aura, .. } => Some((aura.clone(), RogueAura::ColdBlood)),
                 Effect::ThousandCuts { aura, .. } => Some((aura.clone(), RogueAura::ThousandCuts)),
+                Effect::Poised { aura, .. } => Some((aura.clone(), RogueAura::Poised)),
                 Effect::WoundPoison { trigger_aura, .. } => {
                     Some((trigger_aura.clone(), RogueAura::WoundPoisonTrigger))
                 }
@@ -237,6 +258,7 @@ impl RogueAgent {
                 Effect::Riposte { trigger_aura, .. } => {
                     Some((trigger_aura.clone(), RogueAura::RiposteTrigger))
                 }
+                Effect::DeathMark { aura, .. } => Some((aura.clone(), RogueAura::DeathMark)),
                 _ => None,
             })
             .chain(
@@ -466,6 +488,7 @@ impl RogueAgent {
                     magic,
                     hemorrhage_aura,
                     hemorrhage_multiplier,
+                    hemorrhage_garrote,
                     ..
                 } => {
                     // spelldata TickOutcome for a dot whose hit was rolled on the special table.
@@ -498,6 +521,7 @@ impl RogueAgent {
                         tick_outcome,
                         hemorrhage,
                         hemorrhage_multiplier: *hemorrhage_multiplier,
+                        hemorrhage_garrote: *hemorrhage_garrote,
                     }));
                 }
                 Effect::Mutilate {
@@ -570,6 +594,55 @@ impl RogueAgent {
                     let bound =
                         thousand_cuts::bind(&mut fight, aura, *cost_per_stack, class_spells)?;
                     fight.agent.thousand_cuts = Some(Rc::new(bound));
+                }
+                Effect::Poised {
+                    aura,
+                    cost_reduction,
+                    class_spells,
+                } => {
+                    let bound = poised::bind(&mut fight, aura, *cost_reduction, class_spells)?;
+                    fight.agent.poised = Some(Rc::new(bound));
+                }
+                Effect::DeathMark {
+                    aura,
+                    stored_per_point,
+                    cap_base,
+                    cap_per_point,
+                    attack_power_per_point,
+                    coup_de_grace,
+                    doubled_class_spells,
+                    ..
+                } => {
+                    let spell = class_spell(&fight, RogueSpell::DeathMark)
+                        .ok_or("Death Mark has no spell")?;
+                    let bound = death_mark::bind(
+                        &mut fight,
+                        spell,
+                        aura,
+                        *stored_per_point,
+                        *cap_base,
+                        *cap_per_point,
+                        *attack_power_per_point,
+                        *coup_de_grace,
+                        doubled_class_spells,
+                    )?;
+                    fight.agent.death_mark = Some(Rc::new(bound));
+                }
+                Effect::Shank {
+                    energy_gain,
+                    boot_knife_chance,
+                    boot_knife_combo_points,
+                    boot_knife_action,
+                    ..
+                } => {
+                    let bound = shank::bind(
+                        &mut fight,
+                        *energy_gain,
+                        *boot_knife_chance,
+                        *boot_knife_combo_points,
+                        boot_knife_action.as_ref(),
+                    );
+                    fight.agent.shank = Some(bound);
                 }
                 Effect::WoundPoison {
                     trigger_aura,
@@ -668,12 +741,23 @@ impl RogueAgent {
                         ready: fight.player_aura(ready_aura)?,
                     });
                 }
-                Effect::GhostlyStrike { dodge_aura, .. } => {
+                Effect::GhostlyStrike {
+                    dodge_aura,
+                    normalized,
+                    ready_aura,
+                    ..
+                } => {
                     fight.agent.ghostly_dodge = if dodge_aura.is_empty() {
                         None
                     } else {
                         Some(fight.player_aura(dodge_aura)?)
                     };
+                    fight.agent.ghostly_ready = if ready_aura.is_empty() {
+                        None
+                    } else {
+                        Some(fight.player_aura(ready_aura)?)
+                    };
+                    fight.agent.ghostly_normalized = *normalized;
                 }
                 Effect::Hemorrhage { debuff_aura, .. } => {
                     fight.agent.hemorrhage_debuff = Some(Self::target_aura(&fight, debuff_aura)?);
@@ -684,13 +768,20 @@ impl RogueAgent {
                     tick_can_crit,
                     magic,
                     dirty_deeds,
+                    ghostly_aura,
                     ..
                 } => {
+                    let ghostly = if ghostly_aura.is_empty() {
+                        None
+                    } else {
+                        Some(fight.player_aura(ghostly_aura)?)
+                    };
                     fight.agent.garrote = Some(Garrote {
                         tick_damage: *tick_damage,
                         attack_power_share: *attack_power_share,
                         tick_outcome: rupture::tick_outcome(*tick_can_crit, *magic)?,
                         dirty_deeds: *dirty_deeds,
+                        ghostly,
                     });
                 }
                 Effect::RogueProc {
@@ -801,6 +892,8 @@ impl Agent for RogueAgent {
                 | RogueSpell::Garrote
                 | RogueSpell::KidneyShot
                 | RogueSpell::ExposeArmor
+                | RogueSpell::Shank
+                | RogueSpell::DeathMark
         ) {
             Self::break_stealth(fight);
         }
@@ -882,7 +975,9 @@ impl Agent for RogueAgent {
             }
             RogueSpell::GhostlyStrike => {
                 let dodge = fight.agent.ghostly_dodge;
-                subtlety_strikes::ghostly_strike(fight, spell, target, dodge);
+                let ready = fight.agent.ghostly_ready;
+                let normalized = fight.agent.ghostly_normalized;
+                subtlety_strikes::ghostly_strike(fight, spell, target, dodge, ready, normalized);
             }
             RogueSpell::Hemorrhage => {
                 let debuff = fight.agent.hemorrhage_debuff.expect("Hemorrhage is bound");
@@ -904,10 +999,23 @@ impl Agent for RogueAgent {
                 let riposte = fight.agent.riposte.expect("Riposte is bound");
                 riposte.apply(fight, spell, target);
             }
+            RogueSpell::Shank => {
+                let shank = fight.agent.shank.expect("Shank is bound");
+                shank.apply(fight, spell, target);
+                // Venom (Forever's rules) puts its poison aura up for 6 sec on a Shank.
+                if let Some(venom) = fight.agent.venom.clone() {
+                    venom.restart(fight);
+                }
+            }
             RogueSpell::ExposeArmor => {
                 let expose_armor = fight.agent.expose_armor.expect("Expose Armor is bound");
                 let finisher = Self::finisher(fight);
                 expose_armor.apply(fight, spell, target, &finisher);
+            }
+            RogueSpell::DeathMark => {
+                let death_mark = fight.agent.death_mark.clone().expect("Death Mark is bound");
+                let finisher = Self::finisher(fight);
+                fight.agent.mark = death_mark.apply(fight, spell, target, &finisher);
             }
             RogueSpell::ColdBlood => {
                 let cold_blood = fight.agent.cold_blood.clone().expect("Cold Blood is bound");
@@ -930,6 +1038,13 @@ impl Agent for RogueAgent {
         }
     }
 
+    fn agent_reset(fight: &mut Fight<Self>) {
+        fight.agent.mark = Mark::default();
+        if let Some(poised) = fight.agent.poised.clone() {
+            poised.on_reset(fight);
+        }
+    }
+
     fn extra_cast_condition(fight: &Fight<Self>, _spell: SpellId, behavior: RogueSpell) -> bool {
         match behavior {
             RogueSpell::Backstab => fight
@@ -940,6 +1055,7 @@ impl Agent for RogueAgent {
             | RogueSpell::SliceAndDice
             | RogueSpell::Rupture
             | RogueSpell::Venom
+            | RogueSpell::DeathMark
             | RogueSpell::KidneyShot => fight.energy_bar().combo_points > 0,
             RogueSpell::ExposeArmor => fight
                 .agent
@@ -983,6 +1099,7 @@ impl Agent for RogueAgent {
             | RogueSpell::SliceAndDice
             | RogueSpell::Rupture
             | RogueSpell::Venom
+            | RogueSpell::DeathMark
             | RogueSpell::KidneyShot => (NEVER_EXPIRES, reads::RESOURCES),
             // The combo points, and the category's active member.
             RogueSpell::ExposeArmor => (NEVER_EXPIRES, reads::RESOURCES | reads::AURAS),
@@ -1002,6 +1119,7 @@ impl Agent for RogueAgent {
                 | RogueSpell::SliceAndDice
                 | RogueSpell::Rupture
                 | RogueSpell::Venom
+                | RogueSpell::DeathMark
                 | RogueSpell::KidneyShot
                 | RogueSpell::ExposeArmor
         ) {
@@ -1070,6 +1188,7 @@ impl Agent for RogueAgent {
                 .clone()
                 .expect("bound")
                 .on_gain(fight),
+            RogueAura::Poised => fight.agent.poised.clone().expect("bound").on_gain(fight),
             RogueAura::ThousandCuts => fight
                 .agent
                 .thousand_cuts
@@ -1106,9 +1225,16 @@ impl Agent for RogueAgent {
         spell: SpellId,
         _target: Side,
     ) {
-        if kind == RogueAura::ThousandCuts {
-            let cuts = fight.agent.thousand_cuts.clone().expect("bound");
-            cuts.on_apply_effects(fight, spell);
+        match kind {
+            RogueAura::ThousandCuts => {
+                let cuts = fight.agent.thousand_cuts.clone().expect("bound");
+                cuts.on_apply_effects(fight, spell);
+            }
+            RogueAura::Poised => {
+                let poised = fight.agent.poised.clone().expect("bound");
+                poised.on_apply_effects(fight, spell);
+            }
+            _ => {}
         }
     }
 
@@ -1131,11 +1257,18 @@ impl Agent for RogueAgent {
         spell: SpellId,
         result: &SpellResult,
     ) {
-        if let RogueAura::Proc(index) = kind {
-            let trigger = fight.agent.procs[index].clone();
-            if trigger.periodic {
-                trigger.callback(fight, aura, spell, result);
+        match kind {
+            RogueAura::Proc(index) => {
+                let trigger = fight.agent.procs[index].clone();
+                if trigger.periodic {
+                    trigger.callback(fight, aura, spell, result);
+                }
             }
+            RogueAura::DeathMark => {
+                let death_mark = fight.agent.death_mark.clone().expect("bound");
+                death_mark.store(&mut fight.agent.mark, spell, result);
+            }
+            _ => {}
         }
     }
 
@@ -1179,6 +1312,12 @@ impl Agent for RogueAgent {
                 let pause = fight.agent.kidney_shot_pause;
                 kidney_shot.resume_target(fight, pause);
                 kidney_shot.on_stun_change(fight, false);
+            }
+            RogueAura::Poised => fight.agent.poised.clone().expect("bound").on_expire(fight),
+            RogueAura::DeathMark => {
+                let death_mark = fight.agent.death_mark.clone().expect("bound");
+                let mark = std::mem::take(&mut fight.agent.mark);
+                death_mark.release(fight, mark);
             }
             RogueAura::ThousandCuts => fight
                 .agent
@@ -1229,6 +1368,11 @@ impl Agent for RogueAgent {
                 if !trigger.periodic {
                     trigger.callback(fight, aura, spell, result);
                 }
+                None
+            }
+            RogueAura::DeathMark => {
+                let death_mark = fight.agent.death_mark.clone().expect("bound");
+                death_mark.store(&mut fight.agent.mark, spell, result);
                 None
             }
             RogueAura::BladeFlurry => {

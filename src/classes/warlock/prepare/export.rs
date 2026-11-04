@@ -224,7 +224,7 @@ impl Warlock {
         effects.push(with_kind("drain_life", drain));
         if talents.bool("wrack") {
             // wrack.go: a channel scaled by Soul Siphon and a bonus on two dots' ticks
-            let row = data.wrack.highest();
+            let row = crate::prepare::hotfix_113554::row(sim.rules, data.wrack.highest().id);
             let mut wrack = warlock_tick(row, unrepresented);
             wrack.insert("soul_siphon".into(), json!(soul_siphon));
             wrack.insert("dot_bonus".into(), json!(1.0 + row.effect_n(2).percent()));
@@ -519,7 +519,9 @@ impl Warlock {
                 "shadow_aura": "Shadow and Flame (Shadow)", "fire_aura": "Shadow and Flame (Fire)",
                 "shadow_spell_id": data.shadow_and_flame_triggered.by_id(1293816).id,
                 "fire_spell_id": data.shadow_and_flame_triggered.by_id(426311).id,
-                "multiplier": 1.0 + data.shadow_and_flame.effect_at(3).fraction_at(shadow_and_flame),
+                "multiplier": 1.0 + crate::prepare::hotfix_113554::talent(sim.rules, 426316, 5)
+                    .effect_at(3)
+                    .fraction_at(shadow_and_flame),
                 "trigger_spells": proc_trigger_spells(
                     sim, unit, masks::CONFLAGRATE | masks::SHADOW_BURN),
                 "shadow_spells": spells_matching(sim, unit, masks::CONFLAGRATE),

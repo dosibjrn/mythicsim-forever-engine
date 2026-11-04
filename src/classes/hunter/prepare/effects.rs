@@ -9,6 +9,7 @@ use crate::prepare::aura_helpers::{CallbackMask, ProcTrigger};
 use crate::prepare::character::constants::{CHARACTER_LEVEL, MAX_MELEE_RANGE};
 use crate::prepare::dbcenums;
 use crate::prepare::export::action_id;
+use crate::prepare::hotfix_113554;
 use crate::prepare::parse_effects::{dry_run, ParseOptions};
 use crate::prepare::sim::{Sim, SpellId, UnitId, UnitType, MILLISECOND, NEVER_EXPIRES};
 use crate::prepare::spell::{school, DefenseType, ProcMask};
@@ -16,7 +17,7 @@ use crate::prepare::spelldata::{spell::TickOutcomeKind, Ladder, Spell as Row};
 
 use super::spell_data::spell_data;
 use super::spells::{
-    ARCANE_SHOT_RAP_COEFFICIENT, EXPLOSIVE_TRAP_RANGE, SERPENT_STING_RAP_PER_TICK,
+    arcane_shot_rap_coefficient, serpent_sting_rap_per_tick, EXPLOSIVE_TRAP_RANGE,
     SUMMON_HAWK_RAP_SHARE, SUMMON_HAWK_SWING_SHARE, TRAP_ATTACK_POWER_SHARE, VOLLEY_TICK_DAMAGE,
 };
 use super::{masks, Hunter};
@@ -81,27 +82,29 @@ impl Hunter {
     pub(super) fn export_effects(&self, sim: &Sim, unit: UnitId) -> Vec<Value> {
         let data = spell_data();
         let mut effects: Vec<Value> = Vec::new();
+        // The rank's row under these rules: the live hotfix cache of 3 November raised the shots.
+        let row = |rank: &Row| hotfix_113554::row(sim.rules, rank.id);
 
         // aimed_shot.go and sniper_shot.go: a normalized ranged weapon shot plus the rank's flat
         // bonus, rolled on the ranged hit table and dealt after travel.
         if let Some(spell) = self.aimed_shot {
             effects.push(json!({
                 "kind": "aimed_shot", "spell_id": spell_id_of(sim, spell),
-                "flat_bonus": data.aimed_shot.highest().damage_effect().average(CHARACTER_LEVEL),
+                "flat_bonus": row(data.aimed_shot.highest()).damage_effect().average(CHARACTER_LEVEL),
             }));
         }
         // arcane_shot.go: the rank's flat damage plus a share of ranged attack power.
         if let Some(spell) = self.arcane_shot {
             effects.push(json!({
                 "kind": "arcane_shot", "spell_id": spell_id_of(sim, spell),
-                "base_damage": data.arcane_shot.highest().damage_effect().average(CHARACTER_LEVEL),
-                "rap_coefficient": ARCANE_SHOT_RAP_COEFFICIENT,
+                "base_damage": row(data.arcane_shot.highest()).damage_effect().average(CHARACTER_LEVEL),
+                "rap_coefficient": arcane_shot_rap_coefficient(sim.rules),
             }));
         }
         if let Some(spell) = self.sniper_shot {
             effects.push(json!({
                 "kind": "sniper_shot", "spell_id": spell_id_of(sim, spell),
-                "flat_bonus": data.sniper_shot.highest().damage_effect().average(CHARACTER_LEVEL),
+                "flat_bonus": row(data.sniper_shot.highest()).damage_effect().average(CHARACTER_LEVEL),
             }));
         }
         // multi_shot.go: one normalized shot per target, at most three.
@@ -111,11 +114,11 @@ impl Hunter {
         // serpent_sting.go: a ranged hit roll, then after travel a dot whose ticks add a share
         // of ranged attack power.
         if let Some(spell) = self.serpent_sting {
-            let rank = data.serpent_sting.highest_for(sim.rules);
+            let rank = row(data.serpent_sting.highest_for(sim.rules));
             effects.push(json!({
                 "kind": "serpent_sting", "spell_id": spell_id_of(sim, spell),
                 "tick_base": rank.periodic_effect().average(CHARACTER_LEVEL),
-                "attack_power_share": SERPENT_STING_RAP_PER_TICK,
+                "attack_power_share": serpent_sting_rap_per_tick(sim.rules),
                 "tick_outcome": tick_outcome(rank),
             }));
         }

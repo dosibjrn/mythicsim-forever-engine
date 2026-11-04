@@ -466,7 +466,9 @@ impl Hunter {
             class_mod(
                 SpellModType::DamageDoneFlat,
                 masks::MULTI_SHOT | masks::AIMED_SHOT | masks::VOLLEY,
-                spell_data().barrage.effect_at(1).fraction_at(rank),
+                crate::prepare::hotfix_113554::talent(sim.rules, 19461, 3)
+                    .effect_at(1)
+                    .fraction_at(rank),
             ),
         );
     }
@@ -897,6 +899,25 @@ impl Hunter {
             sim.activate_spell_mod(id);
         } else {
             sim.deactivate_spell_mod(id);
+        }
+    }
+}
+
+#[cfg(test)]
+mod barrage_tests {
+    use super::*;
+
+    #[test]
+    fn barrage_is_5_10_15_under_forever_rules() {
+        let forever = crate::prepare::hotfix_113554::talent(Rules::Forever, 19461, 3).effect_at(1);
+        let reference =
+            crate::prepare::hotfix_113554::talent(Rules::GoReference, 19461, 3).effect_at(1);
+        for (rank, f, r) in [(1, 0.05, 0.03), (2, 0.10, 0.07), (3, 0.15, 0.10)] {
+            assert!((forever.fraction_at(rank) - f).abs() < 1e-9, "rank {rank}");
+            assert!(
+                (reference.fraction_at(rank) - r).abs() < 1e-9,
+                "rank {rank}"
+            );
         }
     }
 }

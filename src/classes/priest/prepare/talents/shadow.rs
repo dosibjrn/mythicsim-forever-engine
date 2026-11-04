@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use crate::contracts::prepared_v2::ActionId;
 use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger, PseudoStatField};
+use crate::prepare::buffs::dark_inspiration::bid_own_dark_inspiration;
 use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::dbcenums;
 use crate::prepare::sim::{
@@ -15,7 +16,6 @@ use crate::prepare::spell::{
 };
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::SchoolIndex;
-use crate::prepare::stats::Stat;
 
 use super::super::masks;
 use super::super::spell_data::spell_data;
@@ -155,7 +155,9 @@ impl Priest {
     }
 
     /// Dark Inspiration (client 70425): Mind Blast and a fully channeled Mind Flay raise the
-    /// priest's Spirit by 3% a point for 10 sec. The party half is not applied.
+    /// priest's Spirit by 3% a point for 10 sec. The party half is not applied. The Spirit bids in
+    /// the party buff's category (wowsims/forever `NewSpellDataDarkInspirationAuraFor`): beside
+    /// another priest's copy in the party the stronger holds the Spirit alone, the party's on a tie.
     fn apply_dark_inspiration(&self, sim: &mut Sim, unit: UnitId) {
         let points = self.talents.i32("dark_inspiration");
         if points == 0 {
@@ -163,11 +165,6 @@ impl Priest {
         }
         let data = spell_data();
         let buff = data.dark_inspiration_triggered.highest();
-        let spirit = sim.new_dynamic_multiply_stat(
-            unit,
-            Stat::Spirit,
-            data.dark_inspiration.multiplier_at(points),
-        );
         let aura = sim.register_aura(
             unit,
             AuraConfig {
@@ -177,7 +174,7 @@ impl Priest {
                 ..AuraConfig::default()
             },
         );
-        sim.attach_stat_dependency(aura, spirit);
+        bid_own_dark_inspiration(sim, unit, aura, data.dark_inspiration.multiplier_at(points));
         sim.make_proc_trigger_aura(
             unit,
             &ProcTrigger {

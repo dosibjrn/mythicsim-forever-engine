@@ -11,6 +11,7 @@ use crate::prepare::export::action_id;
 use crate::prepare::sim::Rules;
 
 use super::poisons::{poison_proc_mask, IMBUES};
+use super::rework;
 use super::spell_data::spell_data;
 use super::util::{has_dagger, Hand};
 use super::{Rogue, CLASS_SPELLS, SLICE_AND_DICE_DURATIONS};
@@ -135,16 +136,34 @@ fn rogue_effects(rogue: &Rogue, env: &Environment) -> Vec<Value> {
         }));
     }
     // rogue.go ApplyFinisher: Relentless Strikes' 20% a combo point for 25 energy, Go literals,
-    // and Ruthlessness's chance.
+    // and Ruthlessness's chance. Under Forever's rules (the notes of 2 November 2026) it has
+    // five ranks of 4% a combo point each, read from the layout's extras.
+    let (relentless_strikes, relentless_chance) = match env.rules {
+        Rules::Forever => {
+            let rank = rogue.extra_points("relentless_strikes");
+            (
+                rank > 0,
+                rework::RELENTLESS_STRIKES_CHANCE_PER_POINT_PER_RANK * f64::from(rank),
+            )
+        }
+        Rules::GoReference => (rogue.talents.bool("relentless_strikes"), 0.2),
+    };
     effects.push(json!({
-        "kind": "rogue_finisher", "relentless_strikes": rogue.talents.bool("relentless_strikes"),
-        "relentless_strikes_chance_per_point": 0.2, "relentless_strikes_energy": 25.0,
+        "kind": "rogue_finisher", "relentless_strikes": relentless_strikes,
+        "relentless_strikes_chance_per_point": relentless_chance,
+        "relentless_strikes_energy": rework::RELENTLESS_STRIKES_ENERGY,
         "relentless_strikes_action": action(14179),
         "ruthlessness_chance": rogue.ruthlessness_chance,
         "ruthlessness_action": action(14161),
     }));
     // poisons.go: each imbue's weapon proc rolls its chance, raised by Improved Poisons, inside
-    // the handler. The attack power shares are server side, from the devs (community #781).
+    // the handler. The attack power shares are server side, from the devs (community #781); the
+    // notes of 2 November 2026 double both under Forever's rules (Instant Poison 0.005 to 0.01,
+    // Deadly Poison 0.0045 to 0.009 a tick).
+    let (instant_share, deadly_share) = match env.rules {
+        Rules::Forever => (0.01, 0.009),
+        Rules::GoReference => (0.005, 0.0045),
+    };
     let bonus = poison_bonus(rogue);
     let hands = |imbue: i32| poison_proc_mask(sim, env.player, imbue).names();
     if let Some(spell) = rogue.spells.instant_poison {
@@ -152,7 +171,7 @@ fn rogue_effects(rogue: &Rogue, env: &Environment) -> Vec<Value> {
             "kind": "instant_poison", "trigger_aura": "Instant Poison",
             "spell_id": sim.spell(spell).action_id.spell_id,
             "proc_mask": hands(IMBUES.instant), "proc_chance": 0.2 + bonus,
-            "min_damage": 76.0, "max_damage": 100.0, "attack_power_share": 0.005,
+            "min_damage": 76.0, "max_damage": 100.0, "attack_power_share": instant_share,
         }));
     }
     if let Some(spell) = rogue.spells.deadly_poison {
@@ -166,7 +185,7 @@ fn rogue_effects(rogue: &Rogue, env: &Environment) -> Vec<Value> {
         effects.push(json!({
             "kind": "deadly_poison", "trigger_aura": "Deadly Poison", "spell_id": id.spell_id,
             "tag": id.tag, "proc_mask": hands(IMBUES.deadly), "proc_chance": 0.3 + bonus,
-            "tick_damage": tick_damage, "attack_power_share": 0.0045,
+            "tick_damage": tick_damage, "attack_power_share": deadly_share,
         }));
     }
     effects

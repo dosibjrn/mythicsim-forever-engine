@@ -7,6 +7,9 @@ use forever_engine::contracts::prepared_v2::PreparedV2;
 use serde_json::{json, Value};
 use std::{fs, path::Path};
 
+#[path = "support/warrior_trees_20261104.rs"]
+mod warrior_trees_20261104;
+
 const ITERATIONS: u64 = 300;
 
 fn fixture(name: &str) -> Value {
@@ -87,7 +90,9 @@ fn only_forever_preparation_lets_autocast_skip_unready_cooldowns() {
             .join("fixtures/mage/prepared-v2/production-arms-warrior.request.json"),
     )
     .unwrap();
-    let forever = forever_engine::prepare_json(&request, "x").unwrap();
+    let forever =
+        forever_engine::prepare_json(&warrior_trees_20261104::forever_bytes(&request), "x")
+            .unwrap();
     let go = forever_engine::prepare_json_with(&request, "x", forever_engine::Rules::GoReference)
         .unwrap();
     assert_eq!(

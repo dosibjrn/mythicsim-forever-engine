@@ -98,10 +98,13 @@ impl Warrior {
             },
         );
         let passive = &data.defensive_stance_passive;
+        // The threat bonus under these rules: 80% since the notes of 2 November 2026.
+        let threat = crate::prepare::hotfix_113554::row(sim.rules, passive.highest().id)
+            .effect(dbcenums::A_MOD_THREAT, 127);
         sim.attach_multiplicative_pseudo_stat_buff(
             aura,
             PseudoStatField::ThreatMultiplier,
-            passive.effect(dbcenums::A_MOD_THREAT, 127).multiplier_at(1),
+            1.0 + threat.base_points / 100.0,
         );
         sim.attach_multiplicative_pseudo_stat_buff(
             aura,
@@ -119,8 +122,7 @@ impl Warrior {
         );
         let defiance_rank = self.talent("defiance");
         if defiance_rank > 0 {
-            let defiance = data
-                .defiance
+            let defiance = crate::prepare::hotfix_113554::talent(sim.rules, 12792, 3)
                 .effect(dbcenums::A_MOD_THREAT, 127)
                 .multiplier_at(defiance_rank);
             // Defiance multiplies threat in Defensive Stance while the warrior can block.

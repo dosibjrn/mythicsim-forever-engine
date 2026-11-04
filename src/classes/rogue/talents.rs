@@ -4,6 +4,7 @@
 pub(crate) mod adrenaline_rush;
 pub(crate) mod blade_flurry;
 pub(crate) mod cold_blood;
+pub(crate) mod death_mark;
 pub(crate) mod procs;
 pub(crate) mod quietus;
 pub(crate) mod riposte;

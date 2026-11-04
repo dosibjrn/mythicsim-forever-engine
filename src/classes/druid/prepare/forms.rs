@@ -28,6 +28,16 @@ pub(crate) const BASE_BEAR_ARMOR_MULTI: f64 = 4.6;
 /// Go `BearFormThreatMultiplier`: client 70374 raised Classic's 30% to 50% (8 October beta
 /// notes, community #798).
 pub(crate) const BEAR_FORM_THREAT_MULTIPLIER: f64 = 1.5;
+
+/// Bear Form's threat multiplier under these rules: Blizzard's development notes of 2 November
+/// 2026 raise the bonus from 50% to 115% (wowsims/forever #822 takes 2.15 too). The Go reference
+/// keeps [`BEAR_FORM_THREAT_MULTIPLIER`].
+pub(crate) fn bear_form_threat_multiplier(rules: crate::prepare::sim::Rules) -> f64 {
+    match rules {
+        crate::prepare::sim::Rules::Forever => 2.15,
+        crate::prepare::sim::Rules::GoReference => BEAR_FORM_THREAT_MULTIPLIER,
+    }
+}
 /// Go `CatFormThreatMultiplier`.
 pub(crate) const CAT_FORM_THREAT_MULTIPLIER: f64 = 0.71;
 /// Go `MoonkinFormArmorMultiplier`.
@@ -393,6 +403,7 @@ impl Druid {
             )
         });
 
+        let bear_threat = bear_form_threat_multiplier(sim.rules);
         let gain_state = Rc::clone(&st);
         let expire_state = Rc::clone(&st);
         let aura = sim.register_aura(
@@ -413,8 +424,7 @@ impl Druid {
                     gain_state.set_form(sim, BEAR);
                     sim.unit_mut(unit).current_power_bar = PowerBar::Rage;
 
-                    sim.unit_mut(unit).pseudo_stats.threat_multiplier *=
-                        BEAR_FORM_THREAT_MULTIPLIER;
+                    sim.unit_mut(unit).pseudo_stats.threat_multiplier *= bear_threat;
                     sim.unit_mut(unit).pseudo_stats.spirit_regen_multiplier *=
                         ANIMAL_SPIRIT_REGEN_SUPPRESSION;
 
@@ -436,8 +446,7 @@ impl Druid {
                 on_expire: Some(Rc::new(move |sim: &mut Sim, _| {
                     expire_state.set_form(sim, HUMANOID);
 
-                    sim.unit_mut(unit).pseudo_stats.threat_multiplier /=
-                        BEAR_FORM_THREAT_MULTIPLIER;
+                    sim.unit_mut(unit).pseudo_stats.threat_multiplier /= bear_threat;
                     sim.unit_mut(unit).pseudo_stats.spirit_regen_multiplier /=
                         ANIMAL_SPIRIT_REGEN_SUPPRESSION;
 

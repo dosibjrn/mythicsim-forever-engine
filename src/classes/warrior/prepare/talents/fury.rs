@@ -35,16 +35,20 @@ impl Warrior {
 
         // Tier 4
         self.register_dual_wield_specialization(sim, unit);
+        // Raging Blows is not in Forever's tree (its spell is Improved Whirlwind now), so no
+        // string under Forever's layout carries it.
         self.register_raging_blows(sim, unit);
         self.register_enrage(sim, unit);
+        self.register_reckless_swings(sim, unit);
         self.register_improved_execute(sim, unit);
 
         // Tier 5
-        // Improved Berserker Rage: berserker_rage.go
+        // Improved Berserker Rage: berserker_rage.go. Gore Drinker heals and is not simulated.
         self.register_death_wish(sim, unit);
         self.register_improved_intercept(sim, unit);
 
         // Tier 6
+        self.register_improved_whirlwind(sim, unit);
         self.register_flurry(sim, unit);
 
         // Tier 7
@@ -179,7 +183,10 @@ impl Warrior {
                 ..AuraConfig::default()
             },
         );
-        sim.attach_multiply_melee_speed(aura, data.flurry.multiplier_at(rank));
+        sim.attach_multiply_melee_speed(
+            aura,
+            super::super::trees_20261104::flurry(sim.rules).multiplier_at(rank),
+        );
         sim.make_proc_trigger_aura(
             unit,
             &ProcTrigger {
@@ -345,6 +352,78 @@ impl Warrior {
                 kind: SpellModType::PowerCostFlat,
                 int_value: spell_data().raging_blows.effect_at(2).tenths_at(1) as i32,
                 ..SpellModConfig::default()
+            },
+        );
+    }
+
+    /// Improved Whirlwind (1310315, notes of 2 November 2026): Whirlwind's cooldown 1/2 sec
+    /// shorter. The 15/30% more damage to the closest enemy is the dummy the Whirlwind effect
+    /// reads (`closest_bonus`).
+    fn register_improved_whirlwind(&self, sim: &mut Sim, unit: UnitId) {
+        let rank = self.talent("improved_whirlwind");
+        if rank == 0 {
+            return;
+        }
+        let ladder = &super::super::trees_20261104::forever().improved_whirlwind;
+        sim.add_static_mod(
+            unit,
+            SpellModConfig {
+                class_mask: masks::WHIRLWIND,
+                kind: SpellModType::CooldownFlat,
+                time_value: millis(
+                    ladder
+                        .effect(dbcenums::A_ADD_FLAT_MODIFIER, dbcenums::SPELLMOD_COOLDOWN)
+                        .value_at(rank),
+                ),
+                ..SpellModConfig::default()
+            },
+        );
+    }
+
+    /// Reckless Swings (1329555, notes of 2 November 2026): for 25% of base health, the next 4
+    /// melee swings give 5 Rage each for 8 sec, on a 15 sec cooldown. The row's proc is each
+    /// melee auto attack, so only landed white swings that dealt damage count, as for Unbridled
+    /// Wrath: Heroic Strike and Cleave take a swing's place but are melee abilities. The Rage
+    /// and the spent charge come a spell batch window after the swing, as a proc handler's do.
+    fn register_reckless_swings(&self, sim: &mut Sim, unit: UnitId) {
+        if !self.has_talent("reckless_swings") {
+            return;
+        }
+        let forever = super::super::trees_20261104::forever();
+        let row = forever.reckless_swings;
+        let action = spell_action(row.id);
+        let aura = sim.register_aura(
+            unit,
+            AuraConfig {
+                label: "Reckless Swings".to_string(),
+                action_id: Some(action.clone()),
+                duration: row.duration(),
+                max_stacks: i32::from(row.proc_charges),
+                ..AuraConfig::default()
+            },
+        );
+        sim.make_proc_trigger_aura(
+            unit,
+            &ProcTrigger {
+                name: "Reckless Swings - Trigger".to_string(),
+                proc_mask: ProcMask::MELEE_WHITE_HIT,
+                proc_mask_exclude: ProcMask::MELEE_SPECIAL,
+                require_damage_dealt: true,
+                outcome: HitOutcome::LANDED,
+                callback: CallbackMask::ON_SPELL_HIT_DEALT,
+                ..ProcTrigger::default()
+            },
+        );
+        let cd = new_cooldown(sim, unit, cooldown_of(row));
+        sim.register_spell(
+            unit,
+            SpellConfig {
+                action_id: action,
+                class_spell_mask: masks::RECKLESS_SWINGS,
+                flags: F::APL,
+                cast: cast_config(row.gcd(), true, cd),
+                related_self_buff: Some(aura),
+                ..SpellConfig::default()
             },
         );
     }

@@ -54,6 +54,14 @@ impl Venom {
         fight.activate_aura(self.aura);
     }
 
+    /// Forever's rules: Shank puts the aura up for its fixed duration (the first of the ladder,
+    /// every entry the same), refreshing it when it is already up.
+    pub(crate) fn restart<A: Agent>(&self, fight: &mut Fight<A>) {
+        fight.deactivate_aura(self.aura);
+        fight.aura_mut(self.aura).duration = self.durations[0];
+        fight.activate_aura(self.aura);
+    }
+
     /// The attached modifier, after the aura's own OnGain.
     pub(crate) fn on_gain<A: Agent>(&self, fight: &mut Fight<A>) {
         fight.activate_mod(self.damage_mod);

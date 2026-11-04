@@ -38,28 +38,59 @@ fn pet_damage_multipliers(prepared: &Value) -> Vec<f64> {
 }
 
 #[test]
-fn command_raises_hunter_and_warlock_pet_damage_by_five_percent() {
-    for name in [
-        "production-beast-mastery-hunter",
-        "affliction-warlock-lash-of-pain-rounding",
-    ] {
-        let mut orc = request(name);
+fn command_raises_hunter_pet_damage_by_five_percent() {
+    let mut orc = request("production-beast-mastery-hunter");
+    player(&mut orc)["race"] = "RaceOrc".into();
+    let mut without = orc.clone();
+    player(&mut without)["disableRacials"] = true.into();
+    let with = pet_damage_multipliers(&prepared(&orc, Rules::Forever));
+    let base = pet_damage_multipliers(&prepared(&without, Rules::Forever));
+    assert!(!with.is_empty(), "no pets");
+    for (with, base) in with.iter().zip(&base) {
+        assert!((with / base - 1.05).abs() < 1e-12, "{with} vs {base}");
+    }
+    // The Go reference keeps the 16 October Orc, with no Command.
+    let go = pet_damage_multipliers(&prepared(&orc, Rules::GoReference));
+    let go_base = pet_damage_multipliers(&prepared(&without, Rules::GoReference));
+    assert_eq!(go, go_base);
+}
+
+/// A Warlock's Command reads the client's rows since the 3 November hotfixes (Wowhead's spell
+/// page, 4 November): +5% damage on Firebolt and Lash of Pain alone, a spell modifier added to the
+/// pet's others, where it was 5% on every pet's damage. The Go reference has no Command.
+#[test]
+fn command_raises_the_imps_firebolt_and_the_succubus_lash_of_pain_only() {
+    let additive = |prepared: &Value, id: i64| -> f64 {
+        let spells: Vec<f64> = prepared["pets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|pet| pet["spells"].as_array().unwrap().clone())
+            .filter(|spell| spell["action_id"]["spell_id"] == id)
+            .map(|spell| spell["damage_multiplier_additive"].as_f64().unwrap())
+            .collect();
+        assert_eq!(spells.len(), 1, "{id}");
+        spells[0]
+    };
+    for (summon, id) in [("Succubus", 11780), ("Imp", 11763)] {
+        let mut orc = request("affliction-warlock-lash-of-pain-rounding");
         player(&mut orc)["race"] = "RaceOrc".into();
+        player(&mut orc)["warlock"]["options"]["classOptions"]["summon"] = summon.into();
         let mut without = orc.clone();
         player(&mut without)["disableRacials"] = true.into();
-        let with = pet_damage_multipliers(&prepared(&orc, Rules::Forever));
-        let base = pet_damage_multipliers(&prepared(&without, Rules::Forever));
-        assert!(!with.is_empty(), "{name}: no pets");
-        for (with, base) in with.iter().zip(&base) {
-            assert!(
-                (with / base - 1.05).abs() < 1e-12,
-                "{name}: {with} vs {base}"
-            );
-        }
-        // The Go reference keeps the 16 October Orc, with no Command.
-        let go = pet_damage_multipliers(&prepared(&orc, Rules::GoReference));
-        let go_base = pet_damage_multipliers(&prepared(&without, Rules::GoReference));
-        assert_eq!(go, go_base, "{name}");
+        let (with, base) = (
+            prepared(&orc, Rules::Forever),
+            prepared(&without, Rules::Forever),
+        );
+        // No pet's damage as a whole moves ...
+        assert_eq!(pet_damage_multipliers(&with), pet_damage_multipliers(&base));
+        // ... and the pet's one spell the rows name takes 5% more.
+        assert!(
+            (additive(&with, id) - additive(&base, id) - 0.05).abs() < 1e-12,
+            "{summon}"
+        );
+        let go = prepared(&orc, Rules::GoReference);
+        assert_eq!(additive(&go, id), additive(&base, id), "{summon}");
     }
 }
 

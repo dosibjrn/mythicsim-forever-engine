@@ -135,7 +135,7 @@ pub(crate) fn apply_race_effects(env: &mut Environment) -> Result<(), Refusal> {
             if oct26 {
                 // 26 October notes: "Savage removed (1% increased critical strike chance).
                 // Command re-added, increasing Warlock and Hunter pet damage by 5%."
-                apply_command(&mut env.sim, unit);
+                apply_command(env, unit);
             } else {
                 // Savage replaced Axe Specialization: 1% critical strike chance, any weapon.
                 add_crit(env, 1.0);
@@ -448,15 +448,38 @@ pub(crate) fn read_ley_line_regen_multiplier(rules: Rules) -> f64 {
 
 /// Command, which the 26 October notes re-add: "increasing Warlock and Hunter pet damage by 5%".
 /// The pets exist by now, as in Go, where the class registers them before its effects.
-fn apply_command(sim: &mut Sim, unit: UnitId) {
+///
+/// The client's rows since the 3 November hotfixes (Wowhead's Forever spell page, 4 November) give
+/// it two effects: all effects of the Tamed Pet Passive, which is the Hunter's pet, and a 5%
+/// damage modifier on Firebolt and Lash of Pain alone, the Warlock's. Forever's rules follow them,
+/// so a Warlock's Imp and Succubus gain 5% on those two spells (added to their other damage
+/// modifiers, as a spell modifier is) and its other demons nothing; a Hunter's pet keeps 5% of its
+/// damage. The reference keeps 5% on every pet's damage.
+fn apply_command(env: &mut Environment, unit: UnitId) {
     if !matches!(
-        sim.character(unit).class.as_str(),
+        env.sim.character(unit).class.as_str(),
         "ClassHunter" | "ClassWarlock"
     ) {
         return;
     }
-    for pet in sim.unit(unit).pets.clone() {
-        sim.unit_mut(pet).pseudo_stats.damage_dealt_multiplier *= 1.05;
+    if env.sim.rules == Rules::Forever {
+        if let Some(spells) = env.agent.command_pet_spells() {
+            for (pet, class_mask) in spells {
+                env.sim.add_static_mod(
+                    pet,
+                    SpellModConfig {
+                        kind: SpellModType::DamageDoneFlat,
+                        float_value: 0.05,
+                        class_mask,
+                        ..SpellModConfig::default()
+                    },
+                );
+            }
+            return;
+        }
+    }
+    for pet in env.sim.unit(unit).pets.clone() {
+        env.sim.unit_mut(pet).pseudo_stats.damage_dealt_multiplier *= 1.05;
     }
 }
 

@@ -359,6 +359,20 @@ impl PrepAgent for Warlock {
         export::unmasked_spell(id)
     }
 
+    /// The spells Command raises: Wowhead's Forever spell page for the Orc racial (20575, 4
+    /// November 2026) lists Firebolt and Lash of Pain as the spells its damage effect modifies,
+    /// so the Imp's Firebolt and the Succubus' Lash of Pain.
+    fn command_pet_spells(&self) -> Option<Vec<(UnitId, i64)>> {
+        let mut spells = Vec::new();
+        if let Some(imp) = self.pets.imp {
+            spells.push((imp, masks::IMP_FIRE_BOLT));
+        }
+        if let Some(succubus) = self.pets.succubus {
+            spells.push((succubus, masks::SUCCUBUS_LASH_OF_PAIN));
+        }
+        Some(spells)
+    }
+
     /// Go `Warlock.EurekaSpells`.
     fn eureka_spells(&self) -> Option<crate::prepare::racials::EurekaSpells> {
         let direct = masks::CONFLAGRATE

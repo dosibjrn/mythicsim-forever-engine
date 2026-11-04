@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::contracts::prepared_v2::ActionId;
 use crate::prepare::dbcenums;
+use crate::prepare::hotfix_113554;
 use crate::prepare::sim::{AuraConfig, AuraId, BuildPhase, EventCallbacks, Sim, NEVER_EXPIRES};
 use crate::prepare::spell::{Cast, CastConfig, CostOptions, ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::stats::Stat;
@@ -87,7 +88,8 @@ impl Hunter {
     fn register_aspect_of_the_hawk_spell(&mut self, sim: &mut Sim) {
         let data = spell_data();
         let unit = self.unit;
-        let hawk_rank = data.aspect_of_the_hawk.highest_for(sim.rules);
+        let hawk_rank =
+            hotfix_113554::row(sim.rules, data.aspect_of_the_hawk.highest_for(sim.rules).id);
         let action_id = ActionId::spell(hawk_rank.id);
         let deadly_aspects = self.t("deadly_aspects");
 

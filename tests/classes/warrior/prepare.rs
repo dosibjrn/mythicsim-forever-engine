@@ -99,6 +99,7 @@ fn protection_matches_go() {
 fn a_tanking_warrior_is_prepared_with_the_target_swing() {
     let mut request: Value = serde_json::from_slice(&data("protection.request.json")).unwrap();
     request["raid"]["tanks"] = serde_json::json!([{"index": 0, "type": "Player"}]);
+    crate::warrior_trees_20261104::forever_request(&mut request);
     let prepared = forever_engine::prepare_json(&serde_json::to_vec(&request).unwrap(), "tank")
         .expect("a tanking warrior is prepared");
     assert!(prepared["enemy"].is_object());
@@ -110,6 +111,7 @@ fn stance_snapshots_are_refused() {
     let mut request: Value = serde_json::from_slice(&data("arms.request.json")).unwrap();
     request["raid"]["parties"][0]["players"][0]["dpsWarrior"]["options"]["classOptions"]
         ["stanceSnapshot"] = Value::Bool(true);
+    crate::warrior_trees_20261104::forever_request(&mut request);
     let error = forever_engine::prepare_json(&serde_json::to_vec(&request).unwrap(), "snapshot")
         .expect_err("stance snapshots are refused");
     match error {
@@ -122,6 +124,7 @@ fn stance_snapshots_are_refused() {
 fn prepared_after(edit: impl Fn(&mut Value)) -> Value {
     let mut request: Value = serde_json::from_slice(&data("arms.request.json")).unwrap();
     edit(&mut request);
+    crate::warrior_trees_20261104::forever_request(&mut request);
     let bytes = serde_json::to_vec(&request).unwrap();
     forever_engine::prepare_json(&bytes, "arms").unwrap()
 }
@@ -204,7 +207,11 @@ fn frost_oil_registers_a_proc_for_its_hand() {
 #[test]
 fn threat_follows_the_in_game_captures() {
     let request = data("protection.request.json");
-    let prepared = forever_engine::prepare_json(&request, "protection").unwrap();
+    let prepared = forever_engine::prepare_json(
+        &crate::warrior_trees_20261104::forever_bytes(&request),
+        "protection",
+    )
+    .unwrap();
     let spell = |class: &str| {
         prepared["player"]["spells"]
             .as_array()
@@ -268,9 +275,12 @@ fn concussion_blow_is_cast_under_forever_rules() {
             .collect()
     };
     assert!(!kinds(&go).contains(&"concussion_blow".to_string()));
-    let forever =
-        forever_engine::prepare_json_with(&bytes, "concussion", forever_engine::Rules::Forever)
-            .unwrap();
+    let forever = forever_engine::prepare_json_with(
+        &crate::warrior_trees_20261104::forever_bytes(&bytes),
+        "concussion",
+        forever_engine::Rules::Forever,
+    )
+    .unwrap();
     assert!(kinds(&forever).contains(&"concussion_blow".to_string()));
     let prepared: forever_engine::contracts::prepared_v2::PreparedV2 =
         serde_json::from_value(forever).unwrap();

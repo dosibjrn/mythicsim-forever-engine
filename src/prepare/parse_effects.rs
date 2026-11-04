@@ -66,6 +66,9 @@ pub(crate) struct ParseOptions {
     pub ignore_stacks: bool,
     pub level: i32,
     pub scale: Option<&'static Effect>,
+    /// Go `ScaledByRanks`: each amount is this share of the row's, rounded half away from zero;
+    /// 0 reads the row's amount.
+    pub rank_fraction: f64,
     pub combo_points: bool,
     pub count: f64,
     pub buff_auras: bool,
@@ -324,6 +327,9 @@ fn parse(
         }
         if let Some(modifier) = scale {
             value = scaled(value, modifier);
+        }
+        if options.rank_fraction > 0.0 {
+            value = (value * options.rank_fraction).round();
         }
         let read = options
             .read_as

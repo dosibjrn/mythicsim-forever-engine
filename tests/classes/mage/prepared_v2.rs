@@ -554,9 +554,26 @@ fn check_golden(case: &Golden, golden: &GoldenFile) -> Result<(), String> {
     Ok(())
 }
 
+/// The zero-based shard and the shard count `GOLDEN_SHARD=i/n` names, or the one shard of
+/// every case when it is unset. A malformed value fails the test rather than checking nothing.
+fn golden_shard() -> (usize, usize) {
+    let Ok(value) = std::env::var("GOLDEN_SHARD") else {
+        return (0, 1);
+    };
+    let parsed = value
+        .split_once('/')
+        .and_then(|(i, n)| Some((i.parse::<usize>().ok()?, n.parse::<usize>().ok()?)))
+        .filter(|&(i, n)| 1 <= i && i <= n);
+    let (i, n) =
+        parsed.unwrap_or_else(|| panic!("GOLDEN_SHARD={value:?} is not i/n with 1 <= i <= n"));
+    (i - 1, n)
+}
+
 /// Every accepted case with a golden is simulated and compared, spread over the machine's
 /// cores, or over `RUST_TEST_THREADS` workers when it is set. A case's outcome depends only on its own input, so the order the threads take them
 /// in changes nothing; failures are reported together, in manifest order, each by case id.
+/// `GOLDEN_SHARD=i/n` (1 <= i <= n) keeps only the cases whose manifest index is i - 1 modulo
+/// n, so n CI jobs together check every case; unset, the test checks them all.
 #[test]
 fn supported_cases_match_pinned_go_goldens() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -568,6 +585,18 @@ fn supported_cases_match_pinned_go_goldens() {
         .filter_map(|case| case.go_result.as_ref().map(|golden| (case, golden)))
         .collect();
     assert!(cases.len() >= 5);
+    let (shard, shards) = golden_shard();
+    let cases: Vec<(&Golden, &GoldenFile)> = cases
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| index % shards == shard)
+        .map(|(_, case)| case)
+        .collect();
+    assert!(
+        !cases.is_empty(),
+        "shard {}/{shards} has no case",
+        shard + 1
+    );
     let workers = std::env::var("RUST_TEST_THREADS")
         .ok()
         .and_then(|count| count.parse::<usize>().ok())

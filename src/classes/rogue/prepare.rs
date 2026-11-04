@@ -7,6 +7,7 @@ mod export_specs;
 pub(crate) mod items;
 pub(crate) mod masks;
 mod poisons;
+pub(crate) mod rework;
 mod spell_data;
 mod spells;
 mod talents;
@@ -22,14 +23,90 @@ use crate::prepare::character::constants::DODGE_RATING_PER_DODGE_PERCENT;
 use crate::prepare::energy::EnergyBarOptions;
 use crate::prepare::env::{Environment, FinalizeEffect};
 use crate::prepare::racials::EurekaSpells;
-use crate::prepare::sim::{AuraId, Duration, Sim, SpellId, UnitId, UnitType, SECOND};
+use crate::prepare::sim::{AuraId, Duration, Rules, Sim, SpellId, UnitId, UnitType, SECOND};
 use crate::prepare::stats::Stat;
+use crate::prepare::talent_layout::{self, new_talent, talent, Extras, LayoutTalent};
 use crate::prepare::Refusal;
 
 use spell_data::spell_data;
 
 /// Go sim/rogue `TalentTreeSizes`.
 const TALENT_TREE_SIZES: [usize; 3] = [17, 17, 19];
+
+/// The Rogue trees of the hotfix push 113483, which only Forever's rules read: each tree's
+/// talents in the client's order (row, then column), with upstream's proto field names
+/// (wowsims/forever #840), from the TraitNodes of the store and Wowhead's talent calculator.
+/// Murder, Quietus, Cutthroat, Thousand Cuts and Improved Distract are gone. Blood Splatter
+/// (1329256), Composure (1329265), Flash of Steel (1329284), Boot Knife (1329286), Death Mark
+/// (1316709) and Quick Getaway (1310728, the id Quietus had) are new, so the pinned proto has no
+/// field for them and they are read into the extras. Relentless Strikes has five ranks, where
+/// the proto's field is a bool, so it is read into the extras too. Improved Eviscerate is
+/// renamed Coup de Grace and Improved Sinister Strike Efficient Strikes (same proto fields).
+const FOREVER_ASSASSINATION: &[LayoutTalent] = &[
+    talent("improved_gouge", "Improved Gouge", 3),
+    talent("remorseless_attacks", "Remorseless Attacks", 2),
+    talent("malice", "Malice", 5),
+    talent("ruthlessness", "Ruthlessness", 3),
+    talent("improved_expose_armor", "Improved Expose Armor", 2),
+    talent("improved_slice_and_dice", "Improved Slice and Dice", 3),
+    talent("vigor", "Vigor", 2),
+    new_talent("blood_splatter", "Blood Splatter", 1),
+    talent("lethality", "Lethality", 2),
+    talent("vile_poisons", "Vile Poisons", 5),
+    talent("cold_blood", "Cold Blood", 1),
+    talent("improved_poisons", "Improved Poisons", 5),
+    new_talent("relentless_strikes", "Relentless Strikes", 5),
+    talent("venom", "Venom", 1),
+    talent("improved_kidney_shot", "Improved Kidney Shot", 2),
+    talent("seal_fate", "Seal Fate", 3),
+    talent("mutilate", "Mutilate", 1),
+];
+
+const FOREVER_COMBAT: &[LayoutTalent] = &[
+    talent("improved_eviscerate", "Coup de Grace", 3),
+    talent("improved_sinister_strike", "Efficient Strikes", 2),
+    talent("lightning_reflexes", "Lightning Reflexes", 5),
+    talent("puncturing_wounds", "Puncturing Wounds", 3),
+    talent("deflection", "Deflection", 3),
+    talent("precision", "Precision", 3),
+    talent("improved_sprint", "Improved Sprint", 2),
+    talent("endurance", "Endurance", 2),
+    talent("riposte", "Riposte", 1),
+    new_talent("composure", "Composure", 2),
+    talent("improved_kick", "Improved Kick", 2),
+    talent("flawless_execution", "Flawless Execution", 1),
+    talent("weapon_expertise", "Weapon Expertise", 2),
+    talent("aggression", "Aggression", 3),
+    talent("dual_wield_specialization", "Dual Wield Specialization", 2),
+    talent("blade_flurry", "Blade Flurry", 1),
+    talent("hack_and_slash", "Hack and Slash", 5),
+    new_talent("flash_of_steel", "Flash of Steel", 5),
+    talent("adrenaline_rush", "Adrenaline Rush", 1),
+];
+
+const FOREVER_SUBTLETY: &[LayoutTalent] = &[
+    talent("setup", "Setup", 3),
+    talent("master_of_deception", "Master of Deception", 3),
+    talent("opportunity", "Opportunity", 5),
+    talent("dirty_deeds", "Dirty Deeds", 2),
+    talent("camouflage", "Camouflage", 3),
+    talent("improved_ambush", "Improved Ambush", 3),
+    talent("dirty_tricks", "Dirty Tricks", 2),
+    talent("initiative", "Initiative", 3),
+    talent("premeditation", "Premeditation", 1),
+    talent("serrated_blades", "Serrated Blades", 3),
+    talent("elusiveness", "Elusiveness", 2),
+    talent("ghostly_strike", "Ghostly Strike", 1),
+    new_talent("quick_getaway", "Quick Getaway", 2),
+    talent("heightened_senses", "Heightened Senses", 2),
+    talent("preparation", "Preparation", 1),
+    talent("hemorrhage", "Hemorrhage", 1),
+    new_talent("boot_knife", "Boot Knife", 5),
+    new_talent("death_mark", "Death Mark", 1),
+];
+
+pub(crate) const FOREVER_TREES: [&[LayoutTalent]; 3] =
+    [FOREVER_ASSASSINATION, FOREVER_COMBAT, FOREVER_SUBTLETY];
 
 /// tools/oracle-v2/rogue.go `rogueClassSpells`.
 static CLASS_SPELLS: &[ClassSpellName] = &[
@@ -145,6 +222,14 @@ static CLASS_SPELLS: &[ClassSpellName] = &[
         mask: masks::KIDNEY_SHOT,
         name: "kidney_shot",
     },
+    ClassSpellName {
+        mask: masks::SHANK,
+        name: "shank",
+    },
+    ClassSpellName {
+        mask: masks::DEATH_MARK,
+        name: "death_mark",
+    },
 ];
 
 /// Go `sliceAndDiceDurations`: Slice and Dice and Venom share this ladder, by combo points.
@@ -196,6 +281,8 @@ pub(super) struct RogueSpells {
     pub mutilate: Option<SpellId>,
     pub preparation: Option<SpellId>,
     pub premeditation: Option<SpellId>,
+    pub shank: Option<SpellId>,
+    pub death_mark: Option<SpellId>,
     pub venom: Option<SpellId>,
 }
 
@@ -205,8 +292,12 @@ pub(super) struct RogueAuras {
     pub adrenaline_rush: Option<AuraId>,
     pub blade_flurry: Option<AuraId>,
     pub cutthroat: Option<AuraId>,
+    pub death_mark: Option<AuraId>,
+    /// Ghostly Strike's buff, Forever's rules: the next Ambush or Garrote needs no Stealth.
+    pub ghostly_ready: Option<AuraId>,
     pub expose_armor: Vec<Option<AuraId>>,
     pub hemorrhage: Vec<Option<AuraId>>,
+    pub poised: Option<AuraId>,
     pub slice_and_dice: Option<AuraId>,
     pub stealth: Option<AuraId>,
     pub thousand_cuts: Option<AuraId>,
@@ -218,6 +309,9 @@ pub(super) struct RogueAuras {
 #[derive(Clone)]
 pub(crate) struct Rogue {
     talents: Message,
+    /// The talents Forever's layout has that the proto has no field for, and Relentless Strikes'
+    /// ranks: points by field.
+    extras: Extras,
     state: Rc<RogueState>,
     spells: RogueSpells,
     auras: RogueAuras,
@@ -238,11 +332,17 @@ pub(crate) fn new_rogue(
         .message("rogue")
         .and_then(|rogue| rogue.message("options"))
         .ok_or_else(|| Refusal::new("class_option", "a rogue without its options".to_string()))?;
-    let talents = fill_talents(
-        "proto.RogueTalents",
-        player.str("talents_string"),
-        TALENT_TREE_SIZES,
-    )
+    let talents_string = player.str("talents_string");
+    let (talents, extras) = match sim.rules {
+        Rules::Forever => talent_layout::fill(
+            "proto.RogueTalents",
+            "rogue",
+            talents_string,
+            &FOREVER_TREES,
+        ),
+        Rules::GoReference => fill_talents("proto.RogueTalents", talents_string, TALENT_TREE_SIZES)
+            .map(|talents| (talents, Extras::new())),
+    }
     .map_err(|err| Refusal::new("talents", err))?;
     let state = Rc::new(RogueState::default());
 
@@ -291,12 +391,21 @@ pub(crate) fn new_rogue(
 
     Ok(Box::new(Rogue {
         talents,
+        extras,
         state,
         spells: RogueSpells::default(),
         auras: RogueAuras::default(),
         ruthlessness_chance: 0.0,
         post_finalize: Vec::new(),
     }))
+}
+
+impl Rogue {
+    /// The points in a talent Forever's layout reads into the extras (see
+    /// [`FOREVER_ASSASSINATION`]); 0 under the reference, which never sets them.
+    pub(super) fn extra_points(&self, field: &str) -> i32 {
+        self.extras.get(field).copied().unwrap_or(0)
+    }
 }
 
 impl PrepAgent for Rogue {
@@ -322,6 +431,9 @@ impl PrepAgent for Rogue {
         self.register_slice_and_dice(sim, unit);
         self.register_vanish_spell(sim, unit);
         self.register_stealth_aura(sim, unit);
+        // The notes of 2 November 2026 add Shank and Poised to Forever's Rogue.
+        self.register_shank_spell(sim, unit);
+        self.register_poised_aura(sim, unit);
 
         // Forever states a flat SpellAuraOptions.ProcChance of 100 on the talent spell and puts
         // the real per-rank chance on the effect, so the row's ProcChance would read 100% at

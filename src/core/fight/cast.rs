@@ -1328,6 +1328,8 @@ impl<A: Agent> Fight<A> {
         let regen = regen.max(0.0);
         let before = self.player.mana;
         self.add_mana(regen, metrics);
+        // What the tick's metrics still hold of it once each source below takes its share.
+        let mut left = (regen, self.player.mana - before);
         if let Some(source) = self.player.spirit_attribution {
             let mut spirit = self.player.powers.spirit_regen_per_second * source.multiplier;
             if casting && !source.force_full {
@@ -1349,12 +1351,15 @@ impl<A: Agent> Fight<A> {
                 source_metrics.events += 1;
                 source_metrics.gain += bonus;
                 source_metrics.actual_gain += bonus_actual;
+                left = (left.0 - bonus, left.1 - bonus_actual);
             }
         }
         if casting {
             let actual = self.player.mana - before;
-            self.credit_casting_regen(regen, actual, metrics);
+            let moved = self.credit_casting_regen(regen, actual, metrics);
+            left = (left.0 - moved.0, left.1 - moved.1);
         }
+        self.credit_mp5_sources(left.0, left.1, metrics);
     }
 
     /// Go `StartSpiritRegenAttribution`, before the source applies its own effect.

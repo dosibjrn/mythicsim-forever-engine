@@ -183,8 +183,7 @@ impl Warrior {
             SpellModConfig {
                 school: school::PHYSICAL,
                 kind: SpellModType::DamageDonePct,
-                float_value: spell_data()
-                    .two_handed_weapon_specialization
+                float_value: crate::prepare::hotfix_113554::talent(sim.rules, 12163, 3)
                     .effect(dbcenums::A_MOD_DAMAGE_PERCENT_DONE, 1)
                     .fraction_at(rank),
                 ..SpellModConfig::default()
@@ -292,7 +291,7 @@ impl Warrior {
                 callback: CallbackMask::ON_SPELL_HIT_DEALT,
                 proc_mask: ProcMask::MELEE_MH,
                 outcome: HitOutcome::LANDED,
-                proc_chance: spell_data().bloodthrill.fraction_at(rank),
+                proc_chance: super::super::trees_20261104::bloodthrill(sim.rules).fraction_at(rank),
                 ..ProcTrigger::default()
             },
         );
@@ -459,7 +458,7 @@ impl Warrior {
         if rank == 0 {
             return;
         }
-        let ladder = &spell_data().improved_slam;
+        let ladder = &crate::prepare::hotfix_113554::talent(sim.rules, 12862, 2);
         for (kind, op) in [
             (SpellModType::CastTimeFlat, dbcenums::SPELLMOD_CASTING_TIME),
             (

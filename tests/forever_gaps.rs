@@ -10,11 +10,18 @@ use std::{fs, path::Path};
 
 #[path = "support/paladin_113554.rs"]
 mod paladin_113554;
+#[path = "support/rogue_113483.rs"]
+mod rogue_113483;
+#[path = "support/shaman_layout.rs"]
+mod shaman_layout;
+#[path = "support/warrior_trees_20261104.rs"]
+mod warrior_trees_20261104;
 
 /// The paladin requests recorded with push 113554's talent tree.
 const RECORDED_IN_113554: &[&str] = &[
     "retribution-paladin-swap-dark-iron-sunderer",
     "protection-paladin-quel-serrar",
+    "retribution-paladin-swap-without-crowd-pummeler",
 ];
 
 fn request(name: &str) -> Value {
@@ -29,6 +36,11 @@ fn request(name: &str) -> Value {
     if !RECORDED_IN_113554.contains(&name) {
         paladin_113554::forever_request(&mut request);
     }
+    // A rogue's talents read in push 113483's trees.
+    rogue_113483::forever_request(&mut request);
+    // The Warrior fixtures' talents are the old tree's, which Forever's rules read in the client's
+    // order since the notes of 2 November (no test here prepares a Warrior under the reference).
+    warrior_trees_20261104::forever_request(&mut request);
     request
 }
 
@@ -46,6 +58,10 @@ fn prepared(name: &str, rules: Rules) -> Value {
     let mut request = request(name);
     if let (Rules::Forever, Some(talents)) = (rules, forever_talents(name)) {
         request["raid"]["parties"][0]["players"][0]["talentsString"] = Value::from(talents);
+    }
+    // A shaman's talents read in the launch client's order under Forever's rules.
+    if rules == Rules::Forever {
+        shaman_layout::forever_request(&mut request);
     }
     prepare_json_with(request.to_string().as_bytes(), "rust", rules).unwrap()
 }
@@ -686,8 +702,9 @@ fn seal_of_justice_judges_justice() {
 fn warrior_strikes_and_freezing_trap_run() {
     for (name, spell_id, casts) in [
         ("protection-warrior-shield-bash", 1672, 531.0),
-        // 77 since the book ranks (#183) and two-hand crit rage (#184) changed the rage a fight has.
-        ("arms-warrior-mocking-blow", 20560, 77.0),
+        // 78 since the notes of 2 November (Two-Handed Weapon Specialization 6%, Slam on 15 sec)
+        // changed the rage a fight has (77 after #183 and #184).
+        ("arms-warrior-mocking-blow", 20560, 78.0),
         ("protection-warrior-disarm", 676, 129.0),
         ("warrior-intercept", 20617, 50.0),
         ("arms-warrior-revenge", 25288, 0.0),
@@ -762,9 +779,14 @@ fn a_swap_carries_the_weapon_specializations() {
             )
         })
         .collect();
+    // Physical damage, then Holy damage (the notes of 2 November 2026 raise both), then threat.
     assert_eq!(
         kinds,
-        [("damage_done_pct", 0.06), ("threat_multiplier_pct", -0.2)],
+        [
+            ("damage_done_pct", 0.06),
+            ("damage_done_pct", 0.06),
+            ("threat_multiplier_pct", -0.2)
+        ],
         "{mods:?}"
     );
     for callback in &mods {
@@ -854,6 +876,7 @@ fn a_swap_rebuilds_the_swarmguards_chances() {
         "enhancement-shaman-swap-swarmguard",
         &[(r#""duration":60"#, r#""duration":300"#)],
     );
+    shaman_layout::forever_request(&mut value);
     value = prepare_json_with(value.to_string().as_bytes(), "rust", Rules::Forever).unwrap();
     let index = value["effects"]
         .as_array()
@@ -1093,4 +1116,97 @@ fn fifteen_stat_aura_bits_run() {
         format!("{refused:?}").contains("exceed the combination limit"),
         "{refused:?}"
     );
+}
+
+/// A Feral Bear Druid with Insect Swarm talented whose rotation never casts it (production sims
+/// 6558f1f1 and 33db8dfb, 2 November 2026): the debuff that lowers the target's chance to hit
+/// can never go up, so the target's swings stay as the reset has them. A rotation that casts
+/// Insect Swarm is still refused, since the runtime does not follow the debuff's change.
+#[test]
+fn an_uncast_insect_swarm_leaves_a_bears_target_alone() {
+    let (value, _) = run("feral-bear-druid-insect-swarm-unused");
+    assert!(kinds(&value).contains(&"insect_swarm"));
+    let cast = edited(
+        "feral-bear-druid-insect-swarm-unused",
+        &[(
+            r#""priorityList":["#,
+            r#""priorityList":[{"action":{"castSpell":{"spellId":{"spellId":24977}}}},"#,
+        )],
+    );
+    let prepared = prepare_json_with(cast.to_string().as_bytes(), "rust", Rules::Forever).unwrap();
+    let prepared: PreparedV2 = serde_json::from_value(prepared).unwrap();
+    let refused = check_prepared(&prepared).unwrap_err();
+    assert!(
+        format!("{refused:?}").contains("Insect Swarm (Player) changes the target's swings"),
+        "{refused:?}"
+    );
+}
+
+/// A Feral Druid in Shadowcraft Armor (5) swapping onto the Manual Crowd Pummeler (production
+/// sim 695f1488, 2 November 2026): the set's energize rolls through a legacy PPM manager, which
+/// an item swap rebuilds for the weapons in the hands, as Lightforge Armor's.
+#[test]
+fn shadowcraft_armor_energizes_beside_a_swap() {
+    let (value, player) = run("feral-druid-swap-shadowcraft-armor");
+    assert!(kinds(&value).contains(&"item_swap"));
+    assert!(kinds(&value).contains(&"energize_proc"));
+    assert!(resource_gain(&player, 27787, "ResourceTypeEnergy") > 0.0);
+}
+
+/// Recklessness on an execute phase check without a threshold (production sim 484ad888,
+/// 2 November 2026): Go builds no value for the unset threshold, so the action has no
+/// condition, exactly as the same request without it.
+#[test]
+fn an_execute_phase_without_a_threshold_drops_out() {
+    let (_, player) = run("dps-warrior-execute-phase-unset");
+    assert!(action(&player, 1719, 0).0 > 0.0, "Recklessness casts");
+    let without = run_request(&edited(
+        "dps-warrior-execute-phase-unset",
+        &[(r#","condition":{"isExecutePhase":{}}"#, "")],
+    ));
+    assert_eq!(player["dps"], without["dps"]);
+}
+
+/// A Demonology Warlock reading its target's health percent (production sim e375ed8a,
+/// 2 November 2026): Go enables health bars only on the raid's characters and pets, so the
+/// value builds nothing and drops out of its `and`, exactly as the same request without it.
+#[test]
+fn a_targets_health_percent_drops_out() {
+    let (_, player) = run("demonology-warlock-target-health-percent");
+    let without = run_request(&edited(
+        "demonology-warlock-target-health-percent",
+        &[(
+            r#"{"cmp":{"lhs":{"currentHealthPercent":{"sourceUnit":{"type":"CurrentTarget"}}},"op":"OpLt","rhs":{"const":{"val":"35%"}}}},"#,
+            "",
+        )],
+    ));
+    assert_eq!(player["dps"], without["dps"]);
+}
+
+/// A Retribution Paladin's own rotation built around the Manual Crowd Pummeler (9449), run with
+/// the Pummeler taken off (production sims 3106cb7e and fb6fb3a0, 4 November 2026). The Haste
+/// aura (13494) is then unknown, so an action that needs it up folds to false and Go prunes it.
+/// One action asks for it or an execute phase with a swing time check, and preparation could not
+/// tell whether that `or` folds to false, so it refused the rotation. Go builds the swing values
+/// and the execute phase check whatever the gear: the `or` reads as the check.
+#[test]
+fn a_rotation_for_a_removed_crowd_pummeler_prepares() {
+    let name = "retribution-paladin-swap-without-crowd-pummeler";
+    let (_, player) = run(name);
+    assert!(action(&player, 20920, 0).0 > 0.0, "Seal of Command casts");
+    // The Go reference, on the Go tree, equals the Go engine at the pin to the last digit.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("fixtures/forever-gaps/{name}.request.json"));
+    let recorded = String::from_utf8(fs::read(path).unwrap()).unwrap();
+    let go_tree = recorded.replace(
+        r#""talentsString":"050050002-503-05233301001301351""#,
+        r#""talentsString":"52003-503-05225231001330321""#,
+    );
+    assert_ne!(recorded, go_tree);
+    let reference = prepare_json_with(go_tree.as_bytes(), "rust", Rules::GoReference).unwrap();
+    let reference: PreparedV2 = serde_json::from_value(reference).unwrap();
+    check_prepared(&reference).unwrap();
+    let result = simulate_prepared(&reference).unwrap().result;
+    let player = &result["raidMetrics"]["parties"][0]["players"][0];
+    assert_eq!(player["dps"]["avg"].as_f64(), Some(735.1341492796465));
 }

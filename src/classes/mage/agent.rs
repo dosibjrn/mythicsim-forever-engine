@@ -331,10 +331,16 @@ impl MageAgent {
                     aura,
                     trigger_aura,
                     proc_chance,
+                    missiles,
                     ..
                 } => {
-                    let bound =
-                        arcane_concentration::bind(&fight, aura, trigger_aura, *proc_chance)?;
+                    let bound = arcane_concentration::bind(
+                        &fight,
+                        aura,
+                        trigger_aura,
+                        *proc_chance,
+                        *missiles,
+                    )?;
                     fight.agent.arcane_concentration = Some(Rc::new(bound));
                 }
                 Effect::MissileBarrage {
@@ -991,6 +997,19 @@ impl Agent for MageAgent {
                 fight.set_stacks(aura, max);
             }
             _ => {}
+        }
+    }
+
+    /// Go `OnApplyEffects`, before the cast's effects: Forever's rules spend Clearcasting here.
+    fn on_apply_effects(
+        fight: &mut Fight<Self>,
+        _aura: AuraRef,
+        kind: MageAura,
+        spell: SpellId,
+        _target: Side,
+    ) {
+        if kind == MageAura::Clearcasting {
+            Self::arcane_concentration(fight).on_apply_effects(fight, spell);
         }
     }
 

@@ -1351,7 +1351,9 @@ fn a_critical_auto_attack_doubles_the_whole_swing_under_forever_rules() {
             .join("fixtures/mage/prepared-v2/production-arms-warrior.request.json"),
     )
     .unwrap();
-    let forever = forever_engine::prepare_json(&request, "x").unwrap();
+    let forever =
+        forever_engine::prepare_json(&crate::warrior_trees_20261104::forever_bytes(&request), "x")
+            .unwrap();
     assert_eq!(rage_bar(&forever)["crit_multiplies_swing"], json!(true));
     let go = forever_engine::prepare_json_with(&request, "x", forever_engine::Rules::GoReference)
         .unwrap();

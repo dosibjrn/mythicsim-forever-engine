@@ -12,6 +12,26 @@ pub(crate) struct Whirlwind {
     pub(crate) off_hand: Option<SpellId>,
     /// The row's target cap.
     pub(crate) max_targets: usize,
+    /// Improved Whirlwind's share more damage the first target of each strike takes, which is
+    /// the closest enemy; 0 without the talent (Forever's rules).
+    pub(crate) closest_bonus: f64,
+}
+
+/// Improved Whirlwind's dummy, applied as wowsims/forever #841's `scaleClosest` does: the first
+/// result of a strike (the cast target's) takes the share and its threat follows the damage.
+fn scale_closest<A: Agent>(
+    fight: &Fight<A>,
+    spell: SpellId,
+    params: Whirlwind,
+    results: &mut [crate::core::fight::SpellResult],
+) {
+    if params.closest_bonus == 0.0 {
+        return;
+    }
+    if let Some(first) = results.first_mut() {
+        first.damage *= 1.0 + params.closest_bonus;
+        first.threat = fight.threat_of(spell, first);
+    }
 }
 
 /// The main hand strike.
@@ -25,11 +45,12 @@ pub(crate) fn apply<A: Agent>(
     let attack_power = fight.melee_attack_power();
     let base = fight.mh_normalized_weapon_damage(attack_power);
     let outcome = PhysicalOutcome::MeleeWeaponSpecialHitAndCrit { count: true };
-    let results: Vec<_> = fight
+    let mut results: Vec<_> = fight
         .cleave_targets(target, params.max_targets)
         .into_iter()
         .map(|hit| fight.calc_physical_damage(spell, hit, base, outcome))
         .collect();
+    scale_closest(fight, spell, params, &mut results);
     sweeping_strikes::cast_normalized(fight, sweeping, &results);
     fight.deal_batched_aoe_damage(spell, &results, false);
     if let Some(off_hand) = params.off_hand {
@@ -47,10 +68,11 @@ pub(crate) fn apply_off_hand<A: Agent>(
     let attack_power = fight.melee_attack_power();
     let base = fight.oh_normalized_weapon_damage(attack_power);
     let outcome = PhysicalOutcome::MeleeWeaponSpecialHitAndCrit { count: true };
-    let results: Vec<_> = fight
+    let mut results: Vec<_> = fight
         .cleave_targets(target, params.max_targets)
         .into_iter()
         .map(|hit| fight.calc_physical_damage(spell, hit, base, outcome))
         .collect();
+    scale_closest(fight, spell, params, &mut results);
     fight.deal_batched_aoe_damage(spell, &results, false);
 }

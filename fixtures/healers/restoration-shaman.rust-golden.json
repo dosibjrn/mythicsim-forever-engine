@@ -1,56 +1,56 @@
 {
   "actions": {
     "{\"spellId\":10396}": {
-      "casts": 1200.0,
+      "casts": 900.0,
       "crit_ticks": 0.0,
-      "crits": 268.0,
-      "healing": 2756182.967781749,
-      "hits": 932.0,
-      "overhealing": 158562.1335102866,
+      "crits": 187.0,
+      "healing": 2050304.214504678,
+      "hits": 713.0,
+      "overhealing": 117953.20354172427,
       "shielding": 0.0,
       "ticks": 0.0
     },
     "{\"spellId\":10463}": {
       "casts": 300.0,
-      "crit_ticks": 23517.0,
+      "crit_ticks": 23607.0,
       "crits": 0.0,
-      "healing": 1401123.5153986046,
+      "healing": 1401554.3548837393,
       "hits": 0.0,
-      "overhealing": 2433368.8639079463,
+      "overhealing": 2434117.1144204414,
       "shielding": 0.0,
-      "ticks": 111068.0
+      "ticks": 110978.0
     },
     "{\"spellId\":10468}": {
-      "casts": 2700.0,
+      "casts": 4760.0,
       "crit_ticks": 0.0,
-      "crits": 612.0,
-      "healing": 2936150.777483812,
-      "hits": 2088.0,
-      "overhealing": 190074.49666845807,
+      "crits": 1053.0,
+      "healing": 5170145.044050502,
+      "hits": 3707.0,
+      "overhealing": 334694.2277238826,
       "shielding": 0.0,
       "ticks": 0.0
     },
     "{\"spellId\":10623}": {
-      "casts": 3600.0,
+      "casts": 6000.0,
       "crit_ticks": 0.0,
-      "crits": 2244.0,
-      "healing": 4571144.306798602,
-      "hits": 7576.0,
-      "overhealing": 1489773.6284952224,
+      "crits": 3693.0,
+      "healing": 7617116.1402386585,
+      "hits": 12630.0,
+      "overhealing": 2482480.9695977997,
       "shielding": 0.0,
       "ticks": 0.0
     },
     "{\"spellId\":1239243}": {
-      "casts": 6632.0,
-      "crit_ticks": 7260.0,
-      "crits": 1475.0,
-      "healing": 12328090.166213343,
-      "hits": 5157.0,
-      "overhealing": 2473314.763806275,
+      "casts": 3755.0,
+      "crit_ticks": 4028.0,
+      "crits": 0.0,
+      "healing": 3499143.6400352335,
+      "hits": 0.0,
+      "overhealing": 702013.3296312728,
       "shielding": 0.0,
-      "ticks": 24787.0
+      "ticks": 14017.0
     }
   },
-  "hps": 443.65814162568046,
-  "seconds_oom": 109.48444428810673
+  "hps": 365.04554002168777,
+  "seconds_oom": 88.73816208085995
 }

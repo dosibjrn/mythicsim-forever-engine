@@ -15,6 +15,16 @@ pub(super) enum Hand {
     Off,
 }
 
+/// The weapon share each Mutilate hit deals, as a fraction: 75%, or 90% under Forever's rules
+/// since the notes of 2 November 2026. Every hit rank states the same share, so the first rank's
+/// stands for all of them.
+pub(super) fn mutilate_weapon_share(rules: crate::prepare::sim::Rules) -> f64 {
+    crate::prepare::hotfix_113554::row(rules, 399960)
+        .effect_n(2)
+        .base_points
+        / 100.0
+}
+
 /// An action naming a spell.
 pub(super) fn spell_action(id: i32) -> ActionId {
     ActionId {

@@ -6,6 +6,8 @@
 
 use std::sync::OnceLock;
 
+use crate::Rules;
+
 use crate::contracts::prepared_v2::ActionId;
 use crate::prepare::sim::{
     AuraConfig, Cooldown, Duration, EventCallbacks, Sim, UnitId, UnitType, MILLISECOND,
@@ -85,6 +87,12 @@ pub(super) fn chain_lightning_overload_ranks() -> &'static Ladder {
     LADDER.get_or_init(|| Ladder::ranked(&[408479, 408481, 408482, 408484]))
 }
 
+/// The rank's row under these rules: the notes of 2 November 2026 change Lightning Bolt, Chain
+/// Lightning and the shocks under Forever's rules (`prepare::hotfix_113554`).
+pub(super) fn rules_row(rules: Rules, row: &Row) -> &'static Row {
+    crate::prepare::hotfix_113554::row(rules, row.id)
+}
+
 /// What Go's `ShamSpellConfig` carries into `newElectricSpellConfig`.
 struct ElectricConfig {
     action_id: ActionId,
@@ -139,6 +147,7 @@ impl Shaman {
         let max_hits = total_target_count(sim).min(3);
         let shared_cd_timer = sim.new_timer(unit);
         spell_data().chain_lightning.each(|rank, config| {
+            let config = rules_row(sim.rules, config);
             self.new_chain_lightning_spell(sim, unit, config, rank, false, Some(shared_cd_timer));
             for _ in 0..max_hits {
                 self.new_chain_lightning_spell(sim, unit, config, rank, true, None);
@@ -156,7 +165,7 @@ impl Shaman {
         shared_cd_timer: Option<crate::prepare::sim::TimerId>,
     ) {
         let damage = if is_elemental_overload {
-            chain_lightning_overload_ranks().rank(rank).damage_effect()
+            rules_row(sim.rules, chain_lightning_overload_ranks().rank(rank)).damage_effect()
         } else {
             config.damage_effect()
         };
@@ -186,9 +195,10 @@ impl Shaman {
     /// Go `registerLightningBoltSpell`.
     pub(super) fn register_lightning_bolt_spell(&self, sim: &mut Sim, unit: UnitId) {
         spell_data().lightning_bolt.each(|rank, config| {
+            let config = rules_row(sim.rules, config);
             for is_elemental_overload in [false, true] {
                 let damage = if is_elemental_overload {
-                    lightning_bolt_overload_ranks().rank(rank).damage_effect()
+                    rules_row(sim.rules, lightning_bolt_overload_ranks().rank(rank)).damage_effect()
                 } else {
                     config.damage_effect()
                 };
@@ -216,8 +226,12 @@ impl Shaman {
 
     /// Go `registerLavaBurstSpell`: Lava Burst is new in Forever. Client 70425 added rank 4;
     /// rotations saved with an older rank keep casting it through the rank aliases.
+    ///
+    /// The notes of 2 November 2026 remove Lava Burst: under Forever's rules its talent slot gives
+    /// Call of Thunder instead (`apply_call_of_thunder`), and the spell is never registered, so a
+    /// rotation line that names it finds no spell.
     pub(super) fn register_lava_burst_spell(&self, sim: &mut Sim, unit: UnitId) {
-        if !self.has_talent("lava_burst") {
+        if sim.rules == Rules::Forever || !self.has_talent("lava_burst") {
             return;
         }
         let rank = spell_data().lava_burst.highest();
@@ -299,7 +313,7 @@ impl Shaman {
         unit: UnitId,
         shock_timer: crate::prepare::sim::TimerId,
     ) {
-        let rank = spell_data().earth_shock.highest();
+        let rank = rules_row(sim.rules, spell_data().earth_shock.highest());
         let mut config = self.new_shock_spell_config(rank, school::NATURE, shock_timer);
         config.class_spell_mask = masks::EARTH_SHOCK;
         config.flags |= SpellFlag::BINARY;
@@ -312,7 +326,7 @@ impl Shaman {
         unit: UnitId,
         shock_timer: crate::prepare::sim::TimerId,
     ) {
-        let rank = spell_data().flame_shock.highest();
+        let rank = rules_row(sim.rules, spell_data().flame_shock.highest());
         let tick = rank.periodic_effect();
 
         let mut config = self.new_shock_spell_config(rank, school::FIRE, shock_timer);
@@ -354,7 +368,7 @@ impl Shaman {
         unit: UnitId,
         shock_timer: crate::prepare::sim::TimerId,
     ) {
-        let rank = spell_data().frost_shock.highest();
+        let rank = rules_row(sim.rules, spell_data().frost_shock.highest());
         let mut config = self.new_shock_spell_config(rank, school::FROST, shock_timer);
         config.class_spell_mask = masks::FROST_SHOCK;
         config.flags |= SpellFlag::BINARY;
@@ -504,7 +518,14 @@ impl Shaman {
 
     /// Go `registerStormstrikeSpell`: the two hits, the debuff on every enemy, then the cast.
     pub(super) fn register_stormstrike_spell(&self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().stormstrike.highest();
+        // The 8 sec cooldown is 6 under Forever's rules since the notes of 2 November 2026, and
+        // each hit deals 150% weapon damage (was 100%).
+        let rank =
+            crate::prepare::hotfix_113554::row(sim.rules, spell_data().stormstrike.highest().id);
+        let strike_multiplier = match sim.rules {
+            Rules::Forever => 1.5,
+            Rules::GoReference => 1.0,
+        };
         for is_mh in [true, false] {
             sim.register_spell(
                 unit,
@@ -520,7 +541,7 @@ impl Shaman {
                     flags: SpellFlag::MELEE_METRICS,
                     class_spell_mask: masks::STORMSTRIKE_DAMAGE,
                     threat_multiplier: 1.0,
-                    damage_multiplier: 1.0,
+                    damage_multiplier: strike_multiplier,
                     ..SpellConfig::default()
                 },
             );

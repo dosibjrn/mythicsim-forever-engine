@@ -121,3 +121,9 @@ pub(crate) fn agentless_item_effect(
         || paladin::prepare::items::apply_agentless_libram_effect(sim, unit, item)
         || shaman::prepare::items::apply_agentless_totem_effect(sim, unit, item)
 }
+
+/// Whether a class package registers an effect for an item under Forever's rules alone, one the
+/// Go reference has no effect for: the druid's flat shapeshift cost items.
+pub(crate) fn forever_item_effect(item: i32) -> bool {
+    druid::prepare::items::shapeshift_cost_spell(item).is_some()
+}

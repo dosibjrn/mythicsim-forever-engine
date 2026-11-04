@@ -42,7 +42,9 @@ fn trueshot_aura_is_rank_5() {
             .as_f64()
             .unwrap()
     };
-    // 25 from Trueshot Aura; 26 more from the raid's Grace of Air Totem, rank II (77 Agility)
-    // under Forever's rules for rank III's 89, as rank III is an Ahn'Qiraj 20 book.
-    assert_eq!(rap(&reference) - rap(&forever), 51.0);
+    // Trueshot Aura rank 5 is 100 since the live hotfix cache of 3 November (tests/
+    // hotfix_20261103.rs), 25 above the reference's rank 4 at 75; 26 fewer from the raid's Grace
+    // of Air Totem, rank II (77 Agility) under Forever's rules for rank III's 89, as rank III is
+    // an Ahn'Qiraj 20 book.
+    assert_eq!(rap(&reference) - rap(&forever), 26.0 - 25.0);
 }

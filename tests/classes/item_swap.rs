@@ -330,6 +330,8 @@ fn prepared_forever(name: &str) -> Value {
     request["simOptions"]["iterations"] = json!(20);
     // A paladin's talents read in push 113554's tree, which Forever's rules prepare.
     crate::paladin_113554::forever_request(&mut request);
+    // A shaman's talents read in the launch client's order.
+    crate::shaman_layout::forever_request(&mut request);
     forever_engine::prepare_json_with(
         request.to_string().as_bytes(),
         name,

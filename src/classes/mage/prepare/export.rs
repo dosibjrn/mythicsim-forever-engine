@@ -125,14 +125,20 @@ pub(super) fn effects(talents: &Message, sim: &Sim, unit: UnitId) -> Vec<Value> 
     // talents_arcane.go registerArcaneConcentration
     let arcane_concentration = talents.i32("arcane_concentration");
     if arcane_concentration > 0 {
-        effects.push(json!({
+        let mut effect = json!({
             "kind": "arcane_concentration", "talent_rank": arcane_concentration,
             "proc_chance": data.arcane_concentration.effect_at(1).fraction_at(arcane_concentration),
             "icd_ns": nanos(data.arcane_concentration.highest().icd()),
             "trigger_aura": "Arcane Concentration",
             "aura": "Clearcasting",
             "aura_duration_ns": nanos(data.arcane_concentration_triggered.highest().duration()),
-        }));
+        });
+        if sim.rules == Rules::Forever {
+            // Notes of 2 November 2026: "Arcane Missles did not proc Clearcasting" is fixed, and
+            // Clearcasting "is no longer consumed on Arcane Missiles if Missile Barrage is active".
+            effect["missiles"] = json!(true);
+        }
+        effects.push(effect);
     }
     // talents_arcane.go registerMissileBarrage: the client rows; Arcane Wrath, Frost Blast and the
     // bolts proc at half of Arcane Blast's chance, and the missiles no longer proc it (patch 175,

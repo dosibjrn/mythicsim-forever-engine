@@ -335,8 +335,8 @@ fn restoration_shaman_heals_as_its_rows_state() {
     let result = run("restoration-shaman");
     let log = result["logs"].as_str().unwrap();
     // Chain Heal rank 3 (10623) lands on up to three players, each with its own roll of 473 to
-    // 539 plus 0.714 of healing power, the second at half and the third at a quarter. A cast's
-    // first heal is the largest, so a heal larger than the one before starts the next cast.
+    // 539 plus 0.714 of healing power, the second at half and the third at a quarter. The heals
+    // of one cast land on one timestamp.
     // The first player heals 25% more with a Riptide up (the Riptide holder, see
     // `Shaman::riptide_chain_heal_bonus`): the fixture's Riptide is up for nearly every cast, and
     // the casts it is not up for read the roll without it.
@@ -345,15 +345,19 @@ fn restoration_shaman_heals_as_its_rows_state() {
         line[at..].split(',').next().unwrap().parse().unwrap()
     };
     let mut casts: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut last_at = String::new();
     for line in log
         .lines()
         .filter(|line| line.contains("{SpellID: 10623} [DEBUG]"))
     {
         let heal = (field(line, "HealingPower: "), field(line, "BaseHealing:"));
+        // The heals of one cast land together, on one timestamp.
+        let at = line[..line.find(']').unwrap()].to_string();
         match casts.last_mut() {
-            Some(cast) if cast.last().is_some_and(|last| heal.1 < last.1) => cast.push(heal),
+            Some(cast) if at == last_at => cast.push(heal),
             _ => casts.push(vec![heal]),
         }
+        last_at = at;
     }
     assert!(!casts.is_empty());
     for cast in &casts {
@@ -380,8 +384,9 @@ fn restoration_shaman_heals_as_its_rows_state() {
     );
     let reference = run_reference("restoration-shaman");
     assert_eq!(players_a_cast(&reference, 10623), 3.0);
-    // Riptide recast every 6 seconds keeps its 15 second heal over time on each player: about
-    // five ticks a cast, not the two or three a cut short one would give.
+    // Riptide recast every 12 seconds (its cooldown under Forever's rules) keeps its 15 second heal
+    // over time on each player: about five ticks a cast, not the two or three a cut short one
+    // would give.
     let riptide = player(&result)["actions"]
         .as_array()
         .unwrap()

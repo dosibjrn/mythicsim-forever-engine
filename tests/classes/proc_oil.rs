@@ -26,7 +26,9 @@ fn simulate(main: i64, off: i64, bonus_spell_damage: f64) -> (Value, Value) {
     let consumables = &mut request["raid"]["parties"][0]["players"][0]["consumables"];
     consumables["mhImbueId"] = json!(main);
     consumables["ohImbueId"] = json!(off);
-    let mut prepared = prepare_json(&serde_json::to_vec(&request).unwrap(), "shadow-oil").unwrap();
+    let mut forever = request.clone();
+    crate::rogue_113483::forever_request(&mut forever);
+    let mut prepared = prepare_json(&serde_json::to_vec(&forever).unwrap(), "shadow-oil").unwrap();
     let stats = &mut prepared["player"]["stats"]["SpellDamage"];
     *stats = json!(stats.as_f64().unwrap() + bonus_spell_damage);
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();

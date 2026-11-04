@@ -7,6 +7,7 @@ use forever_engine::{
 use serde_json::Value;
 use std::{fs, path::Path};
 
+mod mutilate;
 mod prepare;
 
 fn combat_json() -> Value {

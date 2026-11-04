@@ -9,7 +9,7 @@ mod retribution;
 use std::rc::Rc;
 
 use crate::prepare::sim::{AuraId, Duration, Sim, UnitId, MILLISECOND};
-use crate::prepare::spell::school;
+use crate::prepare::spell::ProcMask;
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 
 /// `time.Duration(value) * time.Millisecond` for a client value in milliseconds.
@@ -17,19 +17,23 @@ pub(super) fn millis(value: f64) -> Duration {
     (value as i64).wrapping_mul(MILLISECOND)
 }
 
-/// Go `applyWeaponSpecialization`'s mod: a physical damage bonus that follows the weapon in
-/// the main hand, active when the weapon is of the hand type, item swaps included.
+/// Go `applyWeaponSpecialization`'s mod: a damage bonus on the given schools that follows the
+/// weapon in the main hand, active when the weapon is of the hand type, item swaps included.
+/// `proc_mask` narrows the spells it applies to; the default, no bits, is every spell.
 pub(super) fn apply_weapon_specialization(
     sim: &mut Sim,
     unit: UnitId,
     bonus: f64,
     main_hand_matches: bool,
     hand_type: &str,
+    schools: u8,
+    proc_mask: ProcMask,
 ) {
     let weapon_mod = sim.add_dynamic_mod(
         unit,
         SpellModConfig {
-            school: school::PHYSICAL,
+            school: schools,
+            proc_mask,
             kind: SpellModType::DamageDonePct,
             float_value: bonus,
             ..SpellModConfig::default()

@@ -90,6 +90,26 @@ const FOREVER_MULTI_SHOT_CAST_TIME: Duration = 500 * MILLISECOND;
 pub(super) const ARCANE_SHOT_RAP_COEFFICIENT: f64 = 0.10;
 /// Go `rapPerTick` of Serpent Sting.
 pub(super) const SERPENT_STING_RAP_PER_TICK: f64 = 0.035;
+
+/// Arcane Shot's share of ranged attack power under these rules. Blizzard's development notes of
+/// 2 November 2026 raise it from 0.10 to 0.15 (no row states it; wowsims/forever #824 takes the
+/// same number). The Go reference keeps 0.10.
+pub(super) fn arcane_shot_rap_coefficient(rules: Rules) -> f64 {
+    match rules {
+        Rules::Forever => 0.15,
+        Rules::GoReference => ARCANE_SHOT_RAP_COEFFICIENT,
+    }
+}
+
+/// Serpent Sting's share of ranged attack power a tick under these rules. The development notes
+/// of 2 November 2026 put it at 5% (from 3%; the engine had 3.5%, from the beta logs). No row
+/// states it; wowsims/forever #824 takes 0.05 too. The Go reference keeps 0.035.
+pub(super) fn serpent_sting_rap_per_tick(rules: Rules) -> f64 {
+    match rules {
+        Rules::Forever => 0.05,
+        Rules::GoReference => SERPENT_STING_RAP_PER_TICK,
+    }
+}
 /// Summon Hawk's attack power share of the dive bomb.
 pub(super) const SUMMON_HAWK_RAP_SHARE: f64 = 0.05;
 /// Summon Hawk's swing damage as a share of the rank's dive bomb base (`swingDamage`).

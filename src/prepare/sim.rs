@@ -185,6 +185,9 @@ pub(crate) struct ExclusiveEffect {
     pub on_expire: Option<EffectCallback>,
     pub category: CategoryId,
     pub is_enabled: bool,
+    /// Go `YieldsTies`: the effect takes the category from an active effect only by outbidding
+    /// it, never on an equal bid.
+    pub yields_ties: bool,
 }
 
 #[derive(Clone)]
@@ -1141,6 +1144,7 @@ impl Sim {
             on_expire,
             category,
             is_enabled: false,
+            yields_ties: false,
         });
         let id = EffectId(self.effects.len() - 1);
         self.categories[category.0].effects.push(id);
@@ -1217,7 +1221,9 @@ impl Sim {
             Some(active) => {
                 let active_priority = self.effects[active.0].priority;
                 if priority > active_priority
-                    || (priority == active_priority && !self.keeps_tie(active, effect))
+                    || (priority == active_priority
+                        && !self.effects[effect.0].yields_ties
+                        && !self.keeps_tie(active, effect))
                 {
                     if single && active != effect {
                         let displaced = self.effects[active.0].aura;

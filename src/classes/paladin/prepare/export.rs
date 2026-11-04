@@ -871,11 +871,11 @@ impl Paladin {
             labels.push(format!("Redoubt{label}"));
         }
         if talents.bool("holy_shield") {
-            data.holy_shield.each(|_, rank| {
+            for rank in super::hotfix_113554::holy_shield_ranks(sim.rules) {
                 if rotation_spells.contains(&i64::from(rank.id)) {
                     labels.push(format!("Holy Shield{label} Rank {}", rank.rank_number()));
                 }
-            });
+            }
         }
         labels
     }

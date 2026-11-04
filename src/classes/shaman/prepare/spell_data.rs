@@ -46,7 +46,6 @@ pub(crate) struct SpellData {
     pub improved_stormstrike_triggered: Ladder,
     pub lava_burst: Ladder,
     pub lightning_bolt: Ladder,
-    pub lightning_overload: Ladder,
     pub lightning_shield: Ladder,
     pub lightning_shield_triggered: Ladder,
     pub maelstrom_weapon: Ladder,
@@ -56,7 +55,6 @@ pub(crate) struct SpellData {
     pub mana_spring_totem: Ladder,
     pub mana_spring_totem_triggered: Ladder,
     pub mana_tide_totem: Ladder,
-    pub mental_dexterity: Ladder,
     pub mental_quickness: Ladder,
     pub mindfulness: Ladder,
     pub natural_grace: Ladder,
@@ -122,7 +120,6 @@ pub(crate) fn spell_data() -> &'static SpellData {
         lightning_bolt: Ladder::ranked(&[
             403, 529, 548, 915, 943, 6041, 10391, 10392, 15207, 15208,
         ]),
-        lightning_overload: Ladder::talent(408438, 3),
         lightning_shield: Ladder::ranked(&[324, 325, 905, 945, 8134, 10431, 10432]),
         lightning_shield_triggered: Ladder::ranked(&[
             26363, 26364, 26365, 26366, 26367, 26369, 26370, 26545,
@@ -136,7 +133,6 @@ pub(crate) fn spell_data() -> &'static SpellData {
         mana_spring_totem: Ladder::ranked(&[5675, 10495, 10496, 10497]),
         mana_spring_totem_triggered: Ladder::ranked(&[5677, 10491, 10493, 10494]),
         mana_tide_totem: Ladder::ranked(&[16190, 17354, 17359, 1325256]),
-        mental_dexterity: Ladder::talent(415140, 3),
         mental_quickness: Ladder::talent(30812, 2),
         mindfulness: Ladder::talent(1223033, 3),
         natural_grace: Ladder::talent(29187, 3),

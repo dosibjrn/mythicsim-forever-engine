@@ -58,6 +58,7 @@ const EFFECTS: &[&str] = &[
     "taunt",
     "thunder_clap",
     "unbridled_wrath",
+    "reckless_swings",
     "warrior_enrage",
     "improved_hamstring",
     "warrior_charge",
@@ -79,6 +80,7 @@ fn spell_capability(spell: &Spell) -> Option<&'static str> {
         "bloodthirst" => Some("bloodthirst"),
         "charge" => Some("warrior_charge"),
         "whirlwind" | "whirlwind_off_hand" => Some("whirlwind"),
+        "reckless_swings" => Some("reckless_swings"),
         "execute" => Some("execute"),
         "hamstring" => Some("hamstring"),
         "pummel" => Some("pummel"),
@@ -128,6 +130,9 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         | Effect::ImprovedHamstring { trigger_aura, .. }
         | Effect::BattlegearOfMightRage { trigger_aura, .. } => vec![("player", trigger_aura)],
         Effect::WarriorFlurry {
+            trigger_aura, aura, ..
+        }
+        | Effect::RecklessSwings {
             trigger_aura, aura, ..
         }
         | Effect::Revenge {

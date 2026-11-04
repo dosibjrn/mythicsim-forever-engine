@@ -111,9 +111,9 @@ impl Paladin {
             self.register_templars_bulwark(sim, unit);
         }
         if self.talents.bool("holy_shield") {
-            spell_data()
-                .holy_shield
-                .each(|_, rank| self.register_holy_shield(sim, unit, rank));
+            for rank in hotfix::holy_shield_ranks(sim.rules) {
+                self.register_holy_shield(sim, unit, rank);
+            }
         }
 
         // Retribution
