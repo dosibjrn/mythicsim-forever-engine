@@ -2,6 +2,7 @@
 //! pass (tests/hotfix_20261103.rs) left: Paladin and Mage. They are prepared under Forever's rules
 //! only; the Go reference keeps the frozen data (client 1.60.1.70425) and its numbers.
 
+use forever_engine::RngMode;
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared, Rules,
 };
@@ -159,7 +160,7 @@ fn arcane_log_with_seed(seed: Option<u64>) -> Vec<String> {
     request["encounter"]["durationVariation"] = 0.into();
     let prepared = prepared(&request, Rules::Forever);
     let typed: PreparedV2 = serde_json::from_value(prepared).unwrap();
-    let report = simulate_prepared(&typed).unwrap();
+    let report = simulate_prepared(&typed, RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap().to_string();
     logs.lines().map(str::to_string).collect()
 }
