@@ -29,6 +29,10 @@ cargo run --locked --release -- sim --infile fixtures/mage/prepared-v2/frost-ref
 and prints the same JSON result that Go prints. You do not need Go to build or test
 the engine.
 
+For a bounded comparison, `sim --iterations N` runs only the first N iterations of a prepared
+request without rewriting its source fields or `request_sha256`. N must be between 1 and the
+request's original `simOptions.iterations`.
+
 ## How it works
 
 1. Rust prepares the character from the application's request: gear, stats, auras,
