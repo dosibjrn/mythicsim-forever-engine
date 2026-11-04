@@ -277,7 +277,10 @@ pub(crate) fn take_source_action_counts() -> Value {
     })
 }
 
-#[expect(clippy::too_many_arguments, reason = "native damage event wire boundary preserves its typed source fields")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "native damage event wire boundary preserves its typed source fields"
+)]
 pub(crate) fn record_damage(
     time_ns: i64,
     damage: f64,
@@ -316,7 +319,10 @@ pub(crate) fn record_damage(
     });
 }
 
-#[expect(clippy::too_many_arguments, reason = "native damage event serialization preserves source and caster provenance")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "native damage event serialization preserves source and caster provenance"
+)]
 fn append_damage_event(
     bridge: &mut Bridge,
     time_ns: i64,
