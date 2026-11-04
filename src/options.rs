@@ -87,13 +87,26 @@ impl FromStr for Class {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Prerequisite {
-    MinimumLevel { level: u8 },
-    ClassAllowlist { classes: Vec<String> },
+    MinimumLevel {
+        level: u8,
+    },
+    ClassAllowlist {
+        classes: Vec<String>,
+    },
     /// Five points in this tree for each earlier tier.
-    PointsInTree { tree: String, points: u8 },
+    PointsInTree {
+        tree: String,
+        points: u8,
+    },
     /// Native tree position of the parent and the required parent rank.
-    TalentRank { source_field: String, position: usize, required_rank: u32 },
-    Unresolved { key: &'static str },
+    TalentRank {
+        source_field: String,
+        position: usize,
+        required_rank: u32,
+    },
+    Unresolved {
+        key: &'static str,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
