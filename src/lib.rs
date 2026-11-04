@@ -43,45 +43,162 @@ pub use prepare::{
 pub fn implemented_prepared_effects() -> &'static [&'static str] {
     engine::coverage::implemented_effects()
 }
+pub use prepare::items::{
+    native_item_options, native_player_context, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
+};
+pub use prepare::talent_options::native_talent_options;
 pub use report::{Counts, Report, TraceEvent, Work};
 
 /// The pinned Go reference revision, from upstream/sources.json.
 pub const SOURCE_REVISION: &str = env!("FOREVER_REFERENCE_REVISION");
 
-/// Return native Druid talent-layout metadata for wire serialization only.
-pub fn forever_druid_talent_layout() -> serde_json::Value {
-    classes::druid::prepare::forever_talent_layout_json()
+/// Read-only candidate options from this exact engine's item and enchant tables.
+///
+/// This is a proposal API, not a second simulator or a gate verdict. It returns
+/// only rows the pinned engine itself can resolve, with the engine's base
+/// scaling stats and slot metadata. Callers still submit complete candidates
+/// to the native simulation; this API does not claim class/phase/profession
+/// legality or supported-effect coverage.
+pub fn gear_options(item_types: &[String]) -> serde_json::Value {
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+
+    let requested: HashSet<&str> = item_types.iter().map(String::as_str).collect();
+    let mut groups: BTreeMap<String, (Vec<serde_json::Value>, Vec<serde_json::Value>)> =
+        BTreeMap::new();
+    for item_type in item_types {
+        groups.entry(item_type.clone()).or_default();
+    }
+
+    // Enumerate the native table, not a Forever-side copy or SQLite catalogue.
+    for key in data::ITEMS.keys() {
+        let Ok(id) = i32::try_from(key) else {
+            continue;
+        };
+        let Some(item) = prepare::items::database_item(id) else {
+            continue;
+        };
+        if !requested.contains(item.item_type.as_str()) {
+            continue;
+        }
+        let Some(row) = item.row.as_ref() else {
+            continue;
+        };
+        let Some(scaling) = prepare::items::scaling_option(row) else {
+            continue;
+        };
+        let stats = prepare::items::stats_from_map(scaling, "stats").0.to_vec();
+        let weapon_damage_min = scaling.f64("weapon_damage_min");
+        let weapon_damage_max = scaling.f64("weapon_damage_max");
+        let rand_prop_points = scaling.i32("rand_prop_points");
+        let item_type = item.item_type.clone();
+        let option = serde_json::json!({
+            "id": item.id,
+            "name": item.name,
+            "type": item.item_type,
+            "armor_type": item.armor_type,
+            "weapon_type": item.weapon_type,
+            "hand_type": item.hand_type,
+            "ranged_weapon_type": item.ranged_weapon_type,
+            "class_allowlist": item.class_allowlist,
+            "unique": item.unique,
+            "limit_category": item.limit_category,
+            "item_effect_count": item.item_effects.len(),
+            "stats": stats,
+            "weapon_damage_min": weapon_damage_min,
+            "weapon_damage_max": weapon_damage_max,
+            "rand_prop_points": rand_prop_points,
+        });
+        groups
+            .get_mut(&item_type)
+            .expect("requested item type has a group")
+            .0
+            .push(option);
+    }
+
+    // Enchants are keyed and typed by the same native data used by preparation.
+    // Include explicit extra_types and the EnchantType -> ItemType mapping.
+    for key in data::ENCHANTS.keys() {
+        let Ok(id) = i32::try_from(key) else {
+            continue;
+        };
+        let Some(enchant) = prepare::items::enchant(id) else {
+            continue;
+        };
+        let mut applicable_types = BTreeSet::new();
+        applicable_types.insert(enchant.item_type.clone());
+        applicable_types.extend(enchant.extra_types.iter().cloned());
+        if let Some(suffix) = enchant.enchant_type.strip_prefix("EnchantType") {
+            if suffix != "Unknown" {
+                applicable_types.insert(format!("ItemType{suffix}"));
+            }
+        }
+        if enchant.enchant_type.ends_with("All") || enchant.enchant_type.ends_with("Any") {
+            applicable_types.extend(item_types.iter().cloned());
+        }
+        let option = serde_json::json!({
+            "id": enchant.effect_id,
+            "name": enchant.name,
+            "type": enchant.item_type,
+            "enchant_type": enchant.enchant_type,
+            "extra_types": enchant.extra_types,
+            "stats": enchant.stats.0.to_vec(),
+            "pseudo_stats": enchant.pseudo_stats,
+            "weapon_damage": enchant.weapon_damage,
+        });
+        for item_type in applicable_types {
+            if let Some(group) = groups.get_mut(&item_type) {
+                group.1.push(option.clone());
+            }
+        }
+    }
+
+    let item_types: BTreeMap<String, serde_json::Value> = groups
+        .into_iter()
+        .map(|(item_type, (items, enchants))| {
+            (
+                item_type,
+                serde_json::json!({"items": items, "enchants": enchants}),
+            )
+        })
+        .collect();
+
+    serde_json::json!({
+        "engine": "forever-engine",
+        "source_revision": SOURCE_REVISION,
+        "item_types": item_types,
+    })
 }
 
 #[cfg(test)]
-mod druid_talent_layout_api_tests {
+mod gear_options_tests {
+    use super::{gear_options, SOURCE_REVISION};
+
     #[test]
-    fn exports_a_lossless_versioned_layout_projection() {
-        let value = crate::forever_druid_talent_layout();
-        assert_eq!(value["schema_version"].as_u64(), Some(1));
-        assert_eq!(value["class"].as_str(), Some("druid"));
-        assert_eq!(value["ruleset"].as_str(), Some("forever"));
+    fn gear_options_come_from_native_items_and_enchants_including_extra_types() {
+        let report = gear_options(&[
+            "ItemTypeHead".to_string(),
+            "ItemTypeHands".to_string(),
+            "ItemTypeWeapon".to_string(),
+        ]);
+        assert_eq!(report["engine"], "forever-engine");
+        assert_eq!(report["source_revision"], SOURCE_REVISION);
 
-        let trees = value["trees"].as_array().expect("layout trees");
-        assert_eq!(trees.len(), crate::classes::druid::prepare::FOREVER_TREES.len());
-        let keys = trees
+        let head_items = report["item_types"]["ItemTypeHead"]["items"]
+            .as_array()
+            .expect("native head item options");
+        assert!(!head_items.is_empty());
+        assert!(head_items
             .iter()
-            .map(|tree| tree["key"].as_str().expect("tree key"))
-            .collect::<Vec<_>>();
-        assert_eq!(keys, vec!["balance", "feral", "restoration"]);
+            .all(|item| { item["type"] == "ItemTypeHead" && item["stats"].as_array().is_some() }));
 
-        for (tree, source_tree) in trees
-            .iter()
-            .zip(crate::classes::druid::prepare::FOREVER_TREES.iter())
-        {
-            let entries = tree["talents"].as_array().expect("talent metadata");
-            assert_eq!(entries.len(), source_tree.len());
-            for (entry, source) in entries.iter().zip(source_tree.iter()) {
-                assert_eq!(entry["field"].as_str(), Some(source.field));
-                assert_eq!(entry["name"].as_str(), Some(source.name));
-                assert_eq!(entry["max_ranks"].as_u64(), Some(u64::from(source.max_ranks)));
-                assert_eq!(entry["in_proto"].as_bool(), Some(source.in_proto));
-            }
-        }
+        let hand_enchants = report["item_types"]["ItemTypeHands"]["enchants"]
+            .as_array()
+            .expect("native hand enchant options");
+        assert!(hand_enchants.iter().any(|enchant| enchant["id"] == 15));
+
+        let weapon_enchants = report["item_types"]["ItemTypeWeapon"]["enchants"]
+            .as_array()
+            .expect("native weapon enchant options");
+        assert!(!weapon_enchants.is_empty());
     }
 }

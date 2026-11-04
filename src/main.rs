@@ -1,8 +1,9 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, get_options,
+    contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
+    native_player_context, native_talent_options, OptionsClass,
     native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals,
-    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
-    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
+    PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -165,30 +166,146 @@ fn run() -> Result<(), Failure> {
         );
         return Ok(());
     }
-    if args.first().is_some_and(|arg| arg == "talent-layout") {
-        if args == ["talent-layout", "--class", "druid"] {
-            println!("{}", forever_druid_talent_layout());
-            return Ok(());
-        }
-        return Err("talent-layout requires exactly --class druid".into());
-    }
-    if args.first().is_some_and(|arg| arg == "options") {
-        if args.len() != 5 || args[1] != "--class" || args[3] != "--level" {
-            return Err("options requires --class CLASS --level LEVEL".into());
-        }
-        let class: OptionsClass = args[2].parse()?;
-        let level: u8 = args[4]
-            .parse()
-            .map_err(|_| "options level must be an integer 1..=60")?;
-        let options = get_options(level, class)?;
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&options).map_err(|err| err.to_string())?
-        );
+    if args.is_empty() || args == ["--help"] {
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine options --class CLASS --level LEVEL\nforever-engine talent-options --class CLASS --level LEVEL\nforever-engine version");
         return Ok(());
     }
-    if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine talent-layout --class druid\nforever-engine options --class CLASS --level LEVEL\nforever-engine version");
+
+    if args[0] == "options" || args[0] == "talent-options" {
+        let command = args[0].as_str();
+        if args.len() != 5 || args[1] != "--class" || args[3] != "--level" {
+            return Err(format!("{command} requires --class CLASS --level LEVEL").into());
+        }
+        if command == "talent-options" {
+            let level = args[4]
+                .parse::<i32>()
+                .map_err(|_| "talent-options level must be an integer 1..=60")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&native_talent_options(&args[2], level))
+                    .map_err(|err| err.to_string())?
+            );
+        } else {
+            let class: OptionsClass = args[2].parse()?;
+            let level = args[4]
+                .parse::<u8>()
+                .map_err(|_| "options level must be an integer 1..=60")?;
+            let options = get_options(level, class)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&options).map_err(|err| err.to_string())?
+            );
+        }
+        return Ok(());
+    }
+
+    if args[0] == "gear-options" {
+        if args.len() != 3 || args[1] != "--item-types" {
+            return Err("gear-options requires --item-types ItemTypeHead,ItemTypeHands,...".into());
+        }
+        let item_types: Vec<String> = args[2]
+            .split(',')
+            .map(str::trim)
+            .map(str::to_string)
+            .collect();
+        if item_types.is_empty() || item_types.iter().any(String::is_empty) {
+            return Err("gear-options requires at least one nonempty item type".into());
+        }
+        let mut unique = std::collections::BTreeSet::new();
+        if item_types.iter().any(|item_type| !unique.insert(item_type)) {
+            return Err("gear-options item types must be unique".into());
+        }
+        let output = serde_json::to_string_pretty(&gear_options(&item_types))
+            .map_err(|err| err.to_string())?;
+        println!("{output}");
+        return Ok(());
+    }
+    if args[0] == "player-context" {
+        let mut class: Option<String> = None;
+        let mut race: Option<String> = None;
+        let mut level: Option<i32> = None;
+        let mut index = 1;
+        while index < args.len() {
+            let flag = args[index].as_str();
+            index += 1;
+            let value = args
+                .get(index)
+                .ok_or_else(|| format!("{flag} requires a value"))?
+                .clone();
+            index += 1;
+            match flag {
+                "--class" => {
+                    if class.replace(value).is_some() {
+                        return Err("duplicate --class".into());
+                    }
+                }
+                "--race" => {
+                    if race.replace(value).is_some() {
+                        return Err("duplicate --race".into());
+                    }
+                }
+                "--level" => {
+                    let parsed = value.parse::<i32>().map_err(|_| "invalid --level")?;
+                    if level.replace(parsed).is_some() {
+                        return Err("duplicate --level".into());
+                    }
+                }
+                _ => return Err(format!("unsupported player-context argument {flag}").into()),
+            }
+        }
+        let class = class.ok_or("player-context requires --class")?;
+        let level = level.ok_or("player-context requires --level")?;
+        let response = native_player_context(&class, race.as_deref().unwrap_or(""), level);
+        let output = serde_json::to_string_pretty(&response).map_err(|err| err.to_string())?;
+        println!("{output}");
+        return Ok(());
+    }
+    if args[0] == "item-options" {
+        let mut class: Option<String> = None;
+        let mut level: Option<i32> = None;
+        let mut spec: Option<String> = None;
+        let mut slot: Option<String> = None;
+        let mut index = 1;
+        while index < args.len() {
+            let flag = args[index].as_str();
+            index += 1;
+            let value = args
+                .get(index)
+                .ok_or_else(|| format!("{flag} requires a value"))?
+                .clone();
+            index += 1;
+            match flag {
+                "--class" => {
+                    if class.replace(value).is_some() {
+                        return Err("duplicate --class".into());
+                    }
+                }
+                "--level" => {
+                    let parsed = value.parse::<i32>().map_err(|_| "invalid --level")?;
+                    if level.replace(parsed).is_some() {
+                        return Err("duplicate --level".into());
+                    }
+                }
+                "--spec" => {
+                    if spec.replace(value).is_some() {
+                        return Err("duplicate --spec".into());
+                    }
+                }
+                "--slot" => {
+                    if slot.replace(value).is_some() {
+                        return Err("duplicate --slot".into());
+                    }
+                }
+                _ => return Err(format!("unsupported item-options argument {flag}").into()),
+            }
+        }
+        let class = class.ok_or("item-options requires --class")?;
+        let level = level.ok_or("item-options requires --level")?;
+        let spec = spec.ok_or("item-options requires --spec")?;
+        let slot = slot.ok_or("item-options requires --slot")?;
+        let response = native_item_options(&class, level, &spec, &slot);
+        let output = serde_json::to_string_pretty(&response).map_err(|err| err.to_string())?;
+        println!("{output}");
         return Ok(());
     }
 
@@ -209,35 +326,44 @@ fn run() -> Result<(), Failure> {
             return Err("native-world-pulls requires --targets 2..100".into());
         }
         let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
-        let prepared = prepared_v2(&input)?
-            .ok_or("native-world-pulls requires a prepared v2 input")?;
+        let prepared =
+            prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
         let report = native_two_world_targets(&prepared, target_count, mode)
             .map_err(|err| err.to_string())?;
-        println!("{}", serde_json::json!({
-            "engine": "forever-engine",
-            "source_sha256": prepared.request_sha256,
-            "result": report, "checkpoint_certified": false,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "engine": "forever-engine",
+                "source_sha256": prepared.request_sha256,
+                "result": report, "checkpoint_certified": false,
+            })
+        );
         return Ok(());
     }
     if args[0] == "native-pulls" {
-        if args.len() != 7 || args[1] != "--infile"
-            || args[3] != "--targets" || args[4] != "2" || args[5] != "--rng-mode" {
+        if args.len() != 7
+            || args[1] != "--infile"
+            || args[3] != "--targets"
+            || args[4] != "2"
+            || args[5] != "--rng-mode"
+        {
             return Err("native-pulls requires --infile PREPARED_V2.json --targets 2".into());
         }
         let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
-        let prepared = prepared_v2(&input)?
-            .ok_or("native-pulls requires a prepared v2 input")?;
+        let prepared = prepared_v2(&input)?.ok_or("native-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
         let windows = native_two_pull_windows(&prepared, mode).map_err(|err| err.to_string())?;
-        println!("{}", serde_json::json!({
-            "engine": "forever-engine",
-            "source_sha256": prepared.request_sha256,
-            "scenario_id": prepared.scenario_id,
-            "result": windows,
-            "checkpoint_certified": false,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "engine": "forever-engine",
+                "source_sha256": prepared.request_sha256,
+                "scenario_id": prepared.scenario_id,
+                "result": windows,
+                "checkpoint_certified": false,
+            })
+        );
         return Ok(());
     }
     if args.len() == 3 && args[0] == "check" && args[1] == "--infile" {
@@ -342,7 +468,8 @@ fn run() -> Result<(), Failure> {
     if scenario.is_some() && request_file.is_none() {
         return Err("--scenario requires --request".into());
     }
-    let rng_mode = rng_mode.ok_or("sim and bench require explicit --rng-mode balanced|stochastic")?;
+    let rng_mode =
+        rng_mode.ok_or("sim and bench require explicit --rng-mode balanced|stochastic")?;
     let prepared_from_request = match request_file {
         Some(request) => {
             if infile.is_some() || args[0] != "sim" {
@@ -391,7 +518,10 @@ fn run() -> Result<(), Failure> {
                 return Err("bench requires 0 to 20 warmups and 1 to 100 samples".into());
             }
             for _ in 1..warmups {
-                black_box(simulate_prepared(black_box(&prepared), rng_mode).map_err(|err| err.to_string())?);
+                black_box(
+                    simulate_prepared(black_box(&prepared), rng_mode)
+                        .map_err(|err| err.to_string())?,
+                );
             }
             let mut timings = Vec::with_capacity(samples as usize);
             for _ in 0..samples {

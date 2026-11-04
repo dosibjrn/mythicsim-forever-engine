@@ -1,23 +1,25 @@
-//! Source-backed option discovery for Forever search clients.
+//! Unified native-source option discovery for Forever build search.
 //!
-//! This inventories what the *selected Rust source* knows; it deliberately does
-//! not pretend that a client spell-data row is a learned spell or that every
-//! database item is wearable at a checkpoint. Unknown prerequisites remain
-//! explicit, so consumers cannot silently turn an incomplete source into a
-//! larger, illegal search space. No second build validator is introduced.
+//! No second rules engine or build validator: trained spell legality is not
+//! inferred from spell-family rows, and class equipment proficiency is not
+//! inferred from armor/weapon labels. Existing native item options and the
+//! pinned TalentsForever client tree projection are reused as-is.
 
-mod talents;
-
-use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 use crate::data::{self, ITEMS};
-use crate::legacy_items::legacy_item_fact;
-use crate::prepare::items::{scaling_option, stats_from_map};
+use crate::legacy_items::{legacy_item_fact, LegacyItemFact};
+use crate::prepare::items::{native_item_options, NativeItemOption};
 use crate::prepare::spelldata;
+use crate::prepare::stats::Stat;
+use crate::prepare::talent_options::native_talent_options;
 use crate::SOURCE_REVISION;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// The nine playable classes; these are not proto.Class numbers.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Class {
     Druid,
@@ -32,19 +34,17 @@ pub enum Class {
 }
 
 impl Class {
-    /// Class family identifiers of the pinned client spell-data rows.
-    /// These are not proto.Class numbers (e.g. ClassMage is proto enum 8).
-    fn spell_family(self) -> i32 {
+    pub fn as_str(self) -> &'static str {
         match self {
-            Self::Mage => 3,
-            Self::Warrior => 4,
-            Self::Warlock => 5,
-            Self::Priest => 6,
-            Self::Druid => 7,
-            Self::Rogue => 8,
-            Self::Hunter => 9,
-            Self::Paladin => 10,
-            Self::Shaman => 11,
+            Self::Druid => "druid",
+            Self::Hunter => "hunter",
+            Self::Mage => "mage",
+            Self::Paladin => "paladin",
+            Self::Priest => "priest",
+            Self::Rogue => "rogue",
+            Self::Shaman => "shaman",
+            Self::Warlock => "warlock",
+            Self::Warrior => "warrior",
         }
     }
 
@@ -61,6 +61,27 @@ impl Class {
             Self::Warrior => "ClassWarrior",
         }
     }
+
+    fn spell_family(self) -> i32 {
+        match self {
+            Self::Mage => 3,
+            Self::Warrior => 4,
+            Self::Warlock => 5,
+            Self::Priest => 6,
+            Self::Druid => 7,
+            Self::Rogue => 8,
+            Self::Hunter => 9,
+            Self::Paladin => 10,
+            Self::Shaman => 11,
+        }
+    }
+
+    fn has_native_item_eligibility(self) -> bool {
+        matches!(
+            self,
+            Self::Priest | Self::Mage | Self::Shaman | Self::Paladin | Self::Rogue
+        )
+    }
 }
 
 impl FromStr for Class {
@@ -68,246 +89,247 @@ impl FromStr for Class {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_ascii_lowercase().as_str() {
-            "druid" => Ok(Self::Druid),
-            "hunter" => Ok(Self::Hunter),
-            "mage" => Ok(Self::Mage),
-            "paladin" => Ok(Self::Paladin),
-            "priest" => Ok(Self::Priest),
-            "rogue" => Ok(Self::Rogue),
-            "shaman" => Ok(Self::Shaman),
-            "warlock" => Ok(Self::Warlock),
-            "warrior" => Ok(Self::Warrior),
+            "druid" | "classdruid" => Ok(Self::Druid),
+            "hunter" | "classhunter" => Ok(Self::Hunter),
+            "mage" | "classmage" => Ok(Self::Mage),
+            "paladin" | "classpaladin" => Ok(Self::Paladin),
+            "priest" | "classpriest" => Ok(Self::Priest),
+            "rogue" | "classrogue" => Ok(Self::Rogue),
+            "shaman" | "classshaman" => Ok(Self::Shaman),
+            "warlock" | "classwarlock" => Ok(Self::Warlock),
+            "warrior" | "classwarrior" => Ok(Self::Warrior),
             _ => Err(format!("unsupported class: {value}")),
         }
     }
 }
 
-/// Only prerequisites supported by the native source are asserted as known.
-/// Missing unlock rules stay unresolved instead of being treated as `true`.
-#[derive(Clone, Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Prerequisite {
-    MinimumLevel {
-        level: u8,
-    },
-    ClassAllowlist {
-        classes: Vec<String>,
-    },
-    /// Five points in this tree for each earlier tier.
-    PointsInTree {
-        tree: String,
-        points: u8,
-    },
-    /// Native tree position of the parent and the required parent rank.
-    TalentRank {
-        source_field: String,
-        position: usize,
-        required_rank: u32,
-    },
-    Unresolved {
-        key: &'static str,
-    },
-}
-
+/// A class-family spell-data entry is not necessarily a learned/castable spell:
+/// class-family rows also contain passives, triggered effects and talent grants.
 #[derive(Clone, Debug, Serialize)]
 pub struct SpellOption {
     pub spell_id: i32,
     pub name: String,
     pub rank: String,
-    pub prerequisites: Vec<Prerequisite>,
+    pub minimum_level: Option<u8>,
+    pub source: &'static str,
+    pub learning_requirement: &'static str,
+}
+
+/// Raw, client-level-bounded item record for a class that does not yet have a
+/// complete native equipment-proficiency projection. It is NOT marked legal.
+#[derive(Clone, Debug, Serialize)]
+pub struct UnverifiedItem {
+    pub name: String,
+    pub item_type: String,
+    pub hand_type: String,
+    pub weapon_type: String,
+    pub armor_type: String,
+    pub class_allowlist: Vec<String>,
+    pub required_level: i32,
+    pub stats: BTreeMap<String, f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ItemOption {
     pub item_id: i32,
-    pub name: String,
-    pub item_type: String,
-    pub hand_type: String,
-    pub armor_type: String,
-    pub weapon_type: String,
-    /// Nonzero entries of the native proto scaling-option-0 stat vector.
-    /// Indices are native sim.Stats enum positions, not invented stat weights.
-    pub stats: Vec<(usize, f64)>,
-    pub unique: bool,
-    /// From the pinned historical Wowhead decisions catalogue, when available.
-    pub legacy_required_level: Option<i32>,
-    /// "observed" is a sourced fact; "inferred_median" is not a legality proof.
-    pub legacy_required_level_origin: Option<String>,
-    /// Captured eligibility IDs; absence is not evidence of a class restriction.
-    pub historical_class_ids: Vec<i32>,
-    pub prerequisites: Vec<Prerequisite>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct TalentOption {
-    pub tree: String,
-    /// Index of the talent in the native client's tree order, starting at zero.
-    pub position: usize,
-    pub field: String,
-    /// Identifier in the pinned TalentsForever talent tree.
-    pub source_field: String,
-    pub name: String,
-    pub max_ranks: u32,
-    pub in_proto: bool,
-    pub prerequisites: Vec<Prerequisite>,
+    /// "native_eligible" means the native item-options source accepted it;
+    /// "proficiency_unverified" must not enter legal candidate generation.
+    pub eligibility: &'static str,
+    pub native: Option<NativeItemOption>,
+    pub unverified: Option<UnverifiedItem>,
+    /// Historical Wowhead evidence only; never overrides ItemSparse level.
+    pub legacy_wowhead: Option<LegacyItemFact>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Coverage {
-    /// Rust-native catalogues have some usable rows, but do not yet expose
-    /// complete trainer/class spell unlocks, item level restrictions or talent
-    /// dependencies. A search must *not* treat these rows as all legal builds.
-    pub eligibility_complete: bool,
-    pub missing: Vec<&'static str>,
+    pub spell_learnability_complete: bool,
+    pub item_eligibility_complete: bool,
+    pub talent_prerequisites_complete: bool,
+    pub native_item_status: String,
+    pub notes: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CharacterOptions {
     pub schema_version: u32,
-    pub ruleset: &'static str,
     pub source_revision: &'static str,
     pub level: u8,
     pub class: Class,
-    pub talent_points_available: u8,
-    pub talent_source_revision: &'static str,
     pub spells: Vec<SpellOption>,
     pub items: Vec<ItemOption>,
-    pub talents: Vec<TalentOption>,
+    /// Native TalentsForever source: three trees, tier points, parent/rank
+    /// requirements, point budget, and original source revision.
+    pub talents: serde_json::Value,
     pub coverage: Coverage,
 }
 
-/// Inventory native source options for one class and checkpoint level.
-///
-/// This is a deliberately *partial* discovery API until the native unlock
-/// sources are migrated. It never silently declares an unproven option legal.
-pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> {
-    if !(1..=60).contains(&level) {
-        return Err(format!(
-            "level {level} is outside the supported range 1..=60"
-        ));
-    }
-
-    let mut spells = Vec::new();
-    for spell in spelldata::all() {
-        if spell.class_flags.family != class.spell_family()
-            || spell.name.is_empty()
-            || spell.spell_level > i16::from(level)
-        {
-            continue;
-        }
-        let mut prerequisites = Vec::new();
-        if let Ok(min_level) = u8::try_from(spell.spell_level) {
-            if min_level > 0 {
-                prerequisites.push(Prerequisite::MinimumLevel { level: min_level });
-            } else {
-                prerequisites.push(Prerequisite::Unresolved {
-                    key: "spell_minimum_level",
-                });
-            }
-        } else {
-            prerequisites.push(Prerequisite::Unresolved {
-                key: "spell_minimum_level",
-            });
-        }
-        // Class-family matching is source metadata, not proof of trainer
-        // learnability: this family includes procs and talent-granted effects.
-        prerequisites.push(Prerequisite::Unresolved {
-            key: "spell_learnability",
-        });
-        spells.push(SpellOption {
+fn class_spells(level: u8, class: Class) -> Vec<SpellOption> {
+    let mut spells = spelldata::all()
+        .filter(|spell| {
+            spell.class_flags.family == class.spell_family()
+                && !spell.name.is_empty()
+                && spell.spell_level <= i16::from(level)
+        })
+        .map(|spell| SpellOption {
             spell_id: spell.id,
             name: spell.name.clone(),
             rank: spell.rank.clone(),
-            prerequisites,
-        });
-    }
+            minimum_level: u8::try_from(spell.spell_level)
+                .ok()
+                .filter(|level| *level > 0),
+            source: "native_class_spell_family",
+            learning_requirement: "unresolved_trainer_talent_or_trigger",
+        })
+        .collect::<Vec<_>>();
+    spells.sort_by_key(|spell| spell.spell_id);
+    spells
+}
 
+fn native_class_items(level: u8, class: Class) -> Result<(Vec<ItemOption>, String), String> {
+    let options = native_item_options(class.as_str(), i32::from(level), "unrestricted", "all");
+    if let Some(refusal) = options.refusal {
+        return Err(format!("{}: {}", refusal.code, refusal.reason));
+    }
+    let status = options.status;
+    let mut items = options
+        .items
+        .into_iter()
+        .map(|item| ItemOption {
+            item_id: item.item_id,
+            eligibility: "native_eligible",
+            legacy_wowhead: legacy_item_fact(item.item_id).cloned(),
+            native: Some(item),
+            unverified: None,
+        })
+        .collect::<Vec<_>>();
+    items.sort_by_key(|item| item.item_id);
+    Ok((items, status))
+}
+
+/// Other classes have source-backed client level and proto class allowlist
+/// information, but do not yet have a native equipment proficiency projection.
+/// Do not guess which weapons/armor they can use.
+fn unverified_class_items(level: u8, class: Class) -> Vec<ItemOption> {
     let mut items = Vec::new();
-    for id in ITEMS.keys() {
-        let Some(row) = data::proto_row(&ITEMS, "proto.SimItem", id) else {
+    for key in ITEMS.keys() {
+        let Ok(id) = i32::try_from(key) else {
             continue;
         };
-        let item_type = row.enum_name("type");
-        // The engine does not equip an unknown item type.
-        if item_type != "ItemTypeWeapon"
-            && crate::prepare::items::item_type_to_slot(&item_type).is_none()
+        let Some(required_level) = data::item_required_levels().get(&id).copied() else {
+            continue;
+        };
+        if required_level > i32::from(level) {
+            continue;
+        }
+        let Some(item) = crate::prepare::items::database_item(id) else {
+            continue;
+        };
+        if !matches!(
+            item.item_type.as_str(),
+            "ItemTypeHead"
+                | "ItemTypeNeck"
+                | "ItemTypeShoulder"
+                | "ItemTypeBack"
+                | "ItemTypeChest"
+                | "ItemTypeWrist"
+                | "ItemTypeHands"
+                | "ItemTypeWaist"
+                | "ItemTypeLegs"
+                | "ItemTypeFeet"
+                | "ItemTypeFinger"
+                | "ItemTypeTrinket"
+                | "ItemTypeWeapon"
+                | "ItemTypeRanged"
+        ) {
+            continue;
+        }
+        if !item.class_allowlist.is_empty()
+            && !item
+                .class_allowlist
+                .iter()
+                .any(|name| name == class.proto_name())
         {
             continue;
         }
-        let allowlist = row.enum_names("class_allowlist");
-        if !allowlist.is_empty() && !allowlist.iter().any(|entry| entry == class.proto_name()) {
-            continue;
-        }
-        let Some(scaling) = scaling_option(&row) else {
+        let Some(scaling) = item
+            .row
+            .as_deref()
+            .and_then(crate::prepare::items::scaling_option)
+        else {
             continue;
         };
-        let stats = stats_from_map(scaling, "stats")
-            .0
-            .iter()
-            .enumerate()
-            .filter(|(_, amount)| **amount != 0.0)
-            .map(|(index, amount)| (index, *amount))
+        let source_stats = crate::prepare::items::stats_from_map(scaling, "stats");
+        let stats = Stat::ALL
+            .into_iter()
+            .filter_map(|stat| {
+                let value = source_stats[stat];
+                (value != 0.0).then(|| (stat.name().to_owned(), value))
+            })
             .collect();
-        let historical = legacy_item_fact(row.i32("id"));
-        // Legacy Wowhead requirements are evidence only. The pinned client
-        // ItemSparse.RequiredLevel is authoritative and can disagree even with
-        // an old "observed" Wowhead value; never filter native items here.
-        let mut prerequisites = Vec::new();
-        if !allowlist.is_empty() {
-            prerequisites.push(Prerequisite::ClassAllowlist { classes: allowlist });
-        }
-        prerequisites.push(Prerequisite::Unresolved {
-            key: if historical.is_some() {
-                "item_required_level_pending_client_itemsparse"
-            } else {
-                "item_required_level"
-            },
-        });
-        prerequisites.push(Prerequisite::Unresolved {
-            key: "item_equip_proficiency",
-        });
         items.push(ItemOption {
-            item_id: row.i32("id"),
-            name: row.str("name").to_owned(),
-            item_type,
-            hand_type: row.enum_name("hand_type"),
-            armor_type: row.enum_name("armor_type"),
-            weapon_type: row.enum_name("weapon_type"),
-            stats,
-            unique: row.bool("unique"),
-            legacy_required_level: historical.map(|fact| fact.required_level),
-            legacy_required_level_origin: historical.map(|fact| fact.origin.clone()),
-            historical_class_ids: historical
-                .map(|fact| fact.class_ids.clone())
-                .unwrap_or_default(),
-            prerequisites,
+            item_id: item.id,
+            eligibility: "proficiency_unverified",
+            legacy_wowhead: legacy_item_fact(item.id).cloned(),
+            native: None,
+            unverified: Some(UnverifiedItem {
+                name: item.name,
+                item_type: item.item_type,
+                hand_type: item.hand_type,
+                weapon_type: item.weapon_type,
+                armor_type: item.armor_type,
+                class_allowlist: item.class_allowlist,
+                required_level,
+                stats,
+            }),
         });
     }
+    items.sort_by_key(|item| item.item_id);
+    items
+}
 
-    // The exact pinned TalentsForever client tree owns talent slots and arrows.
-    // This is discovery metadata, never a new simulation legality guard.
-    let talents = talents::options(class);
-    let mut missing = vec![
-        "spellbook_training_and_talent_grants",
-        "item_level_and_equipment_constraints",
-    ];
-    if !matches!(class, Class::Druid | Class::Mage) {
-        missing.push("native_class_talent_layout");
+/// Inventory the native source's item, spell and talent options together.
+/// No new validation gate is introduced. Unknown item/spell eligibility stays
+/// explicit, never "legal by construction" without a known prerequisite.
+pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> {
+    if !(1..=60).contains(&level) {
+        return Err(format!("level {level} must be in 1..=60"));
+    }
+    let talents = native_talent_options(class.as_str(), i32::from(level));
+    if talents["status"] != "ok" {
+        return Err(format!("native talent source refused {}", class.as_str()));
+    }
+    let spells = class_spells(level, class);
+    let (items, native_item_status, item_eligibility_complete) =
+        if class.has_native_item_eligibility() {
+            let (items, status) = native_class_items(level, class)?;
+            let complete = status == "ok" || status == "empty";
+            (items, status, complete)
+        } else {
+            (
+                unverified_class_items(level, class),
+                "proficiency_unverified".to_owned(),
+                false,
+            )
+        };
+    let mut notes = vec!["spell_class_family_rows_include_unlearnable_or_triggered_spells"];
+    if !item_eligibility_complete {
+        notes.push("item_eligibility_incomplete_for_requested_class_or_level");
     }
     Ok(CharacterOptions {
         schema_version: 1,
-        ruleset: "forever",
         source_revision: SOURCE_REVISION,
         level,
         class,
-        talent_points_available: level.saturating_sub(9),
-        talent_source_revision: talents::source_revision(),
         spells,
         items,
         talents,
         coverage: Coverage {
-            eligibility_complete: false,
-            missing,
+            spell_learnability_complete: false,
+            item_eligibility_complete,
+            talent_prerequisites_complete: true,
+            native_item_status,
+            notes,
         },
     })
 }
@@ -316,97 +338,105 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
 mod tests {
     use super::*;
 
-    #[test]
-    fn native_spells_are_level_bounded_and_class_specific() {
-        let mage = get_options(10, Class::Mage).unwrap();
-        assert!(mage.spells.iter().any(|s| s.spell_id == 116)); // Frostbolt R1 (L4)
-        assert!(!mage.spells.iter().any(|s| s.spell_id == 10)); // Blizzard R1 (L20)
-        let druid = get_options(20, Class::Druid).unwrap();
-        assert!(druid.spells.iter().any(|s| s.spell_id == 339)); // Roots R1 (L8)
-        assert!(!druid.spells.iter().any(|s| s.spell_id == 116));
-    }
+    const CLASSES: [Class; 9] = [
+        Class::Druid,
+        Class::Hunter,
+        Class::Mage,
+        Class::Paladin,
+        Class::Priest,
+        Class::Rogue,
+        Class::Shaman,
+        Class::Warlock,
+        Class::Warrior,
+    ];
 
     #[test]
-    fn native_items_respect_recorded_class_allowlists() {
-        let mage = get_options(20, Class::Mage).unwrap();
-        let priest = get_options(20, Class::Priest).unwrap();
-        assert!(mage.items.iter().any(|i| i.item_id == 25)); // Worn Shortsword, unrestricted
-        assert!(!mage.items.iter().any(|i| i.item_id == 2919)); // Priest relic
-        assert!(priest.items.iter().any(|i| i.item_id == 2919));
-        assert!(mage
-            .items
-            .iter()
-            .all(|i| {
-                let has_missing = i.prerequisites.iter().any(|p| matches!(
-                    p,
-                    Prerequisite::Unresolved {
-                        key: "item_required_level"
-                    }
-                ));
-                i.legacy_required_level_origin.is_some() || has_missing
-            }));
-    }
-
-    #[test]
-    fn legacy_wowhead_levels_are_exposed_but_do_not_override_client_legality() {
-        let mage20 = get_options(20, Class::Mage).unwrap();
-        let mage60 = get_options(60, Class::Mage).unwrap();
-        let observed20 = mage20
-            .items
-            .iter()
-            .filter(|item| item.legacy_required_level_origin.as_deref() == Some("observed"))
-            .count();
-        let observed60 = mage60
-            .items
-            .iter()
-            .filter(|item| item.legacy_required_level_origin.as_deref() == Some("observed"))
-            .count();
-        assert!(observed20 > 0);
-        assert_eq!(observed60, observed20);
-        assert!(mage20.items.iter().any(|item| {
-            item.legacy_required_level_origin.as_deref() == Some("observed")
-                && item.legacy_required_level.unwrap_or(0) > 20
-        }));
-        assert!(mage20.items.iter().filter(|item| {
-            item.legacy_required_level_origin.is_some()
-        }).all(|item| {
-            item.prerequisites.iter().any(|p| matches!(
-                p,
-                Prerequisite::Unresolved {
-                    key: "item_required_level_pending_client_itemsparse"
-                }
-            ))
-        }));
-        assert!(!mage20.coverage.eligibility_complete);
-    }
-
-    #[test]
-    fn native_talent_layout_is_reused_without_a_second_rank_table() {
+    fn native_talent_trees_and_level_points_for_all_nine_classes() {
+        for class in CLASSES {
+            let options = get_options(30, class).unwrap();
+            assert_eq!(options.talents["status"], "ok");
+            assert_eq!(options.talents["points_available"], 21);
+            assert_eq!(options.talents["trees"].as_array().unwrap().len(), 3);
+            assert!(options.coverage.talent_prerequisites_complete);
+        }
         let druid = get_options(30, Class::Druid).unwrap();
-        assert!(druid
-            .talents
+        let feral = &druid.talents["trees"][1]["talents"];
+        let lacerate = feral
+            .as_array()
+            .unwrap()
             .iter()
-            .any(|t| t.field == "lacerate" && t.position == 11 && t.max_ranks == 1 && !t.in_proto));
-        let mage = get_options(30, Class::Mage).unwrap();
-        assert!(mage
-            .talents
-            .iter()
-            .any(|t| t.field == "elemental_precision" && t.max_ranks == 3));
+            .find(|entry| entry["field_name"] == "lacerate")
+            .unwrap();
+        assert_eq!(lacerate["prerequisite"]["field_name"], "savageFury");
+        assert_eq!(lacerate["prerequisite"]["required_rank"], 2);
     }
 
     #[test]
-    fn gaps_cannot_be_misread_as_a_complete_legal_build_catalogue() {
+    fn spell_families_are_class_scoped_and_level_bounded() {
+        let mage = get_options(10, Class::Mage).unwrap();
+        assert!(mage.spells.iter().any(|spell| spell.spell_id == 116));
+        assert!(!mage.spells.iter().any(|spell| spell.spell_id == 10));
+        let druid = get_options(20, Class::Druid).unwrap();
+        assert!(druid.spells.iter().any(|spell| spell.spell_id == 339));
+        assert!(!druid.spells.iter().any(|spell| spell.spell_id == 116));
+        assert!(!druid.coverage.spell_learnability_complete);
+    }
+
+    #[test]
+    fn supported_classes_reuse_native_item_eligibility() {
+        for class in [
+            Class::Priest,
+            Class::Mage,
+            Class::Shaman,
+            Class::Paladin,
+            Class::Rogue,
+        ] {
+            let result = get_options(20, class).unwrap();
+            assert!(!result.items.is_empty(), "{}", class.as_str());
+            assert!(result.items.iter().all(|item| {
+                item.eligibility == "native_eligible"
+                    && item.native.as_ref().is_some_and(|native| native.required_level <= 20)
+                    && item.unverified.is_none()
+            }));
+        }
+    }
+
+    #[test]
+    fn other_classes_have_source_facts_but_no_invented_proficiencies() {
+        for class in [Class::Druid, Class::Hunter, Class::Warlock, Class::Warrior] {
+            let result = get_options(20, class).unwrap();
+            assert!(!result.items.is_empty(), "{}", class.as_str());
+            assert!(!result.coverage.item_eligibility_complete);
+            assert!(result.items.iter().all(|item| {
+                item.eligibility == "proficiency_unverified"
+                    && item.unverified.as_ref().is_some_and(|row| row.required_level <= 20)
+                    && item.native.is_none()
+            }));
+        }
+    }
+
+    #[test]
+    fn historical_required_levels_do_not_replace_client_item_sparse() {
+        let result = get_options(60, Class::Mage).unwrap();
+        let joined = result
+            .items
+            .iter()
+            .filter(|item| item.legacy_wowhead.is_some())
+            .count();
+        assert!(joined > 0);
+        assert!(result.items.iter().all(|item| {
+            item.native.as_ref().is_none_or(|native| {
+                native.required_level_origin == "client_ItemSparse.RequiredLevel"
+            })
+        }));
+        assert_eq!(crate::legacy_item_count(), 7913);
+    }
+
+    #[test]
+    fn request_validation_is_not_a_second_build_validation_api() {
         assert!(get_options(0, Class::Mage).is_err());
         assert!(get_options(61, Class::Mage).is_err());
-        let options = get_options(20, Class::Shaman).unwrap();
-        assert!(!options.coverage.eligibility_complete);
-        assert!(options
-            .coverage
-            .missing
-            .contains(&"native_class_talent_layout"));
-        assert!(!options.spells.is_empty());
-        let json = serde_json::to_value(options).unwrap();
-        assert_eq!(json["schema_version"], 1);
-        assert_eq!(json["class"], "shaman");
+        assert!("ClassDruid".parse::<Class>().is_ok());
+        assert!("evoker".parse::<Class>().is_err());
     }
 }

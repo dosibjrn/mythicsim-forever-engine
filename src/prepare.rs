@@ -79,6 +79,7 @@ pub(crate) mod spelldata;
 pub(crate) mod stat_auras;
 pub(crate) mod stats;
 pub(crate) mod talent_layout;
+pub(crate) mod talent_options;
 pub(crate) mod target;
 pub(crate) mod weapon_skill;
 

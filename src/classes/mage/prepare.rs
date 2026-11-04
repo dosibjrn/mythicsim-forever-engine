@@ -109,36 +109,6 @@ const FOREVER_FROST: &[ForeverTalent] = &[
 
 const FOREVER_TREES: [&[ForeverTalent]; 3] = [FOREVER_ARCANE, FOREVER_FIRE, FOREVER_FROST];
 
-/// Source-owned layout projection for the generic option-discovery API.
-/// This reuses the exact ranks/order consumed by native Mage preparation.
-pub(crate) fn forever_talent_layout_json() -> serde_json::Value {
-    let names = ["arcane", "fire", "frost"];
-    let trees = names
-        .iter()
-        .zip(FOREVER_TREES.iter())
-        .map(|(key, talents)| {
-            let talents = talents
-                .iter()
-                .map(|talent| {
-                    serde_json::json!({
-                        "field": talent.field,
-                        "name": talent.name,
-                        "max_ranks": talent.max_ranks,
-                        "in_proto": true,
-                    })
-                })
-                .collect::<Vec<_>>();
-            serde_json::json!({"key": key, "talents": talents})
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!({
-        "schema_version": 1,
-        "class": "mage",
-        "ruleset": "forever",
-        "trees": trees,
-    })
-}
-
 /// Under Forever's rules a talent above its ranks in client 1.60.1.70707 is refused, as Go refuses
 /// Elemental Precision above 3: an old string read in the new order can put five points in a two
 /// rank talent, and a ladder has no rank past its last.

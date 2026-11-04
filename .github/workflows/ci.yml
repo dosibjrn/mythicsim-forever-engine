@@ -26,7 +26,41 @@ jobs:
           components: rustfmt, clippy
           target: wasm32-unknown-unknown, wasm32-wasip1
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo fmt -- --check
+      - name: Query native Shaman L20 item options
+        run: |
+          cargo run --locked -- item-options --class shaman --level 20 --spec unrestricted --slot all > /tmp/shaman-item-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/shaman-item-options.json").read_text())
+          assert result["status"] == "ok", result
+          assert result["required_level_supported"], result
+          assert result["items"], result
+          assert all(item["required_level"] <= 20 for item in result["items"]), result
+          print("SHAMAN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
+          PY
+      - name: Query native Paladin L20 item options
+        run: |
+          cargo run --locked -- item-options --class paladin --level 20 --spec unrestricted --slot all > /tmp/paladin-item-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/paladin-item-options.json").read_text())
+          assert result["status"] == "ok", result
+          assert result["required_level_supported"], result
+          assert result["items"], result
+          assert result["unverified_candidate_count"] == 0, result
+          assert result["excluded_non_client_item_count"] > 0, result
+          assert all(item["required_level"] <= 20 for item in result["items"]), result
+          assert any(item["weapon_type"] == "WeaponTypeMace" for item in result["items"]), result
+          print("PALADIN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
+          PY
+      - name: Check formatting of changed Rust modules
+        run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs src/main.rs
+      - name: Run Shaman native item-options regression tests
+        run: cargo test --locked shaman_
+      - name: Run Paladin native item-options regression tests
+        run: cargo test --locked paladin_
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps --document-private-items
         env:
@@ -42,9 +76,13 @@ jobs:
       - run: go vet ./...
         working-directory: tools/matched-go
       - run: python3 -m unittest discover -s tools -p '*_test.py'
+      - run: python3 tools/rust_data.py check
       - run: python3 tools/inventory.py check
       - run: python3 tools/prepared_v2.py check
       - run: python3 tools/upstream.py check
+      # Keep the repository-wide baseline visible, but run it last so existing
+      # formatting debt cannot skip the production, data, and regression checks.
+      - run: cargo fmt -- --check
 
   # The test suite is most of the run, so it gets its own job and the
   # other checks report while it is still going.

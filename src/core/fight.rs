@@ -5757,8 +5757,13 @@ impl<A: Agent> Fight<A> {
         if world_bridge::enabled() && world_bridge::acknowledged_lethal() {
             self.duration = self.now.max(1);
         }
-        if world_bridge::enabled() { world_bridge::finish(self.duration, self.encounter_damage_taken); }
+        // Cleanup can emit final source-native damage (for example from
+        // expiring effects or pet teardown). Keep the world bridge open until
+        // those events have been included in the terminal exchange and ACK.
         self.cleanup();
+        if world_bridge::enabled() {
+            world_bridge::finish(self.duration, self.encounter_damage_taken);
+        }
     }
 
 
