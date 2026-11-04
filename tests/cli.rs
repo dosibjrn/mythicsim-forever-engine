@@ -214,3 +214,102 @@ fn sim_without_the_gate_still_fails_a_refusal_as_an_error() {
     assert_eq!(result.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&result.stderr).contains("prepared input unsupported"));
 }
+
+
+/// Exercise the real native Priest L20 request through both CLI preparation and combat.
+/// The request starts from the production Smite Priest fixture, but strips L60 gear/talents
+/// and selects the client-backed rank-one Smite spell.
+#[test]
+fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
+    let mut request: serde_json::Value = serde_json::from_str(include_str!(
+        "classes/priest/prepare/smite-holy-nova.request.json"
+    ))
+    .unwrap();
+    let player = &mut request["raid"]["parties"][0]["players"][0];
+    player["level"] = serde_json::json!(20);
+    player["talentsString"] = serde_json::json!("0-0-0");
+    player["equipment"]["items"] = serde_json::json!([]);
+    player["rotation"] = serde_json::json!({
+        "type": "TypeAPL",
+        "priorityList": [{
+            "action": {
+                "castSpell": {
+                    "spellId": {"spellId": 585}
+                }
+            }
+        }]
+    });
+    request["encounter"]["duration"] = serde_json::json!(30);
+    request["encounter"]["targets"][0]["level"] = serde_json::json!(20);
+    request["encounter"]["targets"][0]["name"] = serde_json::json!("Level 20");
+    request["encounter"]["targets"][0]["minBaseDamage"] = serde_json::json!(0);
+    request["simOptions"]["iterations"] = serde_json::json!(1);
+    request["simOptions"]["debugFirstIteration"] = serde_json::json!(false);
+
+    let directory = std::env::temp_dir().join(format!(
+        "forever-priest-l20-cli-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let input = directory.join("priest-l20.request.json");
+    let prepared_path = directory.join("priest-l20.prepared.json");
+    let report_path = directory.join("priest-l20.report.json");
+    fs::write(&input, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let prepare = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+        .args(["prepare", "--request"])
+        .arg(&input)
+        .arg("--outfile")
+        .arg(&prepared_path)
+        .output()
+        .unwrap();
+    assert!(
+        prepare.status.success(),
+        "Priest L20 prepare failed: {}",
+        String::from_utf8_lossy(&prepare.stderr)
+    );
+    let prepared: serde_json::Value =
+        serde_json::from_slice(&fs::read(&prepared_path).unwrap()).unwrap();
+    assert_eq!(prepared["player"]["level"], 20);
+    let spells = prepared["player"]["spells"].as_array().unwrap();
+    assert!(
+        spells
+            .iter()
+            .any(|spell| spell["action_id"]["spell_id"] == 585),
+        "the level-20 actor must prepare rank-one Smite"
+    );
+    assert!(
+        !spells
+            .iter()
+            .any(|spell| spell["action_id"]["spell_id"] == 10934),
+        "the level-20 actor must not prepare level-60 Smite"
+    );
+
+    let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+        .args(["sim", "--request"])
+        .arg(&input)
+        .args(["--rng-mode", "balanced", "--outfile"])
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(
+        simulation.status.success(),
+        "Priest L20 sim failed: {}",
+        String::from_utf8_lossy(&simulation.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert!(
+        report["counts"]["casts"].as_f64().unwrap_or(0.0) > 0.0,
+        "the native Priest L20 actor must cast a source-backed action"
+    );
+    assert!(
+        report["result"]["raidMetrics"]["dps"]["avg"]
+            .as_f64()
+            .unwrap_or(0.0)
+            > 0.0,
+        "the native Priest L20 actor must produce positive combat damage"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
