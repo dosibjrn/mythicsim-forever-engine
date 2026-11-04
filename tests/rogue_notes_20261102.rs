@@ -182,7 +182,9 @@ fn garrote_ticks_take_the_hemorrhage_debuff_in_a_fight() {
     let damage = |value: &Value, spell_id: i64| -> f64 {
         let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
         check_prepared(&prepared).unwrap();
-        let result = simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result;
+        let result = simulate_prepared(&prepared, RngMode::Stochastic)
+            .unwrap()
+            .result;
         let player = &result["raidMetrics"]["parties"][0]["players"][0];
         player["actions"]
             .as_array()
