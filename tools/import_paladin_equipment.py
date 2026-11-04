@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
-PALADIN_CLASS_ID = 7
+PALADIN_CLASS_ID = 2
 PALADIN_CLASS_MASK = 1 << (PALADIN_CLASS_ID - 1)
 
 
