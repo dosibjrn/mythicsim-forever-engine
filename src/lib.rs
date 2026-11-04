@@ -8,8 +8,8 @@
 
 pub mod contracts;
 pub mod options;
-pub use options::{get_options, CharacterOptions, Class as OptionsClass};
 pub use core::rng::RngMode;
+pub use options::{get_options, CharacterOptions, Class as OptionsClass};
 pub mod report;
 
 mod classes;
