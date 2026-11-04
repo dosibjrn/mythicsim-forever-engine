@@ -7,8 +7,10 @@
 //! original public API and prepared v1 JSON contract.
 
 pub mod contracts;
+pub mod legacy_items;
 pub mod options;
 pub use core::rng::RngMode;
+pub use legacy_items::{legacy_item_count, legacy_item_fact, LegacyItemFact};
 pub use options::{get_options, CharacterOptions, Class as OptionsClass};
 pub mod report;
 
