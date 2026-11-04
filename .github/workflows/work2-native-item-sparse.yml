@@ -87,7 +87,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/item-required-levels.jsonl data/item-required-levels.manifest.json data/manifest.json
+          git add src/data.rs src/prepare/items.rs src/lib.rs src/main.rs data/item-required-levels.jsonl data/item-required-levels.manifest.json data/manifest.json
           if git diff --cached --quiet; then
             echo "Native ItemSparse projection is already current"
             exit 0
