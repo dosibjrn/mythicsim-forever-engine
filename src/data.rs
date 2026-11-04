@@ -298,6 +298,152 @@ pub(crate) fn shaman_equipment_skills() -> Result<&'static ShamanEquipmentSkills
     }
 }
 
+
+const PALADIN_EQUIPMENT_SKILLS: &str = include_str!("../data/paladin-equipment-skills.json");
+
+#[derive(serde::Deserialize)]
+struct PaladinSkillLineName {
+    skill_id: i32,
+    name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct PaladinEquipmentSkillRow {
+    skill_id: i32,
+    name: String,
+    min_level: Option<i32>,
+    race_unrestricted: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct PaladinEquipmentSkillsFile {
+    schema_version: i32,
+    client_build: String,
+    class: String,
+    class_id: i32,
+    class_mask: i32,
+    race_policy: String,
+    skill_line_ids: Vec<i32>,
+    skill_line_names: Vec<PaladinSkillLineName>,
+    skills: Vec<PaladinEquipmentSkillRow>,
+}
+
+pub(crate) struct PaladinEquipmentSkills {
+    skill_levels: HashMap<String, Option<i32>>,
+    skill_line_names: HashSet<String>,
+}
+
+impl PaladinEquipmentSkills {
+    pub(crate) fn has_skill_line(&self, name: &str) -> bool {
+        self.skill_line_names.contains(name)
+    }
+
+    pub(crate) fn min_level(&self, name: &str) -> Option<i32> {
+        self.skill_levels.get(name).copied().flatten()
+    }
+}
+
+fn parse_paladin_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()> {
+    let source: PaladinEquipmentSkillsFile = serde_json::from_str(text).map_err(|_| ())?;
+    if source.schema_version != 2
+        || source.client_build != crate::CLIENT_BUILD
+        || source.class != "paladin"
+        || source.class_id != 2
+        || source.class_mask != 2
+        || source.race_policy
+            != "class-wide only; SkillRaceClassInfo race mask must be unrestricted"
+        || source.skills.is_empty()
+    {
+        return Err(());
+    }
+
+    let mut skill_line_name_by_id = HashMap::new();
+    let mut skill_line_names = HashSet::new();
+    for line in source.skill_line_names {
+        if line.skill_id <= 0
+            || line.name.trim().is_empty()
+            || skill_line_name_by_id
+                .insert(line.skill_id, line.name.clone())
+                .is_some()
+        {
+            return Err(());
+        }
+        skill_line_names.insert(line.name);
+    }
+    let mut sorted_skill_line_ids = source.skill_line_ids.clone();
+    sorted_skill_line_ids.sort_unstable();
+    sorted_skill_line_ids.dedup();
+    if sorted_skill_line_ids != source.skill_line_ids
+        || sorted_skill_line_ids.len() != skill_line_name_by_id.len()
+        || sorted_skill_line_ids
+            .iter()
+            .any(|skill_id| !skill_line_name_by_id.contains_key(skill_id))
+    {
+        return Err(());
+    }
+
+    const REQUIRED_SKILL_LINE_NAMES: &[&str] = &[
+        "Axes",
+        "Swords",
+        "Maces",
+        "Daggers",
+        "Fist Weapons",
+        "Two-Handed Axes",
+        "Two-Handed Swords",
+        "Two-Handed Maces",
+        "Polearms",
+        "Staves",
+        "Bows",
+        "Guns",
+        "Crossbows",
+        "Thrown",
+        "Cloth",
+        "Leather",
+        "Mail",
+        "Plate Mail",
+        "Shield",
+    ];
+    if REQUIRED_SKILL_LINE_NAMES
+        .iter()
+        .any(|name| !skill_line_names.contains(*name))
+    {
+        return Err(());
+    }
+
+    let mut skill_ids = HashMap::new();
+    let mut skill_levels = HashMap::new();
+    for row in source.skills {
+        if row.skill_id <= 0
+            || row.name.trim().is_empty()
+            || row
+                .min_level
+                .is_some_and(|level| !(1..=60).contains(&level))
+            || row.min_level.is_some() != row.race_unrestricted
+            || skill_ids.insert(row.skill_id, ()).is_some()
+        {
+            return Err(());
+        }
+        if let Some(existing) = skill_levels.insert(row.name, row.min_level) {
+            if existing != row.min_level {
+                return Err(());
+            }
+        }
+    }
+    Ok(PaladinEquipmentSkills {
+        skill_levels,
+        skill_line_names,
+    })
+}
+
+pub(crate) fn paladin_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
+    static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
+    match SKILLS.get_or_init(|| parse_paladin_equipment_skills(PALADIN_EQUIPMENT_SKILLS)) {
+        Ok(skills) => Ok(skills),
+        Err(()) => Err("the pinned Paladin SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
+    }
+}
+
+
 /// The native ItemSparse RequiredLevel field, keyed by item ID.
 pub(crate) fn item_required_levels() -> &'static HashMap<i32, i32> {
     static LEVELS: OnceLock<HashMap<i32, i32>> = OnceLock::new();
@@ -322,6 +468,16 @@ mod tests {
         assert!(skills.has_skill_line("Swords"));
         assert!(skills.has_skill_line("Plate Mail"));
         assert_eq!(skills.min_level("Swords"), None);
+    }
+
+    #[test]
+    fn reads_pinned_paladin_equipment_skills_and_keeps_plate_level_gated() {
+        let skills = paladin_equipment_skills().expect("pinned Paladin equipment source");
+        assert_eq!(skills.min_level("Maces"), Some(1));
+        assert_eq!(skills.min_level("Mail"), Some(1));
+        assert_eq!(skills.min_level("Plate Mail"), Some(40));
+        assert!(skills.has_skill_line("Axes"));
+        assert!(skills.has_skill_line("Shield"));
     }
 
     #[test]
