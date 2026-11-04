@@ -36,6 +36,9 @@ struct Bridge {
     source_hash: String,
     event_ordinal: u64,
     pending: Vec<DamageEvent>,
+    // `finish` closes the encounter before Fight::cleanup() tears down auras/pets.
+    // Teardown callbacks must not enqueue events for the next stochastic iteration.
+    iteration_finished: bool,
 }
 thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
@@ -51,7 +54,7 @@ pub(crate) fn start(source_hash: &str) {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
         last_health: None, previous_ack_id: String::new(),
         source_hash: source_hash.to_owned(), event_ordinal: 0,
-        pending: Vec::new(),
+        pending: Vec::new(), iteration_finished: false,
     }));
 }
 
@@ -71,6 +74,8 @@ pub(crate) fn begin_iteration(iteration: u32) {
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
         assert!(iteration == 0 || iteration == bridge.iteration + 1,
             "RUST_WORLD_ITERATION_NOT_SEQUENTIAL");
+        assert!(iteration == 0 || bridge.iteration_finished,
+            "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED");
         assert!(bridge.pending.is_empty(), "RUST_WORLD_UNFLUSHED_EVENTS");
         bridge.iteration = iteration;
         bridge.sequence = 0;
@@ -79,6 +84,7 @@ pub(crate) fn begin_iteration(iteration: u32) {
         bridge.last_health = None;
         bridge.previous_ack_id.clear();
         bridge.event_ordinal = 0;
+        bridge.iteration_finished = false;
     });
 }
 
@@ -209,6 +215,12 @@ pub(crate) fn record_damage(time_ns: i64, damage: f64, crit: bool, landed: bool,
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
+        if bridge.iteration_finished {
+            // Fight::run_once calls finish() before cleanup(). Damage callbacks
+            // emitted while cleanup tears down the completed fight are not part
+            // of the encounter and must not leak into the next iteration's ACKs.
+            return;
+        }
         bridge.event_ordinal += 1;
         bridge.pending.push(DamageEvent {
             event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -366,9 +378,10 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
         let _ = exchange(clock, duration_ns, cumulative_damage);
     }
     BRIDGE.with(|state| {
-        let state = state.borrow();
-        let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
+        let mut state = state.borrow_mut();
+        let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
         assert!(bridge.pending.is_empty(), "RUST_WORLD_FINISH_UNFLUSHED");
+        bridge.iteration_finished = true;
         send(&json!({
             "type": "native_rust_world_iteration_done",
             "iteration_index": bridge.iteration,
@@ -407,5 +420,71 @@ mod persistent_next_target_tests {
             assert_eq!(bridge.last_health, None);
         });
         BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
+}
+
+
+#[cfg(test)]
+mod iteration_teardown_tests {
+    use super::{begin_iteration, record_damage, Bridge, BRIDGE};
+
+    fn bridge(iteration_finished: bool) -> Bridge {
+        Bridge {
+            iteration: 0,
+            sequence: 1,
+            next_tick_ns: 10,
+            last_tick_ns: 5,
+            last_health: Some(100.0),
+            previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64),
+            event_ordinal: 0,
+            pending: Vec::new(),
+            iteration_finished,
+        }
+    }
+
+    #[test]
+    fn teardown_damage_after_finish_does_not_leak_into_next_iteration() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(true)));
+
+        // The production runner finishes the world handshake before native
+        // cleanup. A teardown callback must not become an unacknowledged event.
+        record_damage(
+            10, 5.0, false, true, false,
+            "teardown-proc".to_owned(), "target".to_owned(),
+            "player", 0, "Druid".to_owned(),
+        );
+        BRIDGE.with(|state| {
+            let state = state.borrow();
+            let bridge = state.as_ref().unwrap();
+            assert!(bridge.pending.is_empty());
+            assert_eq!(bridge.event_ordinal, 0);
+        });
+
+        // The next real stochastic iteration reopens event collection.
+        begin_iteration(1);
+        BRIDGE.with(|state| {
+            assert!(!state.borrow().as_ref().unwrap().iteration_finished);
+        });
+        record_damage(
+            20, 7.0, false, true, false,
+            "combat-proc".to_owned(), "target".to_owned(),
+            "player", 0, "Druid".to_owned(),
+        );
+        BRIDGE.with(|state| {
+            let state = state.borrow();
+            let bridge = state.as_ref().unwrap();
+            assert_eq!(bridge.pending.len(), 1);
+            assert_eq!(bridge.event_ordinal, 1);
+            assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
+        });
+        BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED")]
+    fn next_iteration_requires_a_finished_previous_iteration() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
+        begin_iteration(1);
     }
 }
