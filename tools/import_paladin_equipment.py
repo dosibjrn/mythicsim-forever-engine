@@ -125,18 +125,18 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
     availability_counts = {}
     for line_number, row in enumerate(skill_info_rows, 2):
         skill_id = integer(row, ("SkillID",), "SkillRaceClassInfo", line_number)
-        class_mask = integer(row, ("ClassMask", "ClassMask1", "ClassMask_0"), "SkillRaceClassInfo", line_number)
+        row_class_mask = integer(row, ("ClassMask", "ClassMask1", "ClassMask_0"), "SkillRaceClassInfo", line_number)
         mask = race_mask(row, "SkillRaceClassInfo", line_number)
         raw_min_level = integer(row, ("MinLevel",), "SkillRaceClassInfo", line_number)
         availability = integer(row, ("Availability",), "SkillRaceClassInfo", line_number)
         availability_counts[str(availability)] = availability_counts.get(str(availability), 0) + 1
 
-        if class_mask != 0 and not (class_mask & class_mask):
+        if row_class_mask != 0 and not (row_class_mask & class_mask):
             continue
-        if class_mask & class_mask:
+        if row_class_mask & class_mask:
             class_skill_rows += 1
         by_skill.setdefault(skill_id, []).append({
-            "class_mask": class_mask,
+            "class_mask": row_class_mask,
             "race_mask": mask,
             "race_unrestricted": race_mask_is_unrestricted(mask),
             "source_min_level": raw_min_level,
