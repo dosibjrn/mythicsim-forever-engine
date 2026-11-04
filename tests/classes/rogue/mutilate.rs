@@ -4,6 +4,7 @@
 //! and Cold Blood (14177, mask word 1 = 6). PastelStorm found the Go fork's off hand short of
 //! both (mythicsim-forever-engine-go #31 and #32); these pin that both hands take them here.
 
+use forever_engine::RngMode;
 use forever_engine::{contracts::prepared_v2::PreparedV2, prepare_json_with, Rules};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
@@ -67,7 +68,7 @@ fn simulate(mut prepared: Value, iterations: u32, log: bool) -> Value {
     prepared["sim"]["iterations"] = json!(iterations);
     prepared["sim"]["debug_first_iteration"] = json!(log);
     let typed: PreparedV2 = serde_json::from_value(prepared).unwrap();
-    forever_engine::simulate_prepared(&typed).unwrap().result
+    forever_engine::simulate_prepared(&typed, RngMode::Stochastic).unwrap().result
 }
 
 /// Puncturing Wounds' 5, 10 and 15% Mutilate crit reach both hand strikes, and each hand crits
