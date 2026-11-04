@@ -18,13 +18,15 @@ import json
 import sqlite3
 from pathlib import Path
 
-# The original 2026-09-29 catalogue in dosibjrn/mage-level-sim. Matches the
-# git-lfs SHA-256 pointer for this source in dosibjrn/forever-sim.
+# The exact 2026-09-29 sqlite snapshot in dosibjrn/mage-level-sim; it is also
+# represented by a git-lfs SHA-256 pointer in dosibjrn/forever-sim.
+# The sibling manifest is stale: its 7,597/7,054 counts do not match the verified
+# SQLite bytes. Use the exact verified snapshot contents, not the stale manifest.
 SOURCE_SHA256 = "d7d5a8519b227a761312bf4d1da56955b58184239a5a2ed7a06f84eb134dc854"
-EXPECTED_ITEMS = 7597
-EXPECTED_OBSERVED = 7054
-EXPECTED_INFERRED = 543
-EXPECTED_ELIGIBILITY_LINKS = 14931
+EXPECTED_ITEMS = 7913
+EXPECTED_OBSERVED = 7348
+EXPECTED_INFERRED = 565
+EXPECTED_ELIGIBILITY_LINKS = 21266
 
 
 def export(source: Path, output: Path, *, verify_hash: bool = True) -> dict[str, int]:
@@ -73,14 +75,10 @@ def export(source: Path, output: Path, *, verify_hash: bool = True) -> dict[str,
         with output.open("w", encoding="utf-8", newline="\n") as f:
             for row in rows:
                 fact = {
-                    "item_id": row["item_id"],
+                    "id": row["item_id"],
                     "required_level": row["required_level"],
-                    "required_level_origin": row["required_level_origin"],
-                    "item_level": row["item_level"],
-                    "source_url": row["source_url"] or "",
-                    "last_verified_at": row["last_verified_at"],
-                    "fetch_status": row["fetch_status"],
-                    "class_eligibility": eligible.get(row["item_id"], []),
+                    "origin": row["required_level_origin"],
+                    "class_ids": [link["class_id"] for link in eligible.get(row["item_id"], [])],
                 }
                 f.write(json.dumps(fact, ensure_ascii=False, separators=(",", ":")) + "\n")
         return counts
