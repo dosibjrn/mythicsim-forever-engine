@@ -62,11 +62,13 @@ jobs:
           import json
           from pathlib import Path
           result = json.loads(Path("/tmp/priest-item-options.json").read_text())
-          assert result["status"] == "ok", result
+          expected_status = "partial_level_unknown" if result["unverified_candidate_count"] else "ok"
+          assert result["status"] == expected_status, result
           assert result["required_level_supported"], result
           assert result["items"], result
           assert all(item["required_level"] <= 20 for item in result["items"]), result
-          print("PRIEST_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
+          assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in result["items"]), result
+          print("PRIEST_L20_NATIVE_ITEM_OPTIONS", len(result["items"]), "unverified_excluded", result["unverified_candidate_count"])
           PY
       - name: Check formatting of changed Rust modules
         run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs src/main.rs src/prepare/character.rs src/classes/priest/prepare.rs src/contracts/request/schema.rs src/core/fight.rs src/core/fight/world_bridge.rs
