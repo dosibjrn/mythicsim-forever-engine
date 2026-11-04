@@ -4,6 +4,9 @@
 use crate::contracts::request::{Message, Value};
 use crate::data::{self, ENCHANTS, ITEMS, RANDOM_SUFFIXES};
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use super::stats::{Stat, Stats};
 use super::Refusal;
 
@@ -400,9 +403,10 @@ pub struct NativeItemOption {
     pub name: String,
     /// The embedded database's base scaling-option item level, not required level.
     pub item_level: Option<i32>,
-    /// Actual character required level. None until the native source exposes it;
-    /// item level must never be substituted for this field.
+    /// Source-observed character required level; never inferred from item level.
     pub required_level: Option<i32>,
+    /// Provenance for the required-level value (or source-confirmed absence).
+    pub required_level_origin: String,
     /// Native equipment slot, e.g. chest, finger, one_hand, off_hand or ranged.
     pub slot: String,
     pub item_type: String,
@@ -433,9 +437,9 @@ pub struct NativeItemOptionsRefusal {
 
 /// Result of the native read-only item-options query.
 ///
-/// SimItem currently has no required_level field. This response therefore
-/// reports the source item level and native class/slot/proficiency eligibility,
-/// but deliberately does not pretend item level is a character-level requirement.
+/// The native item proto lacks a required-level field. This query joins the
+/// embedded SimItem rows to the source-observed item availability data. Inferred
+/// rows are excluded; returned candidates are never assigned an ilvl-derived level.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct NativeItemOptionsResponse {
     pub status: String,
@@ -444,9 +448,63 @@ pub struct NativeItemOptionsResponse {
     pub spec: String,
     pub slot: String,
     pub source: String,
+    /// True only when every class/slot candidate had source-backed level evidence.
     pub required_level_supported: bool,
+    /// Candidate rows excluded because their required level was not source-confirmed.
+    pub unknown_required_level_item_count: usize,
     pub items: Vec<NativeItemOption>,
     pub refusal: Option<NativeItemOptionsRefusal>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SourceRequiredLevel {
+    required_level: Option<i32>,
+    origin: &'static str,
+}
+
+fn parse_source_required_levels(source: &str) -> HashMap<i32, SourceRequiredLevel> {
+    let mut levels = HashMap::new();
+    for (line_index, line) in source.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut fields = line.split('\t');
+        let item_id = fields
+            .next()
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or_else(|| panic!("item availability line {} has an invalid item id", line_index + 1));
+        let raw_level = fields.next().unwrap_or("");
+        let origin_code = fields.next().unwrap_or("");
+        let evidence = match origin_code {
+            "0" => Some(SourceRequiredLevel {
+                required_level: Some(raw_level.parse::<i32>().unwrap_or_else(|_| {
+                    panic!("item availability line {} has an invalid observed required level", line_index + 1)
+                })),
+                origin: "observed",
+            }),
+            "3" => Some(SourceRequiredLevel {
+                required_level: None,
+                origin: "source_confirmed_no_requirement",
+            }),
+            // Median/interpolated values are not legality evidence.
+            "1" | "2" => None,
+            other => panic!("item availability line {} has unknown origin code {other}", line_index + 1),
+        };
+        if let Some(evidence) = evidence {
+            assert!(
+                levels.insert(item_id, evidence).is_none(),
+                "item availability contains duplicate item id {item_id}"
+            );
+        }
+    }
+    levels
+}
+
+fn source_required_levels() -> &'static HashMap<i32, SourceRequiredLevel> {
+    static LEVELS: OnceLock<HashMap<i32, SourceRequiredLevel>> = OnceLock::new();
+    LEVELS.get_or_init(|| {
+        parse_source_required_levels(include_str!("../../data/item_availability.tsv"))
+    })
 }
 
 fn native_item_source_slot(item: &Item) -> Option<&'static str> {
@@ -517,10 +575,7 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
     if matches!(
         slot,
         Some("head" | "shoulder" | "chest" | "wrist" | "hands" | "waist" | "legs" | "feet")
-    ) && !matches!(
-        item.armor_type.as_str(),
-        "ArmorTypeUnknown" | "ArmorTypeCloth"
-    ) {
+    ) && item.armor_type != "ArmorTypeCloth" {
         return false;
     }
 
@@ -539,11 +594,10 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
 
 /// Enumerate the native embedded item choices for the supported L20 P3 caster slice.
 ///
-/// This is a read-only projection over data/items.jsonl; it does not open the
-/// Forever SQLite catalogue. Priest and Mage have fixed cloth/weapon proficiencies
-/// for this slice. The native SimItem schema has no required-level property, so
-/// callers receive required_level_supported=false rather than a fabricated
-/// required-level estimate derived from item level.
+/// This is a read-only projection over MythicSim's embedded item rows plus the
+/// source-observed required-level table. Inferred availability-floor rows are
+/// ignored. Priest and Mage have fixed cloth/weapon proficiencies for this slice;
+/// candidates without source-backed required levels are excluded and counted.
 pub fn native_item_options(
     class: &str,
     level: i32,
@@ -594,8 +648,9 @@ pub fn native_item_options(
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: "mythicsim:data/items.jsonl".to_string(),
+        source: "mythicsim:data/items.jsonl+data/item_availability.tsv".to_string(),
         required_level_supported: false,
+        unknown_required_level_item_count: 0,
         items: Vec::new(),
         refusal: refusal.map(|(code, reason)| NativeItemOptionsRefusal {
             code: code.to_string(),
@@ -629,6 +684,16 @@ pub fn native_item_options(
         let Some(scaling) = scaling_option(row) else {
             continue;
         };
+        let Some(required_level_source) = source_required_levels().get(&item.id).copied() else {
+            response.unknown_required_level_item_count += 1;
+            continue;
+        };
+        if required_level_source
+            .required_level
+            .is_some_and(|required_level| required_level > level)
+        {
+            continue;
+        }
         let source_stats = stats_from_map(scaling, "stats");
         let mut stats = std::collections::BTreeMap::new();
         for stat in Stat::ALL {
@@ -641,7 +706,8 @@ pub fn native_item_options(
             item_id: item.id,
             name: item.name,
             item_level: scaling.has("ilvl").then(|| scaling.i32("ilvl")),
-            required_level: None,
+            required_level: required_level_source.required_level,
+            required_level_origin: required_level_source.origin.to_string(),
             slot: source_slot.to_string(),
             item_type: item.item_type,
             armor_type: item.armor_type,
@@ -671,29 +737,71 @@ pub fn native_item_options(
             .cmp(&a.item_level.unwrap_or(-1))
             .then_with(|| a.item_id.cmp(&b.item_id))
     });
-    response.status = if response.items.is_empty() {
+    response.required_level_supported = response.unknown_required_level_item_count == 0;
+    response.status = if !response.required_level_supported {
+        "partial_level_unknown".to_string()
+    } else if response.items.is_empty() {
         "empty".to_string()
     } else {
-        // SimItem has no required-level source field. These are native
-        // class/slot candidates, NOT certified level-legal equipment.
-        "partial_level_unknown".to_string()
+        "ok".to_string()
     };
     response
 }
 
 #[cfg(test)]
 mod native_item_options_contract_tests {
-    use super::native_item_options;
+    use super::{
+        native_item_options, parse_source_required_levels, SourceRequiredLevel,
+    };
 
     #[test]
-    fn priest_and_mage_options_expose_native_candidates_without_claiming_level_legality() {
+    fn only_source_observed_or_confirmed_absence_rows_are_legality_evidence() {
+        let levels = parse_source_required_levels(
+            "10\\t20\\t0\\t\\n11\\t15\\t1\\t\\n12\\t0\\t3\\t\\n",
+        );
+        assert_eq!(
+            levels.get(&10),
+            Some(&SourceRequiredLevel {
+                required_level: Some(20),
+                origin: "observed",
+            })
+        );
+        assert!(!levels.contains_key(&11), "inferred median is not legality evidence");
+        assert_eq!(
+            levels.get(&12),
+            Some(&SourceRequiredLevel {
+                required_level: None,
+                origin: "source_confirmed_no_requirement",
+            })
+        );
+    }
+
+    #[test]
+    fn priest_and_mage_options_return_only_source_level_legal_candidates() {
         for class in ["priest", "mage"] {
             let response = native_item_options(class, 20, "unrestricted", "chest");
-            assert_eq!(response.status, "partial_level_unknown");
-            assert!(!response.required_level_supported);
             assert!(response.refusal.is_none());
             assert!(!response.items.is_empty());
-            assert!(response.items.iter().all(|item| item.required_level.is_none()));
+            assert_eq!(
+                response.required_level_supported,
+                response.unknown_required_level_item_count == 0
+            );
+            assert_eq!(
+                response.status,
+                if response.unknown_required_level_item_count == 0 {
+                    "ok"
+                } else {
+                    "partial_level_unknown"
+                }
+            );
+            assert!(response.items.iter().all(|item| {
+                item.required_level
+                    .is_none_or(|required_level| required_level <= 20)
+                    && matches!(
+                        item.required_level_origin.as_str(),
+                        "observed" | "source_confirmed_no_requirement"
+                    )
+            }));
             assert!(response.items.windows(2).all(|pair| {
                 pair[0].item_level.unwrap_or(-1) > pair[1].item_level.unwrap_or(-1)
                     || (pair[0].item_level == pair[1].item_level
