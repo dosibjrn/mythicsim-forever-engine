@@ -60,14 +60,18 @@ def integer(row, names, table, line_number, required=True, default=0):
 
 def race_mask(row, table, line_number):
     if "RaceMask" in row and str(row["RaceMask"] or "").strip():
-        return integer(row, ("RaceMask",), table, line_number)
+        # Wago can render signed DB2 bitmasks as negative decimal integers.
+        # Normalize to the unsigned 64-bit representation before bit iteration.
+        return integer(row, ("RaceMask",), table, line_number) & ((1 << 64) - 1)
     low_names = ("RaceMasks_0", "RaceMask1", "RaceMask_0")
     high_names = ("RaceMasks_1", "RaceMask2", "RaceMask_1")
     has_mask_fields = any(name in row for name in (*low_names, *high_names))
     if not has_mask_fields:
         raise ValueError(f"{table} CSV has no RaceMask or split race-mask columns")
-    low = integer(row, low_names, table, line_number, required=False, default=0)
-    high = integer(row, high_names, table, line_number, required=False, default=0)
+    # The DB2 array is two signed 32-bit words. Mask each word independently;
+    # shifting a negative Python integer would sign-extend and corrupt race IDs.
+    low = integer(row, low_names, table, line_number, required=False, default=0) & 0xFFFFFFFF
+    high = integer(row, high_names, table, line_number, required=False, default=0) & 0xFFFFFFFF
     return low | (high << 32)
 
 
