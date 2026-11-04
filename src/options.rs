@@ -150,7 +150,9 @@ pub struct CharacterOptions {
 /// sources are migrated. It never silently declares an unproven option legal.
 pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> {
     if !(1..=60).contains(&level) {
-        return Err(format!("level {level} is outside the supported range 1..=60"));
+        return Err(format!(
+            "level {level} is outside the supported range 1..=60"
+        ));
     }
 
     let mut spells = Vec::new();
@@ -166,14 +168,20 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
             if min_level > 0 {
                 prerequisites.push(Prerequisite::MinimumLevel { level: min_level });
             } else {
-                prerequisites.push(Prerequisite::Unresolved { key: "spell_minimum_level" });
+                prerequisites.push(Prerequisite::Unresolved {
+                    key: "spell_minimum_level",
+                });
             }
         } else {
-            prerequisites.push(Prerequisite::Unresolved { key: "spell_minimum_level" });
+            prerequisites.push(Prerequisite::Unresolved {
+                key: "spell_minimum_level",
+            });
         }
         // Class-family matching is source metadata, not proof of trainer
         // learnability: this family includes procs and talent-granted effects.
-        prerequisites.push(Prerequisite::Unresolved { key: "spell_learnability" });
+        prerequisites.push(Prerequisite::Unresolved {
+            key: "spell_learnability",
+        });
         spells.push(SpellOption {
             spell_id: spell.id,
             name: spell.name.clone(),
@@ -191,11 +199,20 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         // The engine does not equip an unknown item type.
         if !matches!(
             item_type.as_str(),
-            "ItemTypeHead" | "ItemTypeNeck" | "ItemTypeShoulder"
-                | "ItemTypeBack" | "ItemTypeChest" | "ItemTypeWrist"
-                | "ItemTypeHands" | "ItemTypeWaist" | "ItemTypeLegs"
-                | "ItemTypeFeet" | "ItemTypeFinger" | "ItemTypeTrinket"
-                | "ItemTypeWeapon" | "ItemTypeRanged"
+            "ItemTypeHead"
+                | "ItemTypeNeck"
+                | "ItemTypeShoulder"
+                | "ItemTypeBack"
+                | "ItemTypeChest"
+                | "ItemTypeWrist"
+                | "ItemTypeHands"
+                | "ItemTypeWaist"
+                | "ItemTypeLegs"
+                | "ItemTypeFeet"
+                | "ItemTypeFinger"
+                | "ItemTypeTrinket"
+                | "ItemTypeWeapon"
+                | "ItemTypeRanged"
         ) {
             continue;
         }
@@ -203,7 +220,9 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         if !allowlist.is_empty() && !allowlist.iter().any(|entry| entry == class.proto_name()) {
             continue;
         }
-        let Some(scaling) = scaling_option(&row) else { continue };
+        let Some(scaling) = scaling_option(&row) else {
+            continue;
+        };
         let stats = stats_from_map(scaling, "stats")
             .0
             .iter()
@@ -218,8 +237,12 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         // SimItem's pinned proto has NO required-level, armor proficiency,
         // quest or profession unlock fields. In particular, ilvl is not
         // required level: do not substitute it.
-        prerequisites.push(Prerequisite::Unresolved { key: "item_required_level" });
-        prerequisites.push(Prerequisite::Unresolved { key: "item_equip_proficiency" });
+        prerequisites.push(Prerequisite::Unresolved {
+            key: "item_required_level",
+        });
+        prerequisites.push(Prerequisite::Unresolved {
+            key: "item_equip_proficiency",
+        });
         items.push(ItemOption {
             item_id: row.i32("id"),
             name: row.str("name").to_owned(),
@@ -245,13 +268,21 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
             for talent in tree["talents"].as_array().expect("native tree talents") {
                 talents.push(TalentOption {
                     tree: tree_name.clone(),
-                    field: talent["field"].as_str().expect("native talent field").to_owned(),
-                    name: talent["name"].as_str().expect("native talent name").to_owned(),
+                    field: talent["field"]
+                        .as_str()
+                        .expect("native talent field")
+                        .to_owned(),
+                    name: talent["name"]
+                        .as_str()
+                        .expect("native talent name")
+                        .to_owned(),
                     max_ranks: talent["max_ranks"].as_u64().expect("native max ranks") as u32,
                     in_proto: talent["in_proto"].as_bool().unwrap_or(true),
                     // The source layout only lists sequential positions; it
                     // does not expose tier rows or specific parent node IDs.
-                    prerequisites: vec![Prerequisite::Unresolved { key: "talent_unlocks" }],
+                    prerequisites: vec![Prerequisite::Unresolved {
+                        key: "talent_unlocks",
+                    }],
                 });
             }
         }
@@ -302,21 +333,29 @@ mod tests {
         assert!(mage.items.iter().any(|i| i.item_id == 25)); // Worn Shortsword, unrestricted
         assert!(!mage.items.iter().any(|i| i.item_id == 2919)); // Priest relic
         assert!(priest.items.iter().any(|i| i.item_id == 2919));
-        assert!(mage.items.iter().all(|i| i.prerequisites.iter().any(
-            |p| matches!(p, Prerequisite::Unresolved { key: "item_required_level" })
-        )));
+        assert!(mage
+            .items
+            .iter()
+            .all(|i| i.prerequisites.iter().any(|p| matches!(
+                p,
+                Prerequisite::Unresolved {
+                    key: "item_required_level"
+                }
+            ))));
     }
 
     #[test]
     fn native_talent_layout_is_reused_without_a_second_rank_table() {
         let druid = get_options(30, Class::Druid).unwrap();
-        assert!(druid.talents.iter().any(|t|
-            t.field == "lacerate" && t.max_ranks == 1 && !t.in_proto
-        ));
+        assert!(druid
+            .talents
+            .iter()
+            .any(|t| t.field == "lacerate" && t.max_ranks == 1 && !t.in_proto));
         let mage = get_options(30, Class::Mage).unwrap();
-        assert!(mage.talents.iter().any(|t|
-            t.field == "elemental_precision" && t.max_ranks == 3
-        ));
+        assert!(mage
+            .talents
+            .iter()
+            .any(|t| t.field == "elemental_precision" && t.max_ranks == 3));
     }
 
     #[test]
@@ -325,7 +364,10 @@ mod tests {
         assert!(get_options(61, Class::Mage).is_err());
         let options = get_options(20, Class::Shaman).unwrap();
         assert!(!options.coverage.eligibility_complete);
-        assert!(options.coverage.missing.contains(&"native_class_talent_layout"));
+        assert!(options
+            .coverage
+            .missing
+            .contains(&"native_class_talent_layout"));
         assert!(!options.spells.is_empty());
         let json = serde_json::to_value(options).unwrap();
         assert_eq!(json["schema_version"], 1);
