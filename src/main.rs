@@ -1,5 +1,5 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, gear_options, native_item_options, native_two_pull_windows,
+    contracts::prepared_v2::PreparedV2, gear_options, native_two_pull_windows,
     native_two_world_targets, prepare_json_with, prepared_refusals, simulate, simulate_prepared,
     simulate_prepared_gated, validate_prepared, Gated, PrepareError, PreparedError, Refusal,
     Request, RngMode, Rules, SOURCE_REVISION,
@@ -166,7 +166,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage --level N --spec unrestricted --slot SLOT\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine version");
         return Ok(());
     }
 
@@ -191,55 +191,6 @@ fn run() -> Result<(), Failure> {
         println!("{output}");
         return Ok(());
     }
-    if args[0] == "item-options" {
-        let mut class: Option<String> = None;
-        let mut level: Option<i32> = None;
-        let mut spec: Option<String> = None;
-        let mut slot: Option<String> = None;
-        let mut index = 1;
-        while index < args.len() {
-            let flag = args[index].as_str();
-            index += 1;
-            let value = args
-                .get(index)
-                .ok_or_else(|| format!("{flag} requires a value"))?
-                .clone();
-            index += 1;
-            match flag {
-                "--class" => {
-                    if class.replace(value).is_some() {
-                        return Err("duplicate --class".into());
-                    }
-                }
-                "--level" => {
-                    let parsed = value.parse::<i32>().map_err(|_| "invalid --level")?;
-                    if level.replace(parsed).is_some() {
-                        return Err("duplicate --level".into());
-                    }
-                }
-                "--spec" => {
-                    if spec.replace(value).is_some() {
-                        return Err("duplicate --spec".into());
-                    }
-                }
-                "--slot" => {
-                    if slot.replace(value).is_some() {
-                        return Err("duplicate --slot".into());
-                    }
-                }
-                _ => return Err(format!("unsupported item-options argument {flag}").into()),
-            }
-        }
-        let class = class.ok_or("item-options requires --class")?;
-        let level = level.ok_or("item-options requires --level")?;
-        let spec = spec.ok_or("item-options requires --spec")?;
-        let slot = slot.ok_or("item-options requires --slot")?;
-        let response = native_item_options(&class, level, &spec, &slot);
-        let output = serde_json::to_string_pretty(&response).map_err(|err| err.to_string())?;
-        println!("{output}");
-        return Ok(());
-    }
-
     if args[0] == "native-world-pulls" {
         if args.len() != 7 || args[1] != "--infile" || args[3] != "--targets" || args[5] != "--rng-mode" {
             return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into());

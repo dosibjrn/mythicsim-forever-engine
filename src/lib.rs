@@ -39,9 +39,6 @@ pub use prepare::{
 pub fn implemented_prepared_effects() -> &'static [&'static str] {
     engine::coverage::implemented_effects()
 }
-pub use prepare::items::{
-    native_item_options, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
-};
 pub use report::{Counts, Report, TraceEvent, Work};
 
 /// The pinned Go reference revision, from upstream/sources.json.
