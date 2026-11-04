@@ -2,9 +2,13 @@
 //! Activated only by FOREVER_GSIM_WORLD_BRIDGE=1. All damage comes from the
 //! unchanged native Fight::deal_damage; the world applies it before native
 //! scheduler resumes. This is a bounded multi-fight diagnostic, NOT P7 acceptance.
-use std::{cell::RefCell, collections::BTreeMap, io::{self, BufRead, Write}};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    io::{self, BufRead, Write},
+};
 
 const TICK_NS: i64 = 100_000_000;
 
@@ -51,23 +55,38 @@ pub(crate) fn enabled() -> bool {
 }
 
 pub(crate) fn start(source_hash: &str) {
-    assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
+    assert!(
+        enabled() && source_hash.len() == 64,
+        "RUST_WORLD_INVALID_SOURCE"
+    );
     SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
-    BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
-        iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
-        last_health: None, previous_ack_id: String::new(),
-        source_hash: source_hash.to_owned(), event_ordinal: 0,
-        pending: Vec::new(), iteration_finished: false,
-    }));
+    BRIDGE.with(|state| {
+        *state.borrow_mut() = Some(Bridge {
+            iteration: 0,
+            sequence: 0,
+            next_tick_ns: 0,
+            last_tick_ns: -1,
+            last_health: None,
+            previous_ack_id: String::new(),
+            source_hash: source_hash.to_owned(),
+            event_ordinal: 0,
+            pending: Vec::new(),
+            iteration_finished: false,
+        })
+    });
 }
 
 /// Preserve original source request and seed; only first N source fights
 /// run during a cheap diagnostic, never silently award 10k-fight acceptance.
 pub(crate) fn requested_iterations(source_count: u32) -> u32 {
     let count = std::env::var("FOREVER_GSIM_WORLD_ITERATIONS")
-        .ok().map(|s| s.parse::<u32>().expect("RUST_WORLD_ITERATIONS_NOT_INTEGER"))
+        .ok()
+        .map(|s| s.parse::<u32>().expect("RUST_WORLD_ITERATIONS_NOT_INTEGER"))
         .unwrap_or(1);
-    assert!(count > 0 && count <= source_count, "RUST_WORLD_ITERATIONS_OUT_OF_SOURCE_RANGE");
+    assert!(
+        count > 0 && count <= source_count,
+        "RUST_WORLD_ITERATIONS_OUT_OF_SOURCE_RANGE"
+    );
     count
 }
 
@@ -76,10 +95,14 @@ pub(crate) fn begin_iteration(iteration: u32) {
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        assert!(iteration == 0 || iteration == bridge.iteration + 1,
-            "RUST_WORLD_ITERATION_NOT_SEQUENTIAL");
-        assert!(iteration == 0 || bridge.iteration_finished,
-            "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED");
+        assert!(
+            iteration == 0 || iteration == bridge.iteration + 1,
+            "RUST_WORLD_ITERATION_NOT_SEQUENTIAL"
+        );
+        assert!(
+            iteration == 0 || bridge.iteration_finished,
+            "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED"
+        );
         assert!(bridge.pending.is_empty(), "RUST_WORLD_UNFLUSHED_EVENTS");
         bridge.iteration = iteration;
         bridge.sequence = 0;
@@ -108,11 +131,15 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         // Expiring a duration does not kill a distinct gsim world mob.
         // Only the previous source-native effects' committed HP/death/hash ACK
         // can authorize this retained Rust actor to acquire its next target.
-        if bridge.sequence == 0 || bridge.previous_ack_id.len() != 64
-            || bridge.last_health != Some(0.0) {
+        if bridge.sequence == 0
+            || bridge.previous_ack_id.len() != 64
+            || bridge.last_health != Some(0.0)
+        {
             return Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL");
         }
-        bridge.iteration = bridge.iteration.checked_add(1)
+        bridge.iteration = bridge
+            .iteration
+            .checked_add(1)
             .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
         bridge.last_health = None; // new world target, not a healed old one
         bridge.next_tick_ns = at_ns;
@@ -131,24 +158,35 @@ mod persistent_next_target_world_lethal_ack_tests {
         // This is the live Rust bridge's real state machine, not a replacement
         // combat evaluator. Only exchange() can set these ACK-derived fields
         // in production.
-        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
-            iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(25.0),
-            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
-            event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
-        }));
-        assert_eq!(begin_next_target(200),
-            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        BRIDGE.with(|slot| {
+            *slot.borrow_mut() = Some(Bridge {
+                iteration: 0,
+                sequence: 1,
+                next_tick_ns: 200,
+                last_tick_ns: 100,
+                last_health: Some(25.0),
+                previous_ack_id: "a".repeat(64),
+                source_hash: "b".repeat(64),
+                event_ordinal: 9,
+                pending: Vec::new(),
+                iteration_finished: false,
+            })
+        });
+        assert_eq!(
+            begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
         BRIDGE.with(|slot| {
             let mut state = slot.borrow_mut();
             let state = state.as_mut().unwrap();
             state.last_health = Some(0.0);
             state.previous_ack_id.clear();
         });
-        assert_eq!(begin_next_target(200),
-            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
-        BRIDGE.with(|slot| slot.borrow_mut().as_mut().unwrap()
-            .previous_ack_id = "a".repeat(64));
+        assert_eq!(
+            begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
+        BRIDGE.with(|slot| slot.borrow_mut().as_mut().unwrap().previous_ack_id = "a".repeat(64));
         assert_eq!(begin_next_target(200), Ok(()));
         BRIDGE.with(|slot| {
             let state = slot.borrow();
@@ -162,8 +200,10 @@ mod persistent_next_target_world_lethal_ack_tests {
             assert_eq!(state.last_health, None);
         });
         // The new target cannot be skipped without its own lethal ACK.
-        assert_eq!(begin_next_target(300),
-            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        assert_eq!(
+            begin_next_target(300),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
     }
 }
 
@@ -173,12 +213,20 @@ mod world_lethal_terminal_tests {
 
     #[test]
     fn world_lethal_terminal_requires_committed_native_world_ack() {
-        BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
-            iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(10.0),
-            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
-            event_ordinal: 1, pending: Vec::new(), iteration_finished: false,
-        }));
+        BRIDGE.with(|state| {
+            *state.borrow_mut() = Some(Bridge {
+                iteration: 0,
+                sequence: 1,
+                next_tick_ns: 200,
+                last_tick_ns: 100,
+                last_health: Some(10.0),
+                previous_ack_id: "a".repeat(64),
+                source_hash: "b".repeat(64),
+                event_ordinal: 1,
+                pending: Vec::new(),
+                iteration_finished: false,
+            })
+        });
         assert!(!acknowledged_lethal());
         BRIDGE.with(|state| state.borrow_mut().as_mut().unwrap().last_health = Some(0.0));
         assert!(acknowledged_lethal());
@@ -205,8 +253,10 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
         } else {
             bridge.next_tick_ns
         };
-        (boundary >= 0 && boundary > bridge.last_tick_ns
-            && boundary <= next_native_ns && boundary <= end_ns)
+        (boundary >= 0
+            && boundary > bridge.last_tick_ns
+            && boundary <= next_native_ns
+            && boundary <= end_ns)
             .then_some(boundary)
     })
 }
@@ -242,7 +292,10 @@ pub(crate) fn record_damage(
     if !enabled() {
         return;
     }
-    assert!(damage.is_finite() && damage > 0.0 && landed, "RUST_WORLD_DAMAGE_INVALID");
+    assert!(
+        damage.is_finite() && damage > 0.0 && landed,
+        "RUST_WORLD_DAMAGE_INVALID"
+    );
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
@@ -277,7 +330,10 @@ fn append_damage_event(
 ) {
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     record_source_action(&action);
-    assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
+    assert!(
+        !has_lethal_ack(bridge),
+        "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK"
+    );
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -306,26 +362,42 @@ fn send(value: &Value) {
 fn receive() -> Value {
     let stdin = io::stdin();
     let mut line = String::new();
-    assert!(stdin.lock().read_line(&mut line).expect("RUST_WORLD_STDIN_FAILED") > 0,
-        "RUST_WORLD_PEER_CLOSED_BEFORE_ACK");
+    assert!(
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .expect("RUST_WORLD_STDIN_FAILED")
+            > 0,
+        "RUST_WORLD_PEER_CLOSED_BEFORE_ACK"
+    );
     serde_json::from_str(&line).expect("RUST_WORLD_INVALID_JSON")
 }
 fn number(value: &Value, key: &str) -> f64 {
-    let n = value[key].as_f64().unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"));
+    let n = value[key]
+        .as_f64()
+        .unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"));
     assert!(n.is_finite(), "RUST_WORLD_NONFINITE");
     n
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {
-    value[key].as_str().unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"))
+    value[key]
+        .as_str()
+        .unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"))
 }
 
 /// One retained Rust process. The next native scheduler action cannot execute
 /// before the gsim CombatRuntime applied every real source damage event.
-pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) -> (f64, bool, bool) {
-    let mut bridge = BRIDGE.with(|state| state.borrow_mut().take()
-        .expect("RUST_WORLD_NOT_STARTED"));
-    assert!(clock_ns > bridge.last_tick_ns && clock_ns >= 0,
-        "RUST_WORLD_CLOCK_NOT_MONOTONIC");
+pub(crate) fn exchange(
+    clock_ns: i64,
+    duration_ns: i64,
+    cumulative_damage: f64,
+) -> (f64, bool, bool) {
+    let mut bridge =
+        BRIDGE.with(|state| state.borrow_mut().take().expect("RUST_WORLD_NOT_STARTED"));
+    assert!(
+        clock_ns > bridge.last_tick_ns && clock_ns >= 0,
+        "RUST_WORLD_CLOCK_NOT_MONOTONIC"
+    );
     let events = std::mem::take(&mut bridge.pending);
     let event_ids: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
     let pid = std::process::id();
@@ -337,30 +409,42 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "native_process_id": pid, "native_request_sha256": bridge.source_hash,
     }));
     let tick = receive();
-    assert!(tick["type"] == "gsim_world_range_tick"
-        && tick["sequence"] == bridge.sequence
-        && tick["iteration_index"] == bridge.iteration
-        && tick["native_clock_ns"] == clock_ns
-        && tick["world_source"] == "gsim.CombatRuntime"
-        && tick["previous_world_ack_id"] == bridge.previous_ack_id,
-        "RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID");
+    assert!(
+        tick["type"] == "gsim_world_range_tick"
+            && tick["sequence"] == bridge.sequence
+            && tick["iteration_index"] == bridge.iteration
+            && tick["native_clock_ns"] == clock_ns
+            && tick["world_source"] == "gsim.CombatRuntime"
+            && tick["previous_world_ack_id"] == bridge.previous_ack_id,
+        "RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID"
+    );
     let distance = number(&tick, "distance_yards");
-    assert!((0.0..=100.0).contains(&distance), "RUST_WORLD_DISTANCE_INVALID");
-    let front = tick["in_front_of_target"].as_bool()
+    assert!(
+        (0.0..=100.0).contains(&distance),
+        "RUST_WORLD_DISTANCE_INVALID"
+    );
+    let front = tick["in_front_of_target"]
+        .as_bool()
         .expect("RUST_WORLD_FACING_NOT_PROVIDED");
     // World movement is a live gsim fact, not a native game-rule override.
     // Existing stationary 2D probes omit movement; retain their false
     // default. When a live route explicitly supplies movement, reject any
     // malformed flag rather than silently permitting a noninstant cast.
-    let moving = tick.get("gsim_player_moving").map(|value|
-        value.as_bool().expect("RUST_WORLD_PLAYER_MOVEMENT_INVALID")
-    ).unwrap_or(false);
+    let moving = tick
+        .get("gsim_player_moving")
+        .map(|value| value.as_bool().expect("RUST_WORLD_PLAYER_MOVEMENT_INVALID"))
+        .unwrap_or(false);
     let before_health = number(&tick, "world_target_health_before");
     let max_health = number(&tick, "world_target_max_health");
-    assert!(before_health > 0.0 && before_health <= max_health,
-        "RUST_WORLD_HEALTH_INVALID");
+    assert!(
+        before_health > 0.0 && before_health <= max_health,
+        "RUST_WORLD_HEALTH_INVALID"
+    );
     if let Some(last) = bridge.last_health {
-        assert!((last - before_health).abs() < 1e-6, "RUST_WORLD_HEALTH_ACK_NOT_CONTINUOUS");
+        assert!(
+            (last - before_health).abs() < 1e-6,
+            "RUST_WORLD_HEALTH_ACK_NOT_CONTINUOUS"
+        );
     }
     let before_hash = string(&tick, "world_sha256").to_owned();
     let next_world_boundary_ns = match tick.get("next_world_boundary_ns") {
@@ -368,10 +452,12 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         Some(value) => value.as_i64().expect("RUST_WORLD_DEADLINE_NOT_INTEGER"),
         None => panic!("RUST_WORLD_DEADLINE_MISSING"),
     };
-    assert!(next_world_boundary_ns == i64::MAX
-        || (next_world_boundary_ns > clock_ns
-            && next_world_boundary_ns <= clock_ns.saturating_add(TICK_NS)),
-        "RUST_WORLD_DEADLINE_INVALID");
+    assert!(
+        next_world_boundary_ns == i64::MAX
+            || (next_world_boundary_ns > clock_ns
+                && next_world_boundary_ns <= clock_ns.saturating_add(TICK_NS)),
+        "RUST_WORLD_DEADLINE_INVALID"
+    );
     send(&json!({
         "type": "native_rust_world_receipt",
         "iteration_index": bridge.iteration,
@@ -389,23 +475,31 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "checkpoint_certified": false
     }));
     let ack = receive();
-    assert!(ack["type"] == "gsim_native_damage_applied_ack"
-        && ack["sequence"] == bridge.sequence
-        && ack["iteration_index"] == bridge.iteration
-        && ack["native_process_id"] == pid
-        && ack["world_before_sha256"] == before_hash,
-        "RUST_WORLD_DAMAGE_ACK_IDENTITY_INVALID");
-    let accepted = ack["applied_event_ids"].as_array()
+    assert!(
+        ack["type"] == "gsim_native_damage_applied_ack"
+            && ack["sequence"] == bridge.sequence
+            && ack["iteration_index"] == bridge.iteration
+            && ack["native_process_id"] == pid
+            && ack["world_before_sha256"] == before_hash,
+        "RUST_WORLD_DAMAGE_ACK_IDENTITY_INVALID"
+    );
+    let accepted = ack["applied_event_ids"]
+        .as_array()
         .expect("RUST_WORLD_DAMAGE_ACK_EVENT_IDS_MISSING");
     assert_damage_acknowledgement(&event_ids, accepted);
     let ack_before = number(&ack, "world_target_health_before");
     let ack_after = number(&ack, "world_target_health_after");
     let expected_damage: f64 = events.iter().map(|e| e.damage).sum();
-    assert!((ack_before - before_health).abs() < 1e-6
-        && (ack_after - (before_health - expected_damage).max(0.0)).abs() < 1e-6,
-        "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
+    assert!(
+        (ack_before - before_health).abs() < 1e-6
+            && (ack_after - (before_health - expected_damage).max(0.0)).abs() < 1e-6,
+        "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH"
+    );
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
-    assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
+    assert!(
+        bridge.previous_ack_id.len() == 64,
+        "RUST_WORLD_DAMAGE_ACK_HASH_INVALID"
+    );
     bridge.last_health = Some(ack_after);
     bridge.last_tick_ns = clock_ns;
     bridge.sequence += 1;
@@ -415,9 +509,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
 }
 
 fn has_lethal_ack(bridge: &Bridge) -> bool {
-    bridge.sequence > 0
-        && bridge.last_health == Some(0.0)
-        && bridge.previous_ack_id.len() == 64
+    bridge.sequence > 0 && bridge.last_health == Some(0.0) && bridge.previous_ack_id.len() == 64
 }
 
 pub(crate) fn lethal_ack_received() -> bool {
@@ -437,9 +529,14 @@ pub(crate) fn acknowledged_lethal() -> bool {
 }
 
 fn assert_damage_acknowledgement(event_ids: &[String], accepted: &[Value]) {
-    assert!(accepted.len() == event_ids.len()
-        && accepted.iter().zip(event_ids.iter()).all(|(a, b)| a.as_str() == Some(b)),
-        "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH");
+    assert!(
+        accepted.len() == event_ids.len()
+            && accepted
+                .iter()
+                .zip(event_ids.iter())
+                .all(|(a, b)| a.as_str() == Some(b)),
+        "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH"
+    );
 }
 
 fn mark_iteration_finished() {
@@ -711,7 +808,6 @@ mod iteration_teardown_tests {
         begin_iteration(1);
     }
 }
-
 
 #[cfg(test)]
 mod source_action_count_tests {
