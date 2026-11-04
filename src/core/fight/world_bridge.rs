@@ -256,6 +256,8 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     })
 }
 
+// This fixed native-to-world event receipt carries an explicit flat wire payload.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn record_damage(
     time_ns: i64,
     damage: f64,
@@ -294,6 +296,8 @@ pub(crate) fn record_damage(
     });
 }
 
+// This fixed native-to-world event receipt carries an explicit flat wire payload.
+#[allow(clippy::too_many_arguments)]
 fn append_damage_event(
     bridge: &mut Bridge,
     time_ns: i64,
