@@ -68,7 +68,9 @@ fn simulate(mut prepared: Value, iterations: u32, log: bool) -> Value {
     prepared["sim"]["iterations"] = json!(iterations);
     prepared["sim"]["debug_first_iteration"] = json!(log);
     let typed: PreparedV2 = serde_json::from_value(prepared).unwrap();
-    forever_engine::simulate_prepared(&typed, RngMode::Stochastic).unwrap().result
+    forever_engine::simulate_prepared(&typed, RngMode::Stochastic)
+        .unwrap()
+        .result
 }
 
 /// Puncturing Wounds' 5, 10 and 15% Mutilate crit reach both hand strikes, and each hand crits
