@@ -10,7 +10,7 @@ on:
       - tools/import_paladin_equipment_test.py
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: paladin-equipment-source-${{ github.ref }}
@@ -76,21 +76,8 @@ jobs:
           cat data/paladin-equipment-skills.manifest.json
 
 
-      - name: Commit generated pinned-client projection
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/manifest.json data/paladin-equipment-skills.json data/paladin-equipment-skills.manifest.json
-          if git diff --cached --quiet; then
-            echo "Pinned Paladin equipment projection is already current."
-          else
-            git commit -m "data: import pinned Paladin equipment skills"
-            git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
-          fi
-
       - name: Upload pinned source tables and normalized projection
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: paladin-equipment-source-${{ github.sha }}
