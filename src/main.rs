@@ -1,5 +1,5 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, prepare_json_with, prepared_refusals, simulate,
+    contracts::prepared_v2::PreparedV2, native_item_options, prepare_json_with, prepared_refusals, simulate,
     simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, Rules, SOURCE_REVISION,
 };
@@ -177,6 +177,55 @@ fn run() -> Result<(), Failure> {
         println!("{}", coverage_report(&prepared, &refusals)?);
         return Ok(());
     }
+    if args[0] == "item-options" {
+        let mut class: Option<String> = None;
+        let mut level: Option<i32> = None;
+        let mut spec: Option<String> = None;
+        let mut slot: Option<String> = None;
+        let mut index = 1;
+        while index < args.len() {
+            let flag = args[index].as_str();
+            index += 1;
+            let value = args
+                .get(index)
+                .ok_or_else(|| format!("{flag} requires a value"))?
+                .clone();
+            index += 1;
+            match flag {
+                "--class" => {
+                    if class.replace(value).is_some() {
+                        return Err("duplicate --class".into());
+                    }
+                }
+                "--level" => {
+                    let parsed = value.parse::<i32>().map_err(|_| "invalid --level")?;
+                    if level.replace(parsed).is_some() {
+                        return Err("duplicate --level".into());
+                    }
+                }
+                "--spec" => {
+                    if spec.replace(value).is_some() {
+                        return Err("duplicate --spec".into());
+                    }
+                }
+                "--slot" => {
+                    if slot.replace(value).is_some() {
+                        return Err("duplicate --slot".into());
+                    }
+                }
+                _ => return Err(format!("unsupported item-options argument {flag}").into()),
+            }
+        }
+        let class = class.ok_or("item-options requires --class")?;
+        let level = level.ok_or("item-options requires --level")?;
+        let spec = spec.ok_or("item-options requires --spec")?;
+        let slot = slot.ok_or("item-options requires --slot")?;
+        let response = native_item_options(&class, level, &spec, &slot);
+        let output = serde_json::to_string_pretty(&response).map_err(|err| err.to_string())?;
+        println!("{output}");
+        return Ok(());
+    }
+
     if args[0] != "sim" && args[0] != "bench" && args[0] != "prepare" {
         return Err("expected sim, prepare, bench, check or version".into());
     }
