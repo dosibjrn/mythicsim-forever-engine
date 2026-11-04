@@ -333,24 +333,30 @@ impl PreparedReport {
 }
 
 /// Validate, gate and simulate a prepared v2 input.
-pub fn simulate(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<PreparedReport, PreparedError> {
+pub fn simulate(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<PreparedReport, PreparedError> {
     check(prepared)?;
     run(prepared, rng_mode)
 }
 
-
 /// One selected source-native actor and monotonic gsim ACKs; diagnostic only.
-pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode)
-    -> Result<serde_json::Value, PreparedError>
-{
+pub fn native_two_world_targets(
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<serde_json::Value, PreparedError> {
     check(prepared)?;
     if !crate::core::fight::world_bridge::enabled() {
         return Err(PreparedError::Invalid(
-            "RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".to_owned()));
+            "RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".to_owned(),
+        ));
     }
     if !(2..=100).contains(&target_count) {
         return Err(PreparedError::Invalid(
-            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned()));
+            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned(),
+        ));
     }
     crate::core::fight::world_bridge::start(&prepared.request_sha256);
     crate::classes::native_two_world_targets(prepared, target_count, rng_mode)
@@ -358,9 +364,10 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_
 }
 
 /// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
-pub fn native_two_pull_windows(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode)
-    -> Result<serde_json::Value, PreparedError>
-{
+pub fn native_two_pull_windows(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<serde_json::Value, PreparedError> {
     check(prepared)?;
     crate::classes::native_two_pull_windows(prepared, rng_mode).map_err(PreparedError::Invalid)
 }
@@ -378,7 +385,10 @@ pub enum Gated {
 /// that wants both needs one pass over the input instead of a [`refusals`] call and then a
 /// [`simulate`] call that gates it again. A refusal is a result here, not an error; invalid
 /// input is still [`PreparedError::Invalid`].
-pub fn simulate_gated(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Gated, PreparedError> {
+pub fn simulate_gated(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<Gated, PreparedError> {
     validate(prepared).map_err(PreparedError::Invalid)?;
     let refusals = refusals(prepared);
     if !refusals.is_empty() {
@@ -388,7 +398,10 @@ pub fn simulate_gated(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode
 }
 
 /// Simulate an input that is valid and that the gate supports.
-fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<PreparedReport, PreparedError> {
+fn run(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<PreparedReport, PreparedError> {
     if crate::core::fight::world_bridge::enabled() {
         crate::core::fight::world_bridge::start(&prepared.request_sha256);
     }

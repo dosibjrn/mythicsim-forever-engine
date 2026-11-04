@@ -38,14 +38,18 @@ pub(crate) struct BalancedRng {
 }
 impl BalancedRng {
     fn proc(&mut self, p: f64, key: &str) -> bool {
-        assert!(p.is_finite() && (0.0..=1.0).contains(&p),
-            "balanced RNG: probability must be finite and in [0,1]");
+        assert!(
+            p.is_finite() && (0.0..=1.0).contains(&p),
+            "balanced RNG: probability must be finite and in [0,1]"
+        );
         let (expected, successes) = self.binary.entry(key.to_owned()).or_default();
         *expected += p;
         let target = (*expected + 0.5).floor() as u64;
         // A single Bernoulli event can increase the rounded target by at most 1.
         let outcome = *successes < target;
-        if outcome { *successes += 1; }
+        if outcome {
+            *successes += 1;
+        }
         outcome
     }
     fn float(&self, _key: &str) -> f64 {
@@ -55,24 +59,34 @@ impl BalancedRng {
     }
 }
 #[derive(Clone, Copy)]
-pub(crate) enum RandomRequest { Uniform01, Bernoulli(f64) }
+pub(crate) enum RandomRequest {
+    Uniform01,
+    Bernoulli(f64),
+}
 
 /// Mandatory native runtime choice; never inferred from process environment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RngMode { Balanced, Stochastic }
+pub enum RngMode {
+    Balanced,
+    Stochastic,
+}
 
 impl RngMode {
     pub fn parse_cli(text: &str) -> Result<Self, String> {
         match text {
             "balanced" => Ok(Self::Balanced),
             "stochastic" => Ok(Self::Stochastic),
-            _ => Err(format!("invalid --rng-mode {text:?}; expected balanced or stochastic")),
+            _ => Err(format!(
+                "invalid --rng-mode {text:?}; expected balanced or stochastic"
+            )),
         }
     }
 }
 
-
-pub(crate) enum RandomOutcome { Float(f64), Bool(bool) }
+pub(crate) enum RandomOutcome {
+    Float(f64),
+    Bool(bool),
+}
 
 pub(crate) enum SimRng {
     Balanced(BalancedRng),
@@ -93,12 +107,12 @@ impl SimRng {
                     SimRng::Balanced(rng) => rng.float(label),
                     SimRng::Shared(rng) => rng.next_f64(),
                     SimRng::Labeled { seed, streams } => {
-                        if let Some((_,rng)) = streams.iter_mut().find(|(name,_)| name == label) {
+                        if let Some((_, rng)) = streams.iter_mut().find(|(name, _)| name == label) {
                             rng.next_f64()
                         } else {
-                            let mut rng = SplitMix64::new(labeled_seed(*seed,label));
+                            let mut rng = SplitMix64::new(labeled_seed(*seed, label));
                             let value = rng.next_f64();
-                            streams.push((label.to_owned(),rng));
+                            streams.push((label.to_owned(), rng));
                             value
                         }
                     }
@@ -110,9 +124,9 @@ impl SimRng {
                 // deterministic extremes before entering the quota sampler.
                 // Do NOT clamp NaN: it remains an explicit invalid threshold.
                 let value = match self {
-                    _ if p>=1.0 => true,
-                    _ if p<=0.0 => false,
-                    SimRng::Balanced(rng) => rng.proc(p,label),
+                    _ if p >= 1.0 => true,
+                    _ if p <= 0.0 => false,
+                    SimRng::Balanced(rng) => rng.proc(p, label),
                     _ => matches!(self.sample(RandomRequest::Uniform01,label),
                         RandomOutcome::Float(x) if x < p),
                 };
@@ -140,7 +154,7 @@ impl SimRng {
     pub(crate) fn reseed(&mut self, iteration_seed: u64) {
         match self {
             // Do NOT clear quotas between fights; else low-frequency procs are biased.
-            SimRng::Balanced(_) => {},
+            SimRng::Balanced(_) => {}
             SimRng::Shared(rng) => *rng = SplitMix64::new(iteration_seed),
             SimRng::Labeled { seed, streams } => {
                 *seed = iteration_seed;
@@ -209,54 +223,59 @@ mod wf652_balanced_tests {
     use super::*;
     #[test]
     fn continuous_uniform_is_expectation() {
-        let mut rng=SimRng::Balanced(BalancedRng::default());
+        let mut rng = SimRng::Balanced(BalancedRng::default());
         for _ in 0..100 {
-            assert_eq!(rng.next_f64("Damage Roll"),0.5);
+            assert_eq!(rng.next_f64("Damage Roll"), 0.5);
         }
     }
     #[test]
     fn bool_frequency_closest_to_cumulative_probability() {
-        let mut rng=BalancedRng::default();
-        for (p,n) in [(0.13,100u64),(0.72,100u64),(0.001,1000u64)] {
-            let key=format!("event-{p}");
-            let observed=(0..n).filter(|_|rng.proc(p,&key)).count();
-            assert!((observed as f64 - (n as f64)*p).abs() <= 0.500000001);
+        let mut rng = BalancedRng::default();
+        for (p, n) in [(0.13, 100u64), (0.72, 100u64), (0.001, 1000u64)] {
+            let key = format!("event-{p}");
+            let observed = (0..n).filter(|_| rng.proc(p, &key)).count();
+            assert!((observed as f64 - (n as f64) * p).abs() <= 0.500000001);
         }
     }
     #[test]
     fn variable_probability_and_label_isolation() {
-        let mut rng=BalancedRng::default();
-        let mut expected=0.0;
-        let mut observed=0u64;
+        let mut rng = BalancedRng::default();
+        let mut expected = 0.0;
+        let mut observed = 0u64;
         for i in 0..100 {
-            let p=(i%17) as f64 / 17.0;
-            expected+=p;
-            if rng.proc(p,"a"){observed+=1;}
-            assert!((observed as f64-expected).abs()<=0.500000001);
-            assert!(rng.proc(1.0,"b"));
-            assert!(!rng.proc(0.0,"c"));
+            let p = (i % 17) as f64 / 17.0;
+            expected += p;
+            if rng.proc(p, "a") {
+                observed += 1;
+            }
+            assert!((observed as f64 - expected).abs() <= 0.500000001);
+            assert!(rng.proc(1.0, "b"));
+            assert!(!rng.proc(0.0, "c"));
         }
     }
     #[test]
     fn quotas_persist_over_reseed() {
-        let mut rng=SimRng::Balanced(BalancedRng::default());
-        let mut observed=0;
+        let mut rng = SimRng::Balanced(BalancedRng::default());
+        let mut observed = 0;
         for i in 0..100 {
             rng.reseed(i);
-            if rng.proc(0.13,"rare") { observed+=1; }
+            if rng.proc(0.13, "rare") {
+                observed += 1;
+            }
         }
-        assert_eq!(observed,13);
+        assert_eq!(observed, 13);
     }
     #[test]
     fn mode_switch_independent_of_seed_for_balanced() {
         // Avoid mutating process-global env in this test. Explicit constructors
         // validate mode mechanics; CLI smoke validates env selection.
-        let mut a=SimRng::Balanced(BalancedRng::default());
-        let mut b=SimRng::Balanced(BalancedRng::default());
+        let mut a = SimRng::Balanced(BalancedRng::default());
+        let mut b = SimRng::Balanced(BalancedRng::default());
         for i in 0..100 {
-            a.reseed(i);b.reseed(i+10000);
-            assert_eq!(a.proc(0.23,"crit"),b.proc(0.23,"crit"));
-            assert_eq!(a.next_f64("damage"),b.next_f64("damage"));
+            a.reseed(i);
+            b.reseed(i + 10000);
+            assert_eq!(a.proc(0.23, "crit"), b.proc(0.23, "crit"));
+            assert_eq!(a.next_f64("damage"), b.next_f64("damage"));
         }
     }
 }
@@ -313,6 +332,9 @@ mod typed_rng_api_tests {
         }
         let mut stochastic_a = SimRng::new(RngMode::Stochastic, false, 101);
         let mut stochastic_b = SimRng::new(RngMode::Stochastic, false, 100001);
-        assert_ne!(stochastic_a.next_f64("damage"), stochastic_b.next_f64("damage"));
+        assert_ne!(
+            stochastic_a.next_f64("damage"),
+            stochastic_b.next_f64("damage")
+        );
     }
 }

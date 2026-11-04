@@ -17,7 +17,8 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -455,7 +456,8 @@ fn the_lobotomizer_rolls_its_literal_range() {
     assert!(proc.get("outcome").is_none());
     value["sim"]["iterations"] = json!(300);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let action = report.result["raidMetrics"]["parties"][0]["players"][0]["actions"]
         .as_array()
         .unwrap()

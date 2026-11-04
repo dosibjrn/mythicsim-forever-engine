@@ -288,7 +288,9 @@ fn concussion_blow_is_cast_under_forever_rules() {
         forever_engine::prepared_coverage(&prepared),
         Vec::<String>::new()
     );
-    let result = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
+    let result = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result;
     let casts: f64 = result["raidMetrics"]["parties"][0]["players"][0]["actions"]
         .as_array()
         .unwrap()

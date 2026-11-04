@@ -453,7 +453,10 @@ impl ShamanAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<ShamanAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<ShamanAgent>, String> {
         let auras: Vec<(String, ShamanAura)> = prepared
             .effects
             .iter()
@@ -552,16 +555,22 @@ impl ShamanAgent {
             })
             .collect();
         let spell = |exported: &ExportedSpell| ShamanAgent::spell(prepared, exported);
-        let mut fight = Fight::new(prepared, rng_mode, ShamanAgent::default(), spell, |unit, label| {
-            let auras = match unit {
-                "player" => &auras,
-                _ => &target_auras,
-            };
-            auras
-                .iter()
-                .find(|(name, _)| name == label)
-                .map(|(_, kind)| *kind)
-        })?;
+        let mut fight = Fight::new(
+            prepared,
+            rng_mode,
+            ShamanAgent::default(),
+            spell,
+            |unit, label| {
+                let auras = match unit {
+                    "player" => &auras,
+                    _ => &target_auras,
+                };
+                auras
+                    .iter()
+                    .find(|(name, _)| name == label)
+                    .map(|(_, kind)| *kind)
+            },
+        )?;
         let find = |fight: &Fight<ShamanAgent>, spell_id: i32, tag: i32| {
             fight
                 .spells

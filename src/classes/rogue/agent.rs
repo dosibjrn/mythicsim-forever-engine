@@ -227,7 +227,10 @@ impl RogueAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<RogueAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<RogueAgent>, String> {
         let auras: Vec<(String, RogueAura)> = prepared
             .effects
             .iter()
@@ -276,21 +279,27 @@ impl RogueAgent {
             )
             .collect();
         let spell = |exported: &ExportedSpell| RogueAgent::spell(prepared, exported);
-        let mut fight = Fight::new(prepared, rng_mode, RogueAgent::default(), spell, |unit, label| {
-            auras
-                .iter()
-                .find(|(name, kind)| {
-                    // Kidney Shot's stun and Expose Armor are the class auras on the target.
-                    let side = if matches!(kind, RogueAura::KidneyShotStun | RogueAura::ExposeArmor)
-                    {
-                        "target"
-                    } else {
-                        "player"
-                    };
-                    name == label && unit == side
-                })
-                .map(|(_, kind)| *kind)
-        })?;
+        let mut fight = Fight::new(
+            prepared,
+            rng_mode,
+            RogueAgent::default(),
+            spell,
+            |unit, label| {
+                auras
+                    .iter()
+                    .find(|(name, kind)| {
+                        // Kidney Shot's stun and Expose Armor are the class auras on the target.
+                        let side =
+                            if matches!(kind, RogueAura::KidneyShotStun | RogueAura::ExposeArmor) {
+                                "target"
+                            } else {
+                                "player"
+                            };
+                        name == label && unit == side
+                    })
+                    .map(|(_, kind)| *kind)
+            },
+        )?;
         let class_spell = |fight: &Fight<RogueAgent>, kind: RogueSpell| {
             fight.spells.iter().position(|spell| {
                 matches!(spell.behavior, crate::core::fight::SpellBehavior::Class(k) if k == kind)

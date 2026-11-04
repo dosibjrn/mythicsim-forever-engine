@@ -80,7 +80,9 @@ fn run(name: &str) -> (Value, Value) {
     let value = prepared(name, Rules::Forever);
     let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
     check_prepared(&prepared).unwrap_or_else(|error| panic!("{name}: {error:?}"));
-    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result;
     let player = result["raidMetrics"]["parties"][0]["players"][0].clone();
     assert!(player["dps"]["avg"].as_f64().unwrap() > 0.0, "{name}");
     (value, player)
@@ -234,7 +236,9 @@ fn spell_values_fold_as_go_builds_them() {
     .unwrap();
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap_or_else(|error| panic!("{name}: {error:?}"));
-    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result;
     assert!(
         result["raidMetrics"]["parties"][0]["players"][0]["dps"]["avg"]
             .as_f64()
@@ -331,7 +335,9 @@ fn run_request(value: &Value) -> Value {
     let prepared = prepare_json_with(value.to_string().as_bytes(), "rust", Rules::Forever).unwrap();
     let prepared: PreparedV2 = serde_json::from_value(prepared).unwrap();
     check_prepared(&prepared).unwrap_or_else(|error| panic!("{error:?}"));
-    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result;
     result["raidMetrics"]["parties"][0]["players"][0].clone()
 }
 
@@ -831,7 +837,9 @@ fn aura_uptime(player: &Value, spell_id: i64) -> f64 {
 fn run_prepared(value: &Value) -> Value {
     let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
     check_prepared(&prepared).unwrap_or_else(|error| panic!("{error:?}"));
-    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
+    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result
 }
 
 /// Beaststalker Armor (5) on an Enhancement Shaman (production sim 672e9c16, 2 November 2026):

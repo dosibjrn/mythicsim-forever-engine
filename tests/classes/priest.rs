@@ -196,7 +196,9 @@ fn power_in_light_needs_a_burning_dot() {
     let mut unlit = value.clone();
     effect(&mut unlit, "power_in_light")["dot_spells"] = json!([]);
     let dps = |value: Value| {
-        simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"]["dps"]["avg"]
+        simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic)
+            .unwrap()
+            .result["raidMetrics"]["dps"]["avg"]
             .as_f64()
             .unwrap()
     };

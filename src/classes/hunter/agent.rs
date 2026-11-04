@@ -269,7 +269,10 @@ pub(crate) fn spell_behavior(spell: &ExportedSpell) -> Option<HunterSpell> {
 
 impl HunterAgent {
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<HunterAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<HunterAgent>, String> {
         let auras = class_auras(prepared);
         let pet_aura_kinds = pet_auras(prepared);
         let abilities = pet_abilities(prepared);
@@ -311,17 +314,23 @@ impl HunterAgent {
                 _ => None,
             })
             .collect();
-        let mut fight = Fight::new(prepared, rng_mode, HunterAgent::default(), behavior, |unit, label| {
-            let list = match unit {
-                "player" => &auras,
-                "pet" => &pet_aura_kinds,
-                "target" => &target_auras,
-                _ => return None,
-            };
-            list.iter()
-                .find(|(name, _)| name == label)
-                .map(|(_, kind)| *kind)
-        })?;
+        let mut fight = Fight::new(
+            prepared,
+            rng_mode,
+            HunterAgent::default(),
+            behavior,
+            |unit, label| {
+                let list = match unit {
+                    "player" => &auras,
+                    "pet" => &pet_aura_kinds,
+                    "target" => &target_auras,
+                    _ => return None,
+                };
+                list.iter()
+                    .find(|(name, _)| name == label)
+                    .map(|(_, kind)| *kind)
+            },
+        )?;
         for (spell_id, ability) in &abilities {
             if let PetAbility::Bleed { tick_base, .. } = ability {
                 let spell = fight
