@@ -505,9 +505,10 @@ fn native_shaman_skill_eligible(
     skill_name: &str,
     level: i32,
 ) -> bool {
-    skills
-        .min_level(skill_name)
-        .is_some_and(|minimum_level| minimum_level <= level)
+    skills.has_skill_line(skill_name)
+        && skills
+            .min_level(skill_name)
+            .is_some_and(|minimum_level| minimum_level <= level)
 }
 
 fn native_shaman_weapon_skill_name(skill: super::weapon_skill::WeaponSkill) -> &'static str {
@@ -573,7 +574,7 @@ fn native_shaman_item_eligible(
             "ArmorTypeCloth" => native_shaman_skill_eligible(skills, "Cloth", level),
             "ArmorTypeLeather" => native_shaman_skill_eligible(skills, "Leather", level),
             "ArmorTypeMail" => native_shaman_skill_eligible(skills, "Mail", level),
-            "ArmorTypePlate" => native_shaman_skill_eligible(skills, "Plate", level),
+            "ArmorTypePlate" => native_shaman_skill_eligible(skills, "Plate Mail", level),
             "ArmorTypeShield" => native_shaman_skill_eligible(skills, "Shield", level),
             "ArmorTypeUnknown" | "" => true,
             // An unrecognized armor enum is not evidence of an equipable item.

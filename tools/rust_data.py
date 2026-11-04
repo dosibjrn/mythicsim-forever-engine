@@ -225,6 +225,8 @@ def check():
             errors.append("native Shaman equipment projection is empty")
         else:
             shaman_skills = load(shaman_skills_path)
+            if int(shaman_skills.get("schema_version", 0)) != 2:
+                errors.append("native Shaman equipment projection lacks the complete SkillLine name index")
             if shaman_skills.get("class") != "shaman" or int(shaman_skills.get("class_id", 0)) != 7:
                 errors.append("native Shaman equipment projection has the wrong class identity")
             if int(shaman_skills.get("class_mask", 0)) != 64:
@@ -233,10 +235,34 @@ def check():
                 errors.append("native Shaman equipment projection has the wrong client build")
             if shaman_skills.get("race_policy") != "class-wide only; SkillRaceClassInfo race mask must be unrestricted":
                 errors.append("native Shaman equipment projection has an unknown race policy")
+            skill_line_ids = shaman_skills.get("skill_line_ids", [])
+            skill_line_names = shaman_skills.get("skill_line_names", [])
+            indexed_skill_ids = [int(line["skill_id"]) for line in skill_line_names]
+            if (
+                not skill_line_ids
+                or skill_line_ids != sorted(set(int(value) for value in skill_line_ids))
+                or indexed_skill_ids != skill_line_ids
+                or len({line["name"] for line in skill_line_names}) < 1
+            ):
+                errors.append("native Shaman equipment projection has an incomplete SkillLine name index")
+            skill_names_by_id = {
+                int(line["skill_id"]): line["name"] for line in skill_line_names
+            }
+            required_skill_lines = {
+                "Axes", "Swords", "Maces", "Daggers", "Fist Weapons",
+                "Two-Handed Axes", "Two-Handed Swords", "Two-Handed Maces",
+                "Polearms", "Staves", "Bows", "Guns", "Crossbows", "Thrown",
+                "Cloth", "Leather", "Mail", "Plate Mail", "Shield",
+            }
+            if not required_skill_lines.issubset({line["name"] for line in skill_line_names}):
+                errors.append("native Shaman equipment projection is missing an equipment SkillLine name")
             skills = shaman_skills.get("skills", [])
             skill_ids = [int(skill["skill_id"]) for skill in skills]
             if not skills or len(skill_ids) != len(set(skill_ids)):
                 errors.append("native Shaman equipment projection has no skills or duplicate skill IDs")
+            for skill in skills:
+                if skill_names_by_id.get(int(skill["skill_id"])) != skill.get("name"):
+                    errors.append(f"native Shaman skill {skill.get('name')} does not match the SkillLine index")
             for skill in skills:
                 if skill.get("min_level") is not None and (
                     not skill.get("race_unrestricted")
