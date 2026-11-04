@@ -108,7 +108,9 @@ impl Rogue {
 
     /// Go `registerEviscerate`.
     pub(super) fn register_eviscerate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().eviscerate.highest_at_level(sim.unit(unit).level);
+        let rank = spell_data()
+            .eviscerate
+            .highest_at_level(sim.unit(unit).level);
         if rank.is_nil() {
             return;
         }
@@ -136,7 +138,9 @@ impl Rogue {
     /// Go `registerExposeArmorSpell`: Forever repurposes Improved Expose Armor, whose combo
     /// points handed back on a full spend live in the cast.
     pub(super) fn register_expose_armor_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().expose_armor.highest_at_level(sim.unit(unit).level);
+        let rank = spell_data()
+            .expose_armor
+            .highest_at_level(sim.unit(unit).level);
         if rank.is_nil() {
             return;
         }
@@ -165,7 +169,9 @@ impl Rogue {
     /// Go `registerKidneyShot`: it stuns for a second and a second a combo point, and raises the
     /// damage the target takes from the rogue with Improved Kidney Shot.
     pub(super) fn register_kidney_shot(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().kidney_shot.highest_at_level(sim.unit(unit).level);
+        let rank = spell_data()
+            .kidney_shot
+            .highest_at_level(sim.unit(unit).level);
         if rank.is_nil() {
             return;
         }
@@ -303,7 +309,9 @@ impl Rogue {
 
     /// Go `registerSinisterStrikeSpell`.
     pub(super) fn register_sinister_strike_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().sinister_strike.highest_at_level(sim.unit(unit).level);
+        let rank = spell_data()
+            .sinister_strike
+            .highest_at_level(sim.unit(unit).level);
         if rank.is_nil() {
             return;
         }
@@ -331,7 +339,9 @@ impl Rogue {
         let rank = if sim.unit(unit).level == 60 {
             spell_data().slice_and_dice.by_id(6774)
         } else {
-            spell_data().slice_and_dice.highest_at_level(sim.unit(unit).level)
+            spell_data()
+                .slice_and_dice
+                .highest_at_level(sim.unit(unit).level)
         };
         if rank.is_nil() {
             return;
@@ -480,9 +490,16 @@ mod native_level_rank_tests {
     fn rogue_l20_uses_actual_client_learnable_rank_not_l60_rank() {
         let ladder = &spell_data().sinister_strike;
         let rank = ladder.highest_at_level(20);
-        assert!(!rank.is_nil(), "native Sinister Strike must have a learnable L20 rank");
+        assert!(
+            !rank.is_nil(),
+            "native Sinister Strike must have a learnable L20 rank"
+        );
         assert!(rank.spell_level > 0 && i32::from(rank.spell_level) <= 20);
-        assert_ne!(rank.id, ladder.highest().id, "L60 rank must not leak into L20");
+        assert_ne!(
+            rank.id,
+            ladder.highest().id,
+            "L60 rank must not leak into L20"
+        );
         assert_eq!(ladder.highest_at_level(60).id, ladder.highest().id);
     }
 }
