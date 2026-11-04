@@ -8,6 +8,11 @@ on:
       - tools/import_paladin_equipment.py
       - tools/import_rogue_equipment.py
       - tools/import_rogue_equipment_test.py
+      - src/data.rs
+      - src/prepare/items.rs
+      - data/rogue-equipment-skills.json
+      - data/rogue-equipment-skills.manifest.json
+      - data/manifest.json
   workflow_dispatch:
 
 permissions:
@@ -54,6 +59,29 @@ jobs:
           print("ROGUE_MAIN_MANIFEST_START", flush=True)
           print(Path("data/manifest.json").read_text().strip(), flush=True)
           print("ROGUE_MAIN_MANIFEST_END", flush=True)
+          PY
+      - name: Verify deterministic Rogue DB2 projection against committed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- data/manifest.json data/rogue-equipment-skills.json data/rogue-equipment-skills.manifest.json
+      - name: Run focused native Rogue L20 item-options contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked rogue_l20_options_use_pinned_client_skills_and_required_levels -- --nocapture
+          cargo run --locked -- item-options --class rogue --level 20 --spec unrestricted --slot all > /tmp/rogue-native-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("/tmp/rogue-native-options.json").read_text())
+          assert data["class"] == "rogue" and data["level"] == 20, data
+          assert data["status"] == "ok", data.get("refusal")
+          assert data["required_level_supported"] and data["items"], data
+          assert data["unverified_candidate_count"] == 0, data
+          assert all(item["required_level"] <= 20 for item in data["items"]), data
+          print("ROGUE_L20_NATIVE_OPTIONS", len(data["items"]),
+                "excluded_non_client", data["excluded_non_client_item_count"], flush=True)
           PY
       - name: Upload canonical source projection and manifests
         if: always()
