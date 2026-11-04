@@ -187,7 +187,6 @@ jobs:
           retention-days: 7
 
       - name: Commit the source-backed native availability snapshot
-        env:
         shell: bash
         run: |
           set -euo pipefail
