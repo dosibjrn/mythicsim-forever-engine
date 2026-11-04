@@ -96,7 +96,9 @@ fn first_fight_log(request: &Value, seconds: f64, targets: usize) -> String {
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result["logs"]
+    simulate_prepared(&prepared, RngMode::Stochastic)
+        .unwrap()
+        .result["logs"]
         .as_str()
         .unwrap()
         .to_string()
