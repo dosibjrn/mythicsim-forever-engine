@@ -19,7 +19,6 @@
 
 use crate::contracts::prepared_v2::{ActionId, CritAbsorb, LitanyOfLight, RenewedHope, SmartHeal};
 use crate::core::time::NS_PER_SECOND;
-use crate::prepare::character::constants::CHARACTER_LEVEL;
 use crate::prepare::heals::{
     apply_heal_talent, register_channel_heal, register_heal, register_heal_from, talent_rank,
     ChannelHeal, HealShape,
@@ -30,7 +29,7 @@ use crate::prepare::spell::{ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::spelldata::store::must_find;
 use crate::prepare::spelldata::{Ladder, Spell as Row};
 
-use super::masks;
+use super::{masks, spells::rank_available_at_level};
 use super::Priest;
 
 const LESSER_HEAL: &[i32] = &[2050, 2052, 2053];
@@ -120,6 +119,7 @@ impl Priest {
     /// Registers every heal rank the healer knows.
     pub(super) fn register_heals(&mut self, sim: &mut Sim, unit: UnitId) {
         let mut ranks = Vec::new();
+        let level = sim.unit(unit).level;
         // Divine Aegis under Forever's rules: its absorb counts on its own spell, and each heal
         // that is not a heal over time carries its share.
         let aegis = self.divine_aegis(sim, unit);
@@ -130,7 +130,11 @@ impl Priest {
                         aegis: Option<CritAbsorb>| {
             let timer = shared_cd.then(|| sim.new_timer(unit));
             for &id in ids {
-                let mut rank = register_heal(sim, unit, must_find(id), masks::HEAL, shape, timer);
+                let row = must_find(id);
+                if !rank_available_at_level(row, level) {
+                    continue;
+                }
+                let mut rank = register_heal(sim, unit, row, masks::HEAL, shape, timer);
                 rank.crit_absorb = aegis;
                 ranks.push(rank);
             }
@@ -179,8 +183,11 @@ impl Priest {
             let timer = sim.new_timer(unit);
             for &id in PENANCE {
                 let row = must_find(id);
+                if !rank_available_at_level(row, level) {
+                    continue;
+                }
                 let bolt = row.refs()[1].heal_effect();
-                let amount = bolt.average(CHARACTER_LEVEL);
+                let amount = bolt.average(level);
                 let mut rank = register_channel_heal(
                     sim,
                     unit,
@@ -209,6 +216,9 @@ impl Priest {
             let timer = sim.new_timer(unit);
             for &id in PRAYER_OF_MENDING {
                 let row = must_find(id);
+                if !rank_available_at_level(row, level) {
+                    continue;
+                }
                 let shape = HealShape::party(PRAYER_OF_MENDING_CHARGES).smart(SmartHeal::Mending {
                     charges: PRAYER_OF_MENDING_CHARGES,
                     duration: mending_duration(row),
