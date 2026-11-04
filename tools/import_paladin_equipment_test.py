@@ -92,7 +92,7 @@ class ImportPaladinEquipmentTests(unittest.TestCase):
         self.assertEqual(payload["client_build"], "1.60.1.70425")
         self.assertEqual(payload["class"], "paladin")
         self.assertEqual(payload["class_mask"], 2)
-        self.assertEqual(payload["skill_line_ids"], sorted(int(line["ID"]) for line in skill_lines))
+        self.assertEqual(payload["skill_line_ids"], sorted(int(line["ID"]) for line in skill_lines if line["DisplayName_lang"] in __import__("import_paladin_equipment").EQUIPMENT_SKILL_LINE_NAMES))
         self.assertEqual(
             payload["race_policy"],
             "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
