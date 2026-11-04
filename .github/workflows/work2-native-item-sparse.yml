@@ -1,0 +1,109 @@
+name: Work2 native ItemSparse source import
+
+on:
+  push:
+    branches:
+      - work/work2-priest-p3-native-item-options-isolated-20261104
+    paths:
+      - ".github/workflows/work2-native-item-sparse.yml"
+      - "src/**"
+      - "tools/import_item_sparse.py"
+      - "tools/import_item_sparse_test.py"
+      - "tools/rust_data.py"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: work2-item-sparse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  import-native-required-levels:
+    if: github.ref_name == 'work/work2-priest-p3-native-item-options-isolated-20261104'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout the exact Work2 commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: true
+
+      - name: Download the pinned client's ItemSparse table
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD="$(python3 -c 'import json; print(json.load(open("data/manifest.json"))["client_build"])')"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --header 'User-Agent: forever-engine-native-item-options/1.0' \
+            "https://wago.tools/db2/ItemSparse/csv?build=${BUILD}" \
+            --output /tmp/ItemSparse.csv
+          echo "Imported source build: ${BUILD}"
+
+      - name: Project source RequiredLevel values onto native item IDs
+        run: python3 tools/import_item_sparse.py /tmp/ItemSparse.csv
+
+      - name: Test the ItemSparse importer and verify the pinned data manifest
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools -p 'import_item_sparse_test.py'
+          python3 tools/rust_data.py check
+
+      - name: Install Rust from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: false
+
+      - name: Check the changed native Rust files and run contract tests
+        run: |
+          rustfmt --edition 2021 --check src/data.rs src/prepare/items.rs
+          cargo test --locked native_item_options_contract_tests -- --nocapture
+          cargo test --locked parses_native_item_required_levels_without_inferring_from_item_level -- --nocapture
+
+      - name: Verify Priest and Mage L20 native item options
+        shell: bash
+        run: |
+          set -euo pipefail
+          for CLASS in priest mage; do
+            cargo run --locked -- item-options --class "${CLASS}" --level 20 --spec unrestricted --slot all \
+              > "/tmp/${CLASS}-item-options.json"
+            python3 - "${CLASS}" "/tmp/${CLASS}-item-options.json" <<'PY'
+          import json
+          import sys
+          class_name, path = sys.argv[1:]
+          result = json.load(open(path, encoding="utf-8"))
+          assert result["status"] in {"ok", "partial_level_unknown"}, (class_name, result.get("refusal"))
+          assert result["required_level_supported"] is True
+          items = result["items"]
+          assert items, f"{class_name} L20 returned no native ItemSparse options"
+          assert isinstance(result["unverified_candidate_count"], int)
+          assert result["unverified_candidate_count"] >= 0
+          assert all(item["required_level"] <= 20 for item in items)
+          assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in items)
+          key = lambda item: (-(item["item_level"] if item["item_level"] is not None else -1), item["item_id"])
+          assert [item["item_id"] for item in items] == [
+              item["item_id"] for item in sorted(items, key=key)
+          ]
+          if result["status"] == "partial_level_unknown":
+              assert result["unverified_candidate_count"] > 0
+          print(f"{class_name} L20: {len(items)} source-backed candidates; {result['unverified_candidate_count']} client items with unknown RequiredLevel; {result['absent_from_client_build_count']} native candidates absent from this client build")
+          PY
+          done
+
+      - name: Commit the pinned native ItemSparse projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/item-required-levels.jsonl data/item-required-levels.manifest.json data/manifest.json
+          if git diff --cached --quiet; then
+            echo "Native ItemSparse projection is already current"
+            exit 0
+          fi
+          git commit -m "data(native): import pinned ItemSparse required levels"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
