@@ -44,7 +44,7 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         manifest = json.loads((data / "shaman-equipment-skills.manifest.json").read_text(encoding="utf-8"))
         return summary, payload, manifest, json.loads((data / "manifest.json").read_text(encoding="utf-8"))
 
-    def row(self, row_id, skill_id, race_mask, class_mask=64, min_level=1, availability=1):
+    def row(self, row_id, skill_id, race_mask, class_mask=64, min_level=1, availability=1, race_mask_high=-1):
         return {
             "ID": row_id,
             "SkillID": skill_id,
@@ -54,40 +54,37 @@ class ImportShamanEquipmentTests(unittest.TestCase):
             "MinLevel": min_level,
             "SkillTierID": 0,
             "RaceMasks_0": race_mask,
-            "RaceMasks_1": 0,
+            "RaceMasks_1": race_mask_high,
         }
 
-    def test_class_wide_min_level_uses_all_shaman_races(self):
+    def test_class_wide_min_level_uses_only_unrestricted_race_rows(self):
         skill_lines = [
-            {"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 7},
-            {"ID": 172, "DisplayName_lang": "Two-Handed Axes", "CategoryID": 7},
-            {"ID": 45, "DisplayName_lang": "Leather", "CategoryID": 6},
-            {"ID": 46, "DisplayName_lang": "Mail", "CategoryID": 6},
-            {"ID": 415, "DisplayName_lang": "Cloth", "CategoryID": 6},
-            {"ID": 55, "DisplayName_lang": "Shields", "CategoryID": 6},
+            {"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 6},
+            {"ID": 172, "DisplayName_lang": "Two-Handed Axes", "CategoryID": 6},
+            {"ID": 45, "DisplayName_lang": "Leather", "CategoryID": 8},
+            {"ID": 46, "DisplayName_lang": "Mail", "CategoryID": 8},
+            {"ID": 415, "DisplayName_lang": "Cloth", "CategoryID": 8},
+            {"ID": 55, "DisplayName_lang": "Shield", "CategoryID": 8},
             {"ID": 182, "DisplayName_lang": "Totems", "CategoryID": 7},
-            {"ID": 43, "DisplayName_lang": "Swords", "CategoryID": 7},
+            {"ID": 43, "DisplayName_lang": "Swords", "CategoryID": 6},
         ]
-        rows = []
-        row_id = 1
-        for skill_id, min_level in ((44, 1), (172, 20)):
-            for race_mask in (2, 32, 128):
-                rows.append(self.row(row_id, skill_id, race_mask, min_level=min_level))
-                row_id += 1
-        for skill_id, min_level in ((45, 1), (46, 40), (55, 1), (182, 1)):
-            rows.append(self.row(row_id, skill_id, 162, min_level=min_level))
-            row_id += 1
-        rows.append(self.row(row_id, 415, 0, class_mask=0, min_level=0))
-        row_id += 1
-        # A race-restricted skill is not widened to every Shaman.
-        rows.extend([
-            self.row(row_id, 43, 2),
-            self.row(row_id + 1, 43, 32),
+        all_races = -1
+        rows = [
+            self.row(1, 44, all_races, min_level=1),
+            self.row(2, 172, all_races, min_level=20),
+            self.row(3, 45, all_races, min_level=1),
+            # Availability=0 means not granted automatically at character creation;
+            # MinLevel still records the class's trainer-gated proficiency threshold.
+            self.row(4, 46, all_races, min_level=40, availability=0),
+            self.row(5, 415, 0, class_mask=0, min_level=0),
+            self.row(6, 55, all_races, min_level=1),
+            self.row(7, 182, all_races, min_level=1),
+            # Race-restricted rows are not widened into class-wide access.
+            self.row(8, 43, 2, race_mask_high=0),
+            self.row(9, 43, 32, race_mask_high=0),
             # A non-Shaman class row must not affect the projection.
-            self.row(row_id + 2, 43, 128, class_mask=256),
-            # Unavailable rows must not be treated as learned proficiencies.
-            self.row(row_id + 3, 43, 162, availability=0),
-        ])
+            self.row(10, 43, all_races, class_mask=256),
+        ]
 
         summary, payload, manifest, main_manifest = self.run_import(skill_lines, rows)
         skills = {skill["name"]: skill for skill in payload["skills"]}
@@ -95,48 +92,58 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         self.assertEqual(payload["client_build"], "1.60.1.70425")
         self.assertEqual(payload["class"], "shaman")
         self.assertEqual(payload["class_mask"], 64)
-        self.assertEqual(payload["race_mask"], 162)
-        self.assertEqual(payload["race_ids"], [2, 6, 8])
+        self.assertEqual(
+            payload["race_policy"],
+            "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
+        )
         self.assertEqual(skills["Axes"]["min_level"], 1)
         self.assertEqual(skills["Two-Handed Axes"]["min_level"], 20)
         self.assertEqual(skills["Leather"]["min_level"], 1)
         self.assertEqual(skills["Mail"]["min_level"], 40)
+        self.assertEqual(skills["Mail"]["availability_values"], [0])
         self.assertEqual(skills["Cloth"]["min_level"], 1)
-        self.assertEqual(skills["Shields"]["min_level"], 1)
+        self.assertEqual(skills["Shield"]["min_level"], 1)
         self.assertEqual(skills["Totems"]["min_level"], 1)
         self.assertIsNone(skills["Swords"]["min_level"])
-        self.assertEqual(skills["Swords"]["per_race_min_level"], {"2": 1, "6": 1, "8": None})
+        self.assertFalse(skills["Swords"]["race_unrestricted"])
         self.assertEqual(summary["class_wide_skill_count"], 7)
-        self.assertEqual(summary["unavailable_skill_race_class_row_count"], 1)
+        self.assertEqual(summary["race_specific_or_unavailable_skill_count"], 1)
         self.assertEqual(manifest["source"]["client_build"], "1.60.1.70425")
         self.assertIn("shaman-equipment-skills.json", main_manifest["files"])
         self.assertIn("shaman-equipment-skills.manifest.json", main_manifest["files"])
 
-    def test_supports_split_64_bit_race_masks(self):
-        skill_lines = [{"ID": 136, "DisplayName_lang": "Staves", "CategoryID": 7}]
-        rows = [self.row(1, 136, 2)]
-        rows[0]["RaceMasks_1"] = 1
+    def test_supports_split_64_bit_race_masks_without_widening(self):
+        skill_lines = [{"ID": 136, "DisplayName_lang": "Staves", "CategoryID": 6}]
+        rows = [self.row(1, 136, 2, race_mask_high=1)]
         summary, payload, _, _ = self.run_import(skill_lines, rows)
-        self.assertEqual(payload["race_mask"], (1 << 32) | 2)
-        self.assertEqual(payload["race_ids"], [2, 33])
-        self.assertEqual(payload["skills"][0]["min_level"], 1)
+        self.assertIsNone(payload["skills"][0]["min_level"])
+        self.assertFalse(payload["skills"][0]["race_unrestricted"])
+        self.assertEqual(summary["race_specific_or_unavailable_skill_count"], 1)
+
+    def test_accepts_both_zero_and_all_bits_as_unrestricted_race_masks(self):
+        skill_lines = [
+            {"ID": 136, "DisplayName_lang": "Staves", "CategoryID": 6},
+            {"ID": 45, "DisplayName_lang": "Leather", "CategoryID": 8},
+        ]
+        rows = [
+            self.row(1, 136, 0, race_mask_high=0),
+            self.row(2, 45, 4294967295, race_mask_high=4294967295),
+        ]
+        _, payload, _, _ = self.run_import(skill_lines, rows)
+        skills = {skill["name"]: skill for skill in payload["skills"]}
+        self.assertEqual(skills["Staves"]["min_level"], 1)
+        self.assertEqual(skills["Leather"]["min_level"], 1)
 
     def test_rejects_missing_skill_line_reference(self):
-        skill_lines = [{"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 7}]
-        rows = [self.row(1, 999, 0)]
+        skill_lines = [{"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 6}]
+        rows = [self.row(1, 999, -1)]
         with self.assertRaisesRegex(ValueError, "missing SkillLine ID 999"):
             self.run_import(skill_lines, rows)
 
-    def test_rejects_source_without_available_shaman_rows(self):
-        skill_lines = [{"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 7}]
-        rows = [self.row(1, 44, 0, class_mask=256)]
-        with self.assertRaisesRegex(ValueError, "no available rows for Shaman"):
-            self.run_import(skill_lines, rows)
-
-    def test_rejects_unavailable_only_shaman_rows(self):
-        skill_lines = [{"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 7}]
-        rows = [self.row(1, 44, 0, availability=0)]
-        with self.assertRaisesRegex(ValueError, "no available rows for Shaman"):
+    def test_rejects_source_without_shaman_rows(self):
+        skill_lines = [{"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 6}]
+        rows = [self.row(1, 44, -1, class_mask=256)]
+        with self.assertRaisesRegex(ValueError, "no rows for Shaman"):
             self.run_import(skill_lines, rows)
 
 
