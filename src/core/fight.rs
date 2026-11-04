@@ -5808,12 +5808,19 @@ impl<A: Agent> Fight<A> {
                 let next_at = killed_at
                     .checked_add(12 * crate::core::time::NS_PER_SECOND)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                // The new target is selected before the paid travel/rest
+                // interval, so every 2D movement step can be observed by the
+                // native boundary while attacks remain paused.
+                let world_started_at = killed_at
+                    .checked_add(1_000_000)
+                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                world_bridge::begin_next_target(world_started_at)?;
                 native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
                 native_recovery_elapsed_ns = next_at - killed_at;
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
-                self.begin_next_target(next_at, next_end)?;
+                self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
             while self.step() {}
             if !world_bridge::acknowledged_lethal() {
@@ -5924,19 +5931,45 @@ impl<A: Agent> Fight<A> {
             return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
         }
         let mut ticks = 0;
-        while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
-            until_ns,
-            |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }),
-        ) {
-            if at > self.now {
-                self.advance_to(at);
+        // Follow the live 2D clock through travel. A single 12-second jump
+        // would skip the actual SpatialPlayerMoveStep observations and lose
+        // native moving/cast-legality receipts even though gsim paid the route.
+        // No native attacks are allowed while the actor recovers.
+        let mut boundary = self.now;
+        while boundary < until_ns {
+            boundary = boundary
+                .saturating_add(100_000_000)
+                .min(until_ns);
+            while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
+                boundary,
+                |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }),
+            ) {
+                if at > self.now {
+                    self.advance_to(at);
+                }
+                if self.handle_still_valid(handle, &action) {
+                    self.run_action(handle, action);
+                    ticks += 1;
+                }
             }
-            if self.handle_still_valid(handle, &action) {
-                self.run_action(handle, action);
-                ticks += 1;
+            self.advance_to(boundary);
+            if world_bridge::enabled() {
+                let (distance, front, moving) =
+                    world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken);
+                if distance != self.config.distance {
+                    self.config.distance = distance;
+                    self.changed(reads::CASTS);
+                }
+                if self.config.melee.in_front_of_target != front {
+                    self.config.melee.in_front_of_target = front;
+                    self.changed(reads::CASTS);
+                }
+                if self.player.moving != moving {
+                    self.player.moving = moving;
+                    self.changed(reads::CASTS);
+                }
             }
         }
-        self.advance_to(until_ns);
         Ok(ticks)
     }
 
@@ -5964,10 +5997,19 @@ impl<A: Agent> Fight<A> {
         at_ns: i64,
         next_end_ns: i64,
     ) -> Result<(), &'static str> {
+        self.begin_next_target_with_bridge(at_ns, next_end_ns, true)
+    }
+
+    fn begin_next_target_with_bridge(
+        &mut self,
+        at_ns: i64,
+        next_end_ns: i64,
+        start_world_target: bool,
+    ) -> Result<(), &'static str> {
         if !self.accepts_next_target_clock(at_ns, next_end_ns, world_bridge::enabled()) {
             return Err("RUST_NEXT_TARGET_CLOCK_INVALID");
         }
-        if world_bridge::enabled() {
+        if world_bridge::enabled() && start_world_target {
             world_bridge::begin_next_target(at_ns)?;
         }
         self.advance_to(at_ns);
