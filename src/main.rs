@@ -1,7 +1,8 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, get_options, OptionsClass, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
-    PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, get_options,
+    native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
+    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -176,9 +177,14 @@ fn run() -> Result<(), Failure> {
             return Err("options requires --class CLASS --level LEVEL".into());
         }
         let class: OptionsClass = args[2].parse()?;
-        let level: u8 = args[4].parse().map_err(|_| "options level must be an integer 1..=60")?;
+        let level: u8 = args[4]
+            .parse()
+            .map_err(|_| "options level must be an integer 1..=60")?;
         let options = get_options(level, class)?;
-        println!("{}", serde_json::to_string_pretty(&options).map_err(|err| err.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&options).map_err(|err| err.to_string())?
+        );
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
@@ -187,10 +193,17 @@ fn run() -> Result<(), Failure> {
     }
 
     if args[0] == "native-world-pulls" {
-        if args.len() != 7 || args[1] != "--infile" || args[3] != "--targets" || args[5] != "--rng-mode" {
-            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into());
+        if args.len() != 7
+            || args[1] != "--infile"
+            || args[3] != "--targets"
+            || args[5] != "--rng-mode"
+        {
+            return Err(
+                "native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into(),
+            );
         }
-        let target_count = args[4].parse::<usize>()
+        let target_count = args[4]
+            .parse::<usize>()
             .map_err(|_| "native-world-pulls target count must be an integer")?;
         if !(2..=100).contains(&target_count) {
             return Err("native-world-pulls requires --targets 2..100".into());
