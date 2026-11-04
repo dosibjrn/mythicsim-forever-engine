@@ -5870,10 +5870,20 @@ impl<A: Agent> Fight<A> {
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
+        // Count only native scheduler regeneration actually paid on the
+        // retained actor between ACKed world kills. Time alone, an assumed
+        // refill or a completed movement schedule is not regeneration proof.
+        let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
+            window["native_passive_recovery_ns"]
+                .as_i64().is_some_and(|ns| ns > 0)
+                && window["native_passive_recovery_ticks"]
+                    .as_u64().is_some_and(|ticks| ticks > 0)
+        });
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
-            "paid_recovery": false, "world_targets_killed": target_count,
+            "paid_recovery": native_passive_recovery_paid,
+            "world_targets_killed": target_count,
             "windows": windows,
         });
         self.cleanup();
