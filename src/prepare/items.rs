@@ -472,13 +472,21 @@ fn parse_source_required_levels(source: &str) -> HashMap<i32, SourceRequiredLeve
         let item_id = fields
             .next()
             .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or_else(|| panic!("item availability line {} has an invalid item id", line_index + 1));
+            .unwrap_or_else(|| {
+                panic!(
+                    "item availability line {} has an invalid item id",
+                    line_index + 1
+                )
+            });
         let raw_level = fields.next().unwrap_or("");
         let origin_code = fields.next().unwrap_or("");
         let evidence = match origin_code {
             "0" => Some(SourceRequiredLevel {
                 required_level: Some(raw_level.parse::<i32>().unwrap_or_else(|_| {
-                    panic!("item availability line {} has an invalid observed required level", line_index + 1)
+                    panic!(
+                        "item availability line {} has an invalid observed required level",
+                        line_index + 1
+                    )
                 })),
                 origin: "observed",
             }),
@@ -488,7 +496,10 @@ fn parse_source_required_levels(source: &str) -> HashMap<i32, SourceRequiredLeve
             }),
             // Median/interpolated values are not legality evidence.
             "1" | "2" => None,
-            other => panic!("item availability line {} has unknown origin code {other}", line_index + 1),
+            other => panic!(
+                "item availability line {} has unknown origin code {other}",
+                line_index + 1
+            ),
         };
         if let Some(evidence) = evidence {
             assert!(
@@ -757,7 +768,7 @@ mod native_item_options_contract_tests {
     #[test]
     fn only_source_observed_or_confirmed_absence_rows_are_legality_evidence() {
         let levels = parse_source_required_levels(
-            "10\\t20\\t0\\t\\n11\\t15\\t1\\t\\n12\\t0\\t3\\t\\n",
+            "10\t20\t0\t\n11\t15\t1\t\n12\t0\t3\t\n",
         );
         assert_eq!(
             levels.get(&10),
@@ -796,7 +807,7 @@ mod native_item_options_contract_tests {
             );
             assert!(response.items.iter().all(|item| {
                 item.required_level
-                    .is_none_or(|required_level| required_level <= 20)
+                    .map_or(true, |required_level| required_level <= 20)
                     && matches!(
                         item.required_level_origin.as_str(),
                         "observed" | "source_confirmed_no_requirement"
