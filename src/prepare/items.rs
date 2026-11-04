@@ -437,8 +437,10 @@ pub struct NativeItemOptionsResponse {
     pub slot: String,
     pub source: String,
     pub required_level_supported: bool,
-    /// Native candidates excluded because the pinned ItemSparse row has no RequiredLevel.
+    /// Legacy candidates excluded because a possible item has no pinned ItemSparse RequiredLevel row.
     pub unverified_candidate_count: usize,
+    /// Shaman-only: MythicSim catalogue rows absent from the complete pinned client ItemSparse table.
+    pub excluded_non_client_item_count: usize,
     pub items: Vec<NativeItemOption>,
     pub refusal: Option<NativeItemOptionsRefusal>,
 }
@@ -498,7 +500,96 @@ fn native_item_matches_slot(item: &Item, source_slot: &str, requested_slot: &str
     }
 }
 
-fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bool {
+fn native_shaman_skill_eligible(
+    skills: &data::ShamanEquipmentSkills,
+    skill_name: &str,
+    level: i32,
+) -> bool {
+    skills.has_skill_line(skill_name)
+        && skills
+            .min_level(skill_name)
+            .is_some_and(|minimum_level| minimum_level <= level)
+}
+
+fn native_shaman_weapon_skill_name(skill: super::weapon_skill::WeaponSkill) -> &'static str {
+    use super::weapon_skill::WeaponSkill::*;
+    match skill {
+        Axes => "Axes",
+        Swords => "Swords",
+        Maces => "Maces",
+        Daggers => "Daggers",
+        Unarmed => "Fist Weapons",
+        TwoHandedAxes => "Two-Handed Axes",
+        TwoHandedSwords => "Two-Handed Swords",
+        TwoHandedMaces => "Two-Handed Maces",
+        Polearms => "Polearms",
+        Staves => "Staves",
+        Bows => "Bows",
+        Guns => "Guns",
+        Crossbows => "Crossbows",
+        Thrown => "Thrown",
+    }
+}
+
+fn native_shaman_weapon_eligible(
+    item: &Item,
+    level: i32,
+    skills: &data::ShamanEquipmentSkills,
+) -> bool {
+    super::weapon_skill::weapon_skill_of(item).is_some_and(|skill| {
+        native_shaman_skill_eligible(skills, native_shaman_weapon_skill_name(skill), level)
+    })
+}
+
+fn native_shaman_item_eligible(
+    item: &Item,
+    level: i32,
+    skills: &data::ShamanEquipmentSkills,
+) -> bool {
+    match item.item_type.as_str() {
+        "ItemTypeWeapon" => match item.weapon_type.as_str() {
+            "WeaponTypeShield" => native_shaman_skill_eligible(skills, "Shield", level),
+            // Generic off-hand items have no weapon proficiency; their native class allowlist
+            // is still enforced by native_item_class_eligible below.
+            "WeaponTypeOffHand" => true,
+            _ => native_shaman_weapon_eligible(item, level, skills),
+        },
+        "ItemTypeRanged" => {
+            if matches!(
+                item.ranged_weapon_type.as_str(),
+                "RangedWeaponTypeIdol"
+                    | "RangedWeaponTypeLibram"
+                    | "RangedWeaponTypeTotem"
+                    | "RangedWeaponTypeSigil"
+            ) {
+                // Relics have no weapon skill line. Require an explicit native Shaman allowlist.
+                item.class_allowlist
+                    .iter()
+                    .any(|allowed| allowed == "ClassShaman")
+            } else {
+                native_shaman_weapon_eligible(item, level, skills)
+            }
+        }
+        _ => match item.armor_type.as_str() {
+            "ArmorTypeCloth" => native_shaman_skill_eligible(skills, "Cloth", level),
+            "ArmorTypeLeather" => native_shaman_skill_eligible(skills, "Leather", level),
+            "ArmorTypeMail" => native_shaman_skill_eligible(skills, "Mail", level),
+            "ArmorTypePlate" => native_shaman_skill_eligible(skills, "Plate Mail", level),
+            "ArmorTypeShield" => native_shaman_skill_eligible(skills, "Shield", level),
+            "ArmorTypeUnknown" | "" => true,
+            // An unrecognized armor enum is not evidence of an equipable item.
+            _ => false,
+        },
+    }
+}
+
+fn native_item_class_eligible(
+    item: &Item,
+    class: &str,
+    class_proto: &str,
+    level: i32,
+    shaman_skills: Option<&data::ShamanEquipmentSkills>,
+) -> bool {
     if !item.class_allowlist.is_empty()
         && !item
             .class_allowlist
@@ -506,6 +597,11 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
             .any(|allowed| allowed == class_proto)
     {
         return false;
+    }
+
+    if class == "shaman" {
+        return shaman_skills
+            .is_some_and(|skills| native_shaman_item_eligible(item, level, skills));
     }
 
     let slot = native_item_source_slot(item);
@@ -554,6 +650,7 @@ fn native_item_options_with_required_levels(
     let normalized_class = match class_input.as_str() {
         "priest" | "classpriest" => Some(("priest", "ClassPriest")),
         "mage" | "classmage" => Some(("mage", "ClassMage")),
+        "shaman" | "classshaman" => Some(("shaman", "ClassShaman")),
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
@@ -567,7 +664,7 @@ fn native_item_options_with_required_levels(
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
-            format!("native item-options currently supports priest and mage, not {class}"),
+            format!("native item-options currently supports priest, mage and shaman, not {class}"),
         ))
     } else if !(1..=60).contains(&level) {
         Some((
@@ -590,13 +687,18 @@ fn native_item_options_with_required_levels(
 
     let mut response = NativeItemOptionsResponse {
         status: "refused".to_string(),
-        class: class_input,
+        class: class_input.clone(),
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string(),
+        source: if class_input == "shaman" {
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo".to_string()
+        } else {
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string()
+        },
         required_level_supported: false,
         unverified_candidate_count: 0,
+        excluded_non_client_item_count: 0,
         items: Vec::new(),
         refusal: refusal.map(|(code, reason)| NativeItemOptionsRefusal {
             code: code.to_string(),
@@ -617,6 +719,20 @@ fn native_item_options_with_required_levels(
     response.required_level_supported = true;
     let (class, class_proto) = normalized_class.expect("validated native item class");
     let requested_slot = canonical_slot.expect("validated native item slot");
+    let shaman_skills = if class == "shaman" {
+        match data::shaman_equipment_skills() {
+            Ok(skills) => Some(skills),
+            Err(reason) => {
+                response.refusal = Some(NativeItemOptionsRefusal {
+                    code: "NATIVE_ITEM_OPTIONS_CLASS_SKILL_SOURCE_UNAVAILABLE".to_string(),
+                    reason: reason.to_string(),
+                });
+                return response;
+            }
+        }
+    } else {
+        None
+    };
     for key in ITEMS.keys() {
         let Ok(id) = i32::try_from(key) else {
             continue;
@@ -628,12 +744,18 @@ fn native_item_options_with_required_levels(
             continue;
         };
         if !native_item_matches_slot(&item, source_slot, requested_slot)
-            || !native_item_class_eligible(&item, class, class_proto)
+            || !native_item_class_eligible(&item, class, class_proto, level, shaman_skills)
         {
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            response.unverified_candidate_count += 1;
+            if class == "shaman" {
+                // ItemSparse is the complete client-build candidate universe for this path.
+                // A MythicSim-only row absent from that table is not a client item candidate.
+                response.excluded_non_client_item_count += 1;
+            } else {
+                response.unverified_candidate_count += 1;
+            }
             continue;
         };
         if required_level > level {
@@ -732,6 +854,129 @@ mod native_item_options_contract_tests {
                         && pair[0].item_id < pair[1].item_id)
             }));
         }
+    }
+
+    #[test]
+    fn shaman_l20_options_return_native_source_eligible_candidates() {
+        let response = native_item_options("shaman", 20, "unrestricted", "all");
+        assert_eq!(response.status, "ok", "{:?}", response.refusal);
+        assert!(response.required_level_supported);
+        assert_eq!(
+            response.source,
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo"
+        );
+        assert_eq!(response.unverified_candidate_count, 0);
+        assert!(response.excluded_non_client_item_count > 0);
+        assert!(!response.items.is_empty());
+        assert!(response.items.iter().all(|item| item.required_level <= 20));
+        assert!(response.items.iter().all(|candidate| {
+            let item = super::database_item(candidate.item_id).expect("native candidate item");
+            super::native_item_class_eligible(
+                &item,
+                "shaman",
+                "ClassShaman",
+                20,
+                Some(crate::data::shaman_equipment_skills().expect("pinned Shaman source")),
+            )
+        }));
+    }
+
+    #[test]
+    fn shaman_armor_and_weapon_proficiencies_are_source_and_level_gated() {
+        use super::{native_shaman_item_eligible, Item};
+        let skills = crate::data::shaman_equipment_skills().expect("pinned Shaman source");
+        let armor = |armor_type: &str| Item {
+            item_type: "ItemTypeChest".to_string(),
+            armor_type: armor_type.to_string(),
+            ..Item::default()
+        };
+        assert!(native_shaman_item_eligible(
+            &armor("ArmorTypeCloth"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &armor("ArmorTypeLeather"),
+            20,
+            skills
+        ));
+        assert!(!native_shaman_item_eligible(
+            &armor("ArmorTypeMail"),
+            20,
+            skills
+        ));
+        assert!(!native_shaman_item_eligible(
+            &armor("ArmorTypePlate"),
+            20,
+            skills
+        ));
+
+        let weapon = |weapon_type: &str, hand_type: &str| Item {
+            id: 1,
+            item_type: "ItemTypeWeapon".to_string(),
+            weapon_type: weapon_type.to_string(),
+            hand_type: hand_type.to_string(),
+            ranged_weapon_type: "RangedWeaponTypeUnknown".to_string(),
+            ..Item::default()
+        };
+        assert!(native_shaman_item_eligible(
+            &weapon("WeaponTypeAxe", "HandTypeOneHand"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &weapon("WeaponTypeAxe", "HandTypeTwoHand"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &weapon("WeaponTypeMace", "HandTypeOneHand"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &weapon("WeaponTypeStaff", "HandTypeTwoHand"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &weapon("WeaponTypeFist", "HandTypeOneHand"),
+            20,
+            skills
+        ));
+        assert!(!native_shaman_item_eligible(
+            &weapon("WeaponTypeDagger", "HandTypeOneHand"),
+            20,
+            skills
+        ));
+        assert!(!native_shaman_item_eligible(
+            &weapon("WeaponTypeMace", "HandTypeTwoHand"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &weapon("WeaponTypeShield", "HandTypeOffHand"),
+            20,
+            skills
+        ));
+    }
+
+    #[test]
+    fn shaman_relics_require_an_explicit_native_class_allowlist() {
+        use super::{native_shaman_item_eligible, Item};
+        let skills = crate::data::shaman_equipment_skills().expect("pinned Shaman source");
+        let totem = Item {
+            item_type: "ItemTypeRanged".to_string(),
+            ranged_weapon_type: "RangedWeaponTypeTotem".to_string(),
+            class_allowlist: vec!["ClassShaman".to_string()],
+            ..Item::default()
+        };
+        assert!(native_shaman_item_eligible(&totem, 20, skills));
+        let unlisted = Item {
+            class_allowlist: Vec::new(),
+            ..totem
+        };
+        assert!(!native_shaman_item_eligible(&unlisted, 20, skills));
     }
 
     #[test]
