@@ -1,0 +1,67 @@
+name: Shaman equipment source import
+
+on:
+  push:
+    branches:
+      - work/work1-shaman-l20-item-options-20261104
+    paths:
+      - .github/workflows/shaman-equipment-source.yml
+      - tools/import_shaman_equipment.py
+      - tools/import_shaman_equipment_test.py
+      - data/manifest.json
+
+permissions:
+  contents: write
+
+concurrency:
+  group: shaman-equipment-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Download DB2 exports for the pinned client build
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$(python3 -c 'import json; print(json.load(open("data/manifest.json", encoding="utf-8"))["client_build"])')"
+          for table in SkillLine SkillRaceClassInfo; do
+            url="https://wago.tools/db2/${table}/csv?build=${build}"
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+              --user-agent "MythicSim source importer" "$url" -o "/tmp/${table}.csv"
+            test -s "/tmp/${table}.csv"
+            printf '%s CSV header: ' "$table"
+            head -n 1 "/tmp/${table}.csv"
+            printf '%s CSV SHA-256: ' "$table"
+            sha256sum "/tmp/${table}.csv"
+          done
+
+      - name: Test deterministic source projection
+        run: python3 -m unittest discover -s tools -p 'import_shaman_equipment_test.py'
+
+      - name: Generate Shaman equipment eligibility
+        run: |
+          python3 tools/import_shaman_equipment.py \
+            /tmp/SkillLine.csv /tmp/SkillRaceClassInfo.csv
+          cat data/shaman-equipment-skills.json
+          cat data/shaman-equipment-skills.manifest.json
+
+      - name: Commit generated pinned-client data
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/shaman-equipment-skills.json data/shaman-equipment-skills.manifest.json data/manifest.json
+          if git diff --cached --quiet; then
+            echo "Pinned Shaman equipment source data is already current."
+            exit 0
+          fi
+          git commit -m "data: import Shaman equipment skills from pinned client"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
