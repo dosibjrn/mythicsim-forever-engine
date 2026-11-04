@@ -36,7 +36,9 @@ fn prepare(request: &Value) -> Value {
 
 fn simulate(prepared: &Value) -> Value {
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
-    forever_engine::simulate_prepared(&typed, RngMode::Stochastic).unwrap().result
+    forever_engine::simulate_prepared(&typed, RngMode::Stochastic)
+        .unwrap()
+        .result
 }
 
 fn mana_rows(result: &Value) -> Vec<Value> {
