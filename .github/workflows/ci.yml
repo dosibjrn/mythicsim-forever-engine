@@ -39,10 +39,28 @@ jobs:
           assert all(item["required_level"] <= 20 for item in result["items"]), result
           print("SHAMAN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
           PY
+      - name: Query native Paladin L20 item options
+        run: |
+          cargo run --locked -- item-options --class paladin --level 20 --spec unrestricted --slot all > /tmp/paladin-item-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/paladin-item-options.json").read_text())
+          assert result["status"] == "ok", result
+          assert result["required_level_supported"], result
+          assert result["items"], result
+          assert result["unverified_candidate_count"] == 0, result
+          assert result["excluded_non_client_item_count"] > 0, result
+          assert all(item["required_level"] <= 20 for item in result["items"]), result
+          assert any(item["weapon_type"] == "WeaponTypeMace" for item in result["items"]), result
+          print("PALADIN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
+          PY
       - name: Check formatting of changed Rust modules
-        run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs
+        run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs src/main.rs
       - name: Run Shaman native item-options regression tests
         run: cargo test --locked shaman_
+      - name: Run Paladin native item-options regression tests
+        run: cargo test --locked paladin_
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps --document-private-items
         env:
