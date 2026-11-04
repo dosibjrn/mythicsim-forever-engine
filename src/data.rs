@@ -158,7 +158,7 @@ const SHAMAN_EQUIPMENT_SKILLS: &str = include_str!("../data/shaman-equipment-ski
 
 #[derive(serde::Deserialize)]
 struct ShamanEquipmentSkillRow {
-    id: i32,
+    skill_id: i32,
     name: String,
     min_level: Option<i32>,
     race_unrestricted: bool,
@@ -203,7 +203,7 @@ fn parse_shaman_equipment_skills(text: &str) -> Result<ShamanEquipmentSkills, ()
             || row.name.trim().is_empty()
             || row.min_level.is_some_and(|level| !(1..=60).contains(&level))
             || row.min_level.is_some() != row.race_unrestricted
-            || skill_ids.insert(row.id, ()).is_some()
+            || skill_ids.insert(row.skill_id, ()).is_some()
         {
             return Err(());
         }

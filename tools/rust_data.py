@@ -234,7 +234,7 @@ def check():
             if shaman_skills.get("race_policy") != "class-wide only; SkillRaceClassInfo race mask must be unrestricted":
                 errors.append("native Shaman equipment projection has an unknown race policy")
             skills = shaman_skills.get("skills", [])
-            skill_ids = [int(skill["id"]) for skill in skills]
+            skill_ids = [int(skill["skill_id"]) for skill in skills]
             if not skills or len(skill_ids) != len(set(skill_ids)):
                 errors.append("native Shaman equipment projection has no skills or duplicate skill IDs")
             for skill in skills:
