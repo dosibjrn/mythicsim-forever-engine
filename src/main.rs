@@ -1,5 +1,5 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, gear_options, native_item_options, native_two_pull_windows,
+    contracts::prepared_v2::PreparedV2, gear_options, native_item_options, native_player_context, native_two_pull_windows,
     native_two_world_targets, prepare_json_with, prepared_refusals, simulate, simulate_prepared,
     simulate_prepared_gated, validate_prepared, Gated, PrepareError, PreparedError, Refusal,
     Request, RngMode, Rules, SOURCE_REVISION,
@@ -188,6 +188,46 @@ fn run() -> Result<(), Failure> {
         }
         let output = serde_json::to_string_pretty(&gear_options(&item_types))
             .map_err(|err| err.to_string())?;
+        println!("{output}");
+        return Ok(());
+    }
+    if args[0] == "player-context" {
+        let mut class: Option<String> = None;
+        let mut race: Option<String> = None;
+        let mut level: Option<i32> = None;
+        let mut index = 1;
+        while index < args.len() {
+            let flag = args[index].as_str();
+            index += 1;
+            let value = args
+                .get(index)
+                .ok_or_else(|| format!("{flag} requires a value"))?
+                .clone();
+            index += 1;
+            match flag {
+                "--class" => {
+                    if class.replace(value).is_some() {
+                        return Err("duplicate --class".into());
+                    }
+                }
+                "--race" => {
+                    if race.replace(value).is_some() {
+                        return Err("duplicate --race".into());
+                    }
+                }
+                "--level" => {
+                    let parsed = value.parse::<i32>().map_err(|_| "invalid --level")?;
+                    if level.replace(parsed).is_some() {
+                        return Err("duplicate --level".into());
+                    }
+                }
+                _ => return Err(format!("unsupported player-context argument {flag}").into()),
+            }
+        }
+        let class = class.ok_or("player-context requires --class")?;
+        let level = level.ok_or("player-context requires --level")?;
+        let response = native_player_context(&class, race.as_deref().unwrap_or(""), level);
+        let output = serde_json::to_string_pretty(&response).map_err(|err| err.to_string())?;
         println!("{output}");
         return Ok(());
     }
