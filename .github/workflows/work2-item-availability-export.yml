@@ -1,8 +1,8 @@
 name: Work2 temporary item availability export
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: ["work/work2-priest-p3-native-item-options-isolated-20261104"]
     paths:
       - ".github/workflows/work2-item-availability-export.yml"
 
@@ -11,14 +11,13 @@ permissions:
 
 jobs:
   export-item-availability:
-    if: github.event.pull_request.head.ref == 'work/work2-priest-p3-native-item-options-isolated-20261104'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout exact MythicSim item source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: true
 
       - name: Checkout the current Forever source snapshot with LFS
@@ -111,7 +110,7 @@ jobs:
               },
               "native_item_source": {
                   "repository": "dosibjrn/mythicsim-forever-engine",
-                  "commit": "${{ github.event.pull_request.head.sha }}",
+                  "commit": "${{ github.sha }}",
                   "path": "data/items.jsonl",
                   "sha256": hashlib.sha256(native_bytes).hexdigest(),
                   "native_item_count": len(native_ids),
@@ -189,7 +188,6 @@ jobs:
 
       - name: Commit the source-backed native availability snapshot
         env:
-          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -197,4 +195,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/item_availability.tsv data/item_availability_manifest.json
           git commit -m "data(native): add source-backed item availability"
-          git push origin "HEAD:refs/heads/${GITHUB_HEAD_REF}"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
