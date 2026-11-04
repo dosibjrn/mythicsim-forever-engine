@@ -1,0 +1,110 @@
+{
+  "base_health": 191,
+  "base_mana": 412,
+  "class": "paladin",
+  "default_race": "dwarf",
+  "level": 20,
+  "provenance": {
+    "base_resources": {
+      "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+      "fields": [
+        "class",
+        "level",
+        "basehp",
+        "basemana"
+      ],
+      "file": "sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql",
+      "provider": "cmangos/mangos-classic",
+      "row": "(2,20,191,412)"
+    },
+    "derived_stats": {
+      "armor": {
+        "commit": "b7fface6b1bd3b036211dcde1bff39cc6da503e4",
+        "file": "src/game/Object/StatSystem.cpp",
+        "formula": "2*agility",
+        "provider": "mangoszero/server"
+      },
+      "attack_power": {
+        "commit": "b7fface6b1bd3b036211dcde1bff39cc6da503e4",
+        "file": "src/game/Object/StatSystem.cpp",
+        "formula": "3*level + 2*strength - 20",
+        "provider": "mangoszero/server"
+      },
+      "health_mana": {
+        "file": "src/prepare/character.rs",
+        "formula": "health = base_health - 180 + 10*stamina; mana = base_mana - 280 + 15*intellect",
+        "provider": "mythicsim-native"
+      }
+    },
+    "primary_stats": {
+      "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+      "file": "sql/archive/0.8/4537_player_levelstats.sql",
+      "migration_effect": "Drops the legacy basehp and basemana columns; the final five values remain the race/class/level primary stats.",
+      "migration_file": "sql/archive/0.11/5790_mangos_player_levelstats.sql",
+      "provider": "cmangos/mangos-classic",
+      "rows": {
+        "dwarf_legacy": "(3,2,20,451,611,47,28,46,32,35)",
+        "human_legacy": "(1,2,20,421,612,45,32,43,33,35)"
+      },
+      "rows_after_migration": {
+        "dwarf": "(3,2,20,47,28,46,32,35)",
+        "human": "(1,2,20,45,32,43,33,35)"
+      }
+    },
+    "weapon_item": {
+      "client_build": "1.60.1.70425",
+      "hand_type": "HandTypeMainHand",
+      "item_file": "data/items.jsonl",
+      "item_id": 36,
+      "item_name": "Worn Mace",
+      "provider": "mythicsim-native",
+      "required_level": 1,
+      "required_level_file": "data/item-required-levels.jsonl",
+      "weapon_damage_max": 3,
+      "weapon_damage_min": 1,
+      "weapon_speed_s": 1.9,
+      "weapon_type": "WeaponTypeMace"
+    },
+    "weapon_proficiency": {
+      "commit": "325948a78015794e6cc626212bc19fee70c805b2",
+      "file": "World/Setup/FullDB/playercreateinfo_spell.sql",
+      "provider": "mangoszero/database",
+      "rows": {
+        "dwarf": "(3,2,198,'One-Handed Maces')",
+        "human": "(1,2,198,'One-Handed Maces')"
+      }
+    }
+  },
+  "race_selection_note": "The P3 baseline uses Dwarf as a deterministic representative; Human is also supported by the source rows.",
+  "races": {
+    "dwarf": {
+      "base_stats": {
+        "agility": 28,
+        "intellect": 32,
+        "spirit": 35,
+        "stamina": 46,
+        "strength": 47
+      },
+      "race_id": 3,
+      "weapon_proficiency_spell_id": 198
+    },
+    "human": {
+      "base_stats": {
+        "agility": 32,
+        "intellect": 33,
+        "spirit": 35,
+        "stamina": 43,
+        "strength": 45
+      },
+      "race_id": 1,
+      "weapon_proficiency_spell_id": 198
+    }
+  },
+  "schema_version": 1,
+  "source_scope": "inherited_vanilla_classic_not_forever_verified",
+  "weapon": {
+    "item_id": 36,
+    "proficiency_name": "One-Handed Maces",
+    "proficiency_spell_id": 198
+  }
+}
