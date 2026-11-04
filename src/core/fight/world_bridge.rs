@@ -435,7 +435,10 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
         // A cleanup event after that ACK is a real lifecycle violation; never
         // drop it or try to apply more damage to an already-dead target.
         assert!(pending_empty, "RUST_WORLD_LETHAL_HAS_PENDING_EVENTS");
-        assert!(duration_ns == last, "RUST_WORLD_LETHAL_DURATION_NOT_ACK_CLOCK");
+        assert!(
+            duration_ns == last,
+            "RUST_WORLD_LETHAL_DURATION_NOT_ACK_CLOCK"
+        );
     } else {
         let clock = ((duration_ns + 999_999) / 1_000_000) * 1_000_000;
         let clock = clock.max(last + 1_000_000);
@@ -462,15 +465,24 @@ mod persistent_next_target_tests {
 
     #[test]
     fn world_persistent_next_target_preserves_ack_and_monotonic_clock() {
-        BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
-            iteration: 0, sequence: 4, next_tick_ns: 130_000_000,
-            last_tick_ns: 120_000_000, last_health: Some(0.0),
-            previous_ack_id: "a".repeat(64),
-            source_hash: "a".repeat(64), event_ordinal: 3, pending: Vec::new(),
-            iteration_finished: false,
-        }));
-        assert_eq!(begin_next_target(120_000_000),
-            Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND"));
+        BRIDGE.with(|state| {
+            *state.borrow_mut() = Some(Bridge {
+                iteration: 0,
+                sequence: 4,
+                next_tick_ns: 130_000_000,
+                last_tick_ns: 120_000_000,
+                last_health: Some(0.0),
+                previous_ack_id: "a".repeat(64),
+                source_hash: "a".repeat(64),
+                event_ordinal: 3,
+                pending: Vec::new(),
+                iteration_finished: false,
+            });
+        });
+        assert_eq!(
+            begin_next_target(120_000_000),
+            Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND")
+        );
         begin_next_target(121_000_000).unwrap();
         BRIDGE.with(|state| {
             let state = state.borrow();
@@ -564,10 +576,16 @@ mod iteration_teardown_tests {
             let mut state = state.borrow_mut();
             std::mem::take(&mut state.as_mut().unwrap().pending)
         });
-        let event_ids = events.iter().map(|event| event.event_id.clone()).collect::<Vec<_>>();
+        let event_ids = events
+            .iter()
+            .map(|event| event.event_id.clone())
+            .collect::<Vec<_>>();
         assert_eq!(event_ids, vec!["native-effect-1"]);
-        let accepted = event_ids.iter().cloned()
-            .map(serde_json::Value::String).collect::<Vec<_>>();
+        let accepted = event_ids
+            .iter()
+            .cloned()
+            .map(serde_json::Value::String)
+            .collect::<Vec<_>>();
         assert_damage_acknowledgement(&event_ids, &accepted);
 
         // Only after the matching ACK may finish close the iteration and the
@@ -607,10 +625,7 @@ mod iteration_teardown_tests {
     #[test]
     #[should_panic(expected = "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH")]
     fn terminal_flush_rejects_an_unacknowledged_cleanup_event() {
-        assert_damage_acknowledgement(
-            &["native-effect-1".to_owned()],
-            &[],
-        );
+        assert_damage_acknowledgement(&["native-effect-1".to_owned()], &[]);
     }
 
     #[test]
