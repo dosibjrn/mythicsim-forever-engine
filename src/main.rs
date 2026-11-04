@@ -1,7 +1,8 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
-    PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    contracts::prepared_v2::PreparedV2, gear_options, native_two_pull_windows,
+    native_two_world_targets, prepare_json_with, prepared_refusals, simulate, simulate_prepared,
+    simulate_prepared_gated, validate_prepared, Gated, PrepareError, PreparedError, Refusal,
+    Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -165,10 +166,31 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine version");
         return Ok(());
     }
 
+    if args[0] == "gear-options" {
+        if args.len() != 3 || args[1] != "--item-types" {
+            return Err("gear-options requires --item-types ItemTypeHead,ItemTypeHands,...".into());
+        }
+        let item_types: Vec<String> = args[2]
+            .split(',')
+            .map(str::trim)
+            .map(str::to_string)
+            .collect();
+        if item_types.is_empty() || item_types.iter().any(String::is_empty) {
+            return Err("gear-options requires at least one nonempty item type".into());
+        }
+        let mut unique = std::collections::BTreeSet::new();
+        if item_types.iter().any(|item_type| !unique.insert(item_type)) {
+            return Err("gear-options item types must be unique".into());
+        }
+        let output = serde_json::to_string_pretty(&gear_options(&item_types))
+            .map_err(|err| err.to_string())?;
+        println!("{output}");
+        return Ok(());
+    }
     if args[0] == "native-world-pulls" {
         if args.len() != 7 || args[1] != "--infile" || args[3] != "--targets" || args[5] != "--rng-mode" {
             return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into());
