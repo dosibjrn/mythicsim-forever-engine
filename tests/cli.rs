@@ -11,7 +11,7 @@ fn invalid_input_returns_nonzero_and_does_not_write_a_report() {
     let result = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--infile"])
         .arg(input)
-        .arg("--outfile")
+        .args(["--rng-mode", "balanced", "--outfile"])
         .arg(&output)
         .output()
         .unwrap();
@@ -146,10 +146,56 @@ fn sim_gate(input: &std::path::Path, output: &std::path::Path) -> std::process::
     Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--gate", "--infile"])
         .arg(input)
-        .arg("--outfile")
+        .args(["--rng-mode", "balanced", "--outfile"])
         .arg(output)
         .output()
         .unwrap()
+}
+
+#[test]
+fn sim_iteration_override_limits_prefix_without_rewriting_source_identity() {
+    let directory = std::env::temp_dir().join(format!(
+        "forever-iteration-override-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/mage/prepared-v2/reference-clearcasting.prepared.json");
+    let mut prepared: serde_json::Value =
+        serde_json::from_slice(&fs::read(source).unwrap()).unwrap();
+    prepared["sim"]["iterations"] = serde_json::json!(10);
+    let request_sha256 = prepared["request_sha256"].clone();
+    let input = directory.join("input.prepared.json");
+    let output = directory.join("result.json");
+    let input_bytes = serde_json::to_vec(&prepared).unwrap();
+    fs::write(&input, &input_bytes).unwrap();
+
+    let result = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+        .args(["sim", "--gate", "--infile"])
+        .arg(&input)
+        .args(["--iterations", "3", "--rng-mode", "stochastic", "--outfile"])
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(report["result"]["iterationsDone"], 3);
+    assert_eq!(report["request_sha256"], request_sha256);
+    assert_eq!(fs::read(&input).unwrap(), input_bytes);
+
+    for count in ["0", "11"] {
+        let refused = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+            .args(["sim", "--gate", "--infile"])
+            .arg(&input)
+            .args(["--iterations", count, "--rng-mode", "stochastic"])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("source request limit"));
+    }
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -208,6 +254,7 @@ fn sim_without_the_gate_still_fails_a_refusal_as_an_error() {
     let result = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--infile"])
         .arg(&input)
+        .args(["--rng-mode", "balanced"])
         .output()
         .unwrap();
     fs::remove_dir_all(directory).unwrap();

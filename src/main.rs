@@ -156,6 +156,24 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
     serde_json::to_string_pretty(&report).map_err(|err| err.to_string())
 }
 
+fn apply_iterations_override(
+    prepared: &mut PreparedV2,
+    requested: Option<u32>,
+) -> Result<(), String> {
+    let Some(iterations) = requested else {
+        return Ok(());
+    };
+    if iterations == 0 || iterations > prepared.sim.iterations {
+        return Err(format!(
+            "--iterations must be in 1..={} (the source request limit)",
+            prepared.sim.iterations
+        ));
+    }
+    // Limit the runtime prefix without rewriting the source request or its identity hash.
+    prepared.sim.iterations = iterations;
+    Ok(())
+}
+
 fn run() -> Result<(), Failure> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args == ["version"] {
@@ -166,7 +184,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage --level N --spec unrestricted --slot SLOT\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--iterations N] [--rng-mode balanced|stochastic] [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--iterations N] [--rng-mode balanced|stochastic] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage --level N --spec unrestricted --slot SLOT\nforever-engine version");
         return Ok(());
     }
 
@@ -305,6 +323,7 @@ fn run() -> Result<(), Failure> {
     let mut rotation_stats = false;
     // Prepare with the Go reference's rules where Rust departs from it, as the exporter does.
     let mut go_rules = false;
+    let mut iterations_override: Option<u32> = None;
     let mut warmups = 3u32;
     let mut samples = 7u32;
     let mut index = 1;
@@ -331,6 +350,14 @@ fn run() -> Result<(), Failure> {
                 let value = args.get(index).ok_or("--rng-mode requires a value")?;
                 if rng_mode.replace(RngMode::parse_cli(value)?).is_some() {
                     return Err("duplicate --rng-mode".into());
+                }
+            }
+            "--iterations" if args[0] == "sim" => {
+                index += 1;
+                let value = args.get(index).ok_or("--iterations requires a count")?;
+                let parsed = value.parse::<u32>().map_err(|_| "invalid --iterations")?;
+                if iterations_override.replace(parsed).is_some() {
+                    return Err("duplicate --iterations".into());
                 }
             }
             "--trace" if !trace => trace = true,
@@ -399,7 +426,8 @@ fn run() -> Result<(), Failure> {
         Some(prepared) => prepared,
         None => fs::read(infile.ok_or("--infile is required")?).map_err(|err| err.to_string())?,
     };
-    if let Some(prepared) = prepared_v2(&input)? {
+    if let Some(mut prepared) = prepared_v2(&input)? {
+        apply_iterations_override(&mut prepared, iterations_override)?;
         if trace {
             return Err(
                 "prepared v2 inputs do not support --trace; set debugFirstIteration for logs"
@@ -458,8 +486,8 @@ fn run() -> Result<(), Failure> {
         }
         return Ok(());
     }
-    if gate || rotation_stats {
-        return Err("--gate and --rotation-stats require a prepared v2 input".into());
+    if iterations_override.is_some() || gate || rotation_stats {
+        return Err("--iterations, --gate and --rotation-stats require a prepared v2 input".into());
     }
     let request: Request =
         serde_json::from_slice(&input).map_err(|err| format!("request rejected: {err}"))?;
