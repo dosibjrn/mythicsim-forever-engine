@@ -10,7 +10,7 @@ on:
       - tools/import_shaman_equipment_test.py
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: shaman-equipment-source-${{ github.ref }}
@@ -74,6 +74,21 @@ jobs:
               )
           PY
           cat data/shaman-equipment-skills.manifest.json
+
+
+      - name: Commit generated pinned-client projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/manifest.json data/shaman-equipment-skills.json data/shaman-equipment-skills.manifest.json
+          if git diff --cached --quiet; then
+            echo "Pinned Shaman equipment projection is already current."
+          else
+            git commit -m "data: import pinned Shaman equipment skills"
+            git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          fi
 
       - name: Upload pinned source tables and normalized projection
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
