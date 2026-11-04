@@ -1,6 +1,7 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, native_item_options, native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
+    contracts::prepared_v2::PreparedV2, forever_druid_talent_layout, native_item_options,
+    native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
@@ -175,7 +176,6 @@ fn run() -> Result<(), Failure> {
         println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine item-options --class priest|mage --level 20 --spec unrestricted --slot SLOT\nforever-engine talent-layout --class druid\nforever-engine version");
         return Ok(());
     }
-
 
     if args[0] == "item-options" {
         let mut class: Option<String> = None;
