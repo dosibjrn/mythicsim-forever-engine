@@ -92,6 +92,7 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         self.assertEqual(payload["client_build"], "1.60.1.70425")
         self.assertEqual(payload["class"], "shaman")
         self.assertEqual(payload["class_mask"], 64)
+        self.assertEqual(payload["skill_line_ids"], sorted(int(line["ID"]) for line in skill_lines))
         self.assertEqual(
             payload["race_policy"],
             "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
@@ -111,6 +112,20 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         self.assertEqual(manifest["source"]["client_build"], "1.60.1.70425")
         self.assertIn("shaman-equipment-skills.json", main_manifest["files"])
         self.assertIn("shaman-equipment-skills.manifest.json", main_manifest["files"])
+
+    def test_skill_line_index_marks_absent_class_rows_as_known_unavailable(self):
+        skill_lines = [
+            {"ID": 43, "DisplayName_lang": "Swords", "CategoryID": 6},
+            {"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 6},
+            {"ID": 229, "DisplayName_lang": "Polearms", "CategoryID": 6},
+        ]
+        rows = [self.row(1, 44, -1)]
+        _, payload, _, _ = self.run_import(skill_lines, rows)
+        self.assertEqual(payload["skill_line_ids"], [43, 44, 229])
+        skill_ids = {skill["skill_id"] for skill in payload["skills"]}
+        self.assertIn(44, skill_ids)
+        self.assertNotIn(43, skill_ids)
+        self.assertNotIn(229, skill_ids)
 
     def test_supports_split_64_bit_race_masks_without_widening(self):
         skill_lines = [{"ID": 136, "DisplayName_lang": "Staves", "CategoryID": 6}]
