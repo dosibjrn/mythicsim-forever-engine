@@ -139,9 +139,9 @@ def write_data(raw):
     extras = {"curves": spells["curves"], "hand_triggers": spells["hand_triggers"]}
     emit("spell-extras.json", json.dumps(extras, sort_keys=True, separators=(",", ":")) + "\n")
     emit("go-tables.json", json.dumps(load(raw / "go-tables.json"), indent=1, sort_keys=True) + "\n")
-    # Preserve native client DB2 projections across reference-data reimports.
-    # Their source is the pinned client, not the Forever database.
-    for name in PRESERVED_CLIENT_DATA:
+    # Preserve manually sourced native projections across reference-data reimports.
+    # The Go importer does not regenerate these pinned client / CMaNGOS source files.
+    for name in PRESERVED_CLIENT_DATA + ("priest-l20-base-stats.json",):
         path = DATA / name
         if path.exists():
             files[name] = file_digest(path)

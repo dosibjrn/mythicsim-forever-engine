@@ -117,7 +117,7 @@ pub const REFUSAL_CODES: &[(&str, &str)] = &[
     ("class_unsupported", "the player's class has no Rust gate"),
     (
         "level_unsupported",
-        "the player is not level 60 or the target not level 60 to 63",
+        "the player/target level pair is outside the class-level coverage envelope",
     ),
     (
         "target_count_invalid",
@@ -2043,7 +2043,11 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    if player.level != 60 {
+    // The only non-60 production actor admitted by this gate is the
+    // source-backed Priest L20 preparation path. Keep the exception exact;
+    // other class/level combinations still fail closed.
+    let priest_l20 = player.class == "ClassPriest" && player.level == 20;
+    if player.level != 60 && !priest_l20 {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2060,7 +2064,9 @@ pub(crate) fn prepared_coverage(
             ),
         ));
     }
-    if !(60..=63).contains(&prepared.target.level) {
+    let target_level_supported = (60..=63).contains(&prepared.target.level)
+        || (priest_l20 && prepared.target.level == 20);
+    if !target_level_supported {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("target level {} is not supported", prepared.target.level),
