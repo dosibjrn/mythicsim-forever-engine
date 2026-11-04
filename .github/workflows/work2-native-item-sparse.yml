@@ -4,27 +4,25 @@ on:
   push:
     branches:
       - work/work2-priest-p3-native-item-options-isolated-20261104
-    paths:
-      - ".github/workflows/work2-native-item-sparse.yml"
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches: [main]
-    paths:
-      - ".github/workflows/work2-native-item-sparse.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: work2-item-sparse-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   import-native-required-levels:
-    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'work/work2-priest-p3-native-item-options-isolated-20261104'
+    if: github.ref_name == 'work/work2-priest-p3-native-item-options-isolated-20261104'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
-      - name: Checkout the exact Work2 PR head
+      - name: Checkout the exact Work2 commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: \${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: true
 
       - name: Download the pinned client's ItemSparse table
@@ -34,9 +32,9 @@ jobs:
           BUILD="$(python3 -c 'import json; print(json.load(open("data/manifest.json"))["client_build"])')"
           curl --fail --location --retry 3 --retry-delay 2 \
             --header 'User-Agent: forever-engine-native-item-options/1.0' \
-            "https://wago.tools/db2/ItemSparse/csv?build=\${BUILD}" \
+            "https://wago.tools/db2/ItemSparse/csv?build=${BUILD}" \
             --output /tmp/ItemSparse.csv
-          echo "Imported source build: \${BUILD}"
+          echo "Imported source build: ${BUILD}"
 
       - name: Project source RequiredLevel values onto native item IDs
         run: python3 tools/import_item_sparse.py /tmp/ItemSparse.csv
@@ -52,27 +50,34 @@ jobs:
         with:
           cache-save-if: false
 
-      - name: Run native item-options contract tests
-        run: cargo test --locked native_item_options_contract_tests -- --nocapture
+      - name: Check formatting and compile native contract tests
+        run: |
+          cargo fmt -- --check
+          cargo test --locked native_item_options_contract_tests -- --nocapture
 
       - name: Verify Priest and Mage L20 native item options
         shell: bash
         run: |
           set -euo pipefail
           for CLASS in priest mage; do
-            cargo run --locked -- item-options --class "\${CLASS}" --level 20 --spec unrestricted --slot all \
-              > "/tmp/\${CLASS}-item-options.json"
-            python3 - "\${CLASS}" "/tmp/\${CLASS}-item-options.json" <<'PY'
+            cargo run --locked -- item-options --class "${CLASS}" --level 20 --spec unrestricted --slot all \
+              > "/tmp/${CLASS}-item-options.json"
+            python3 - "${CLASS}" "/tmp/${CLASS}-item-options.json" <<'PY'
           import json
           import sys
           class_name, path = sys.argv[1:]
           result = json.load(open(path, encoding="utf-8"))
           assert result["status"] == "ok", (class_name, result.get("refusal"))
           assert result["required_level_supported"] is True
-          assert result["items"], f"{class_name} L20 returned no native ItemSparse options"
-          assert all(item["required_level"] <= 20 for item in result["items"])
-          assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in result["items"])
-          print(f"{class_name} L20: {len(result['items'])} native candidates; all RequiredLevel <= 20")
+          items = result["items"]
+          assert items, f"{class_name} L20 returned no native ItemSparse options"
+          assert all(item["required_level"] <= 20 for item in items)
+          assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in items)
+          key = lambda item: (-(item["item_level"] if item["item_level"] is not None else -1), item["item_id"])
+          assert [item["item_id"] for item in items] == [
+              item["item_id"] for item in sorted(items, key=key)
+          ]
+          print(f"{class_name} L20: {len(items)} native candidates; all RequiredLevel <= 20")
           PY
           done
 
@@ -88,4 +93,4 @@ jobs:
             exit 0
           fi
           git commit -m "data(native): import pinned ItemSparse required levels"
-          git push origin "HEAD:refs/heads/\${GITHUB_HEAD_REF}"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
