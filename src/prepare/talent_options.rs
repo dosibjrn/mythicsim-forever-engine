@@ -112,7 +112,7 @@ mod tests {
         let options = native_talent_options("paladin", 40);
         let holy = &options["trees"][0]["talents"];
         let precision = holy.as_array().unwrap().iter()
-            .find(|talent| talent["field_name"] == "divinePrecision")
+            .find(|talent| talent["field_name"] == "boundlessLight")
             .unwrap();
         assert_eq!(precision["prerequisite"]["field_name"], "holyShock");
         assert_eq!(precision["prerequisite"]["required_rank"], 1);
