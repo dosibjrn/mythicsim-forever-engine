@@ -29,8 +29,8 @@ use crate::prepare::spell::{ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::spelldata::store::must_find;
 use crate::prepare::spelldata::{Ladder, Spell as Row};
 
-use super::{masks, spells::rank_available_at_level};
 use super::Priest;
+use super::{masks, spells::rank_available_at_level};
 
 const LESSER_HEAL: &[i32] = &[2050, 2052, 2053];
 const HEAL: &[i32] = &[2054, 2055, 6063, 6064];
