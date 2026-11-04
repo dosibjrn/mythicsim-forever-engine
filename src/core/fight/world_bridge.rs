@@ -219,10 +219,10 @@ pub(crate) fn record_damage(
     caster_index: u32,
     caster_label: String,
 ) {
-    assert!(damage.is_finite() && damage > 0.0 && landed, "RUST_WORLD_DAMAGE_INVALID");
     if !enabled() {
         return;
     }
+    assert!(damage.is_finite() && damage > 0.0 && landed, "RUST_WORLD_DAMAGE_INVALID");
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
@@ -470,6 +470,30 @@ mod persistent_next_target_tests {
     }
 }
 
+
+#[cfg(test)]
+mod disabled_bridge_tests {
+    use super::{enabled, record_damage};
+
+    #[test]
+    fn disabled_bridge_ignores_damage_before_validation() {
+        if enabled() {
+            return;
+        }
+        record_damage(
+            0,
+            f64::NAN,
+            false,
+            false,
+            false,
+            "disabled".to_owned(),
+            "target".to_owned(),
+            "player",
+            0,
+            "Druid".to_owned(),
+        );
+    }
+}
 
 #[cfg(test)]
 mod iteration_teardown_tests {
