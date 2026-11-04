@@ -888,9 +888,11 @@ mod native_item_options_contract_tests {
         assert!(!native_shaman_item_eligible(&armor("ArmorTypePlate"), 20, skills));
 
         let weapon = |weapon_type: &str, hand_type: &str| Item {
+            id: 1,
             item_type: "ItemTypeWeapon".to_string(),
             weapon_type: weapon_type.to_string(),
             hand_type: hand_type.to_string(),
+            ranged_weapon_type: "RangedWeaponTypeUnknown".to_string(),
             ..Item::default()
         };
         assert!(native_shaman_item_eligible(
