@@ -39,6 +39,25 @@ jobs:
           python3 tools/rust_data.py check
           python3 -m unittest discover -s tools -p 'import_item_sparse_test.py'
           python3 -m unittest discover -s tools -p 'import_paladin_equipment_test.py'
+      - name: Format changed Rust modules and export exact patch
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff -- src/data.rs src/prepare/items.rs src/main.rs > "$RUNNER_TEMP/paladin-rustfmt.patch"
+          if [ -s "$RUNNER_TEMP/paladin-rustfmt.patch" ]; then
+            echo "Rustfmt patch captured for review"
+          else
+            echo "No rustfmt changes required"
+          fi
+      - name: Export rustfmt patch for exact Paladin branch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paladin-rustfmt-patch
+          path: ${{ runner.temp }}/paladin-rustfmt.patch
+          if-no-files-found: ignore
+
       - name: Test restored native P3 API and preserved P7.4 world ACK
         run: |
           set -euo pipefail
