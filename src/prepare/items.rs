@@ -910,6 +910,285 @@ fn native_item_options_with_required_levels(
     response
 }
 
+/// Return a narrow, source-backed level-20 Paladin baseline context.
+///
+/// This is source data for the active P3 caller, not a prepared native combat
+/// actor. Unsupported classes, races, levels, or a changed native weapon row
+/// fail closed instead of silently returning a proxy.
+pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json::Value {
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../../data/paladin-l20-source-context.json"))
+            .expect("checked-in Paladin L20 source context must be valid JSON");
+
+    let class_key = class.trim().to_ascii_lowercase();
+    let default_race = source
+        .get("default_race")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("dwarf");
+    let race_key = if race.trim().is_empty() {
+        default_race.to_string()
+    } else {
+        race.trim().to_ascii_lowercase()
+    };
+    let refusal = |code: &str, reason: &str| {
+        serde_json::json!({
+            "status": "refused",
+            "class": class_key.clone(),
+            "race": race_key.clone(),
+            "level": level,
+            "refusal": { "code": code, "reason": reason }
+        })
+    };
+
+    if class_key != "paladin" {
+        return refusal(
+            "unsupported_player_context",
+            "the checked-in source context currently covers Paladin only",
+        );
+    }
+    if level
+        != source
+            .get("level")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(20) as i32
+    {
+        return refusal(
+            "unsupported_player_context",
+            "the checked-in source context currently covers Paladin level 20 only",
+        );
+    }
+    let Some(race_context) = source.get("races").and_then(|races| races.get(&race_key)) else {
+        return refusal(
+            "unsupported_player_context",
+            "Paladin level 20 source rows are available for Human and Dwarf only",
+        );
+    };
+    let Some(base_stats) = race_context.get("base_stats") else {
+        return refusal("missing_source_fact", "race row has no primary-stat source");
+    };
+    let stat = |key: &str| {
+        base_stats
+            .get(key)
+            .and_then(serde_json::Value::as_i64)
+            .map(|value| value as f64)
+    };
+    let (Some(strength), Some(agility), Some(stamina), Some(intellect), Some(spirit)) = (
+        stat("strength"),
+        stat("agility"),
+        stat("stamina"),
+        stat("intellect"),
+        stat("spirit"),
+    ) else {
+        return refusal(
+            "missing_source_fact",
+            "race row is missing one or more primary stats",
+        );
+    };
+    let Some(base_health) = source
+        .get("base_health")
+        .and_then(serde_json::Value::as_i64)
+        .map(|value| value as f64)
+    else {
+        return refusal(
+            "missing_source_fact",
+            "Paladin level-20 base health is missing",
+        );
+    };
+    let Some(base_mana) = source
+        .get("base_mana")
+        .and_then(serde_json::Value::as_i64)
+        .map(|value| value as f64)
+    else {
+        return refusal(
+            "missing_source_fact",
+            "Paladin level-20 base mana is missing",
+        );
+    };
+
+    let Some(weapon_spec) = source.get("weapon") else {
+        return refusal(
+            "missing_source_fact",
+            "baseline weapon source row is missing",
+        );
+    };
+    let Some(weapon_id) = weapon_spec
+        .get("item_id")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+    else {
+        return refusal("missing_source_fact", "baseline weapon item id is invalid");
+    };
+    let Some(proficiency_spell_id) = weapon_spec
+        .get("proficiency_spell_id")
+        .and_then(serde_json::Value::as_i64)
+    else {
+        return refusal(
+            "missing_source_fact",
+            "one-handed mace proficiency id is missing",
+        );
+    };
+    let proficiency_name = weapon_spec
+        .get("proficiency_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let race_proficiency_spell_id = race_context
+        .get("weapon_proficiency_spell_id")
+        .and_then(serde_json::Value::as_i64);
+    if proficiency_spell_id != 198
+        || proficiency_name != "One-Handed Maces"
+        || race_proficiency_spell_id != Some(proficiency_spell_id)
+    {
+        return refusal(
+            "weapon_proficiency_mismatch",
+            "the selected weapon no longer matches the race's source-backed one-handed mace proficiency",
+        );
+    }
+
+    let Some(item) = database_item(weapon_id) else {
+        return refusal(
+            "missing_source_fact",
+            "native ItemSparse row for baseline weapon is missing",
+        );
+    };
+    let Some(required_level) = data::item_required_levels().get(&weapon_id).copied() else {
+        return refusal(
+            "missing_source_fact",
+            "native ItemSparse.RequiredLevel row for baseline weapon is missing",
+        );
+    };
+    if required_level > level {
+        return refusal(
+            "weapon_level_illegal",
+            "baseline weapon required level exceeds the requested player level",
+        );
+    }
+    if item.item_type != "ItemTypeWeapon"
+        || item.weapon_type != "WeaponTypeMace"
+        || item.hand_type != "HandTypeMainHand"
+    {
+        return refusal(
+            "weapon_source_mismatch",
+            "native weapon row is no longer a one-handed main-hand mace",
+        );
+    }
+    let Some(expected_weapon) = source
+        .get("provenance")
+        .and_then(|provenance| provenance.get("weapon_item"))
+    else {
+        return refusal("missing_source_fact", "weapon provenance row is missing");
+    };
+    let expected_name = expected_weapon
+        .get("item_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let expected_required_level = expected_weapon
+        .get("required_level")
+        .and_then(serde_json::Value::as_i64);
+    let expected_speed = expected_weapon
+        .get("weapon_speed_s")
+        .and_then(serde_json::Value::as_f64);
+    let expected_min = expected_weapon
+        .get("weapon_damage_min")
+        .and_then(serde_json::Value::as_f64);
+    let expected_max = expected_weapon
+        .get("weapon_damage_max")
+        .and_then(serde_json::Value::as_f64);
+    let Some(row) = item.row.as_ref() else {
+        return refusal(
+            "missing_source_fact",
+            "native weapon row has no source payload",
+        );
+    };
+    let Some(scaling) = scaling_option(row) else {
+        return refusal(
+            "missing_source_fact",
+            "native weapon has no base scaling option",
+        );
+    };
+    let damage_min = scaling.f64("weapon_damage_min");
+    let damage_max = scaling.f64("weapon_damage_max");
+    let weapon_speed_s = item.swing_speed;
+    if item.name != expected_name
+        || expected_required_level != Some(i64::from(required_level))
+        || expected_speed.is_none_or(|expected| (expected - weapon_speed_s).abs() > 1e-9)
+        || expected_min.is_none_or(|expected| (expected - damage_min).abs() > 1e-9)
+        || expected_max.is_none_or(|expected| (expected - damage_max).abs() > 1e-9)
+        || weapon_speed_s <= 0.0
+        || damage_min < 0.0
+        || damage_max <= 0.0
+        || damage_max < damage_min
+    {
+        return refusal(
+            "weapon_source_mismatch",
+            "native ItemSparse weapon stats no longer match the pinned source context",
+        );
+    }
+
+    let max_health = base_health - 180.0 + 10.0 * stamina;
+    let max_mana = base_mana - 280.0 + 15.0 * intellect;
+    let attack_power = 3.0 * level as f64 + 2.0 * strength - 20.0;
+    let armor = 2.0 * agility;
+    let weapon_dps = (damage_min + damage_max) / (2.0 * weapon_speed_s);
+    let provenance = source
+        .get("provenance")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+
+    serde_json::json!({
+        "status": "ok",
+        "context_kind": "source_backed_baseline_context_not_full_native_sim_actor",
+        "source_context_id": format!("paladin-{race_key}-l20-worn-mace-v1"),
+        "source_scope": source
+            .get("source_scope")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("inherited_vanilla_classic_not_forever_verified"),
+        "race_selection_note": source
+            .get("race_selection_note")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+        "class": class_key,
+        "race": race_key,
+        "race_id": race_context
+            .get("race_id")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or_default(),
+        "level": level,
+        "base_stats": {
+            "strength": strength,
+            "agility": agility,
+            "stamina": stamina,
+            "intellect": intellect,
+            "spirit": spirit,
+            "attack_power": attack_power,
+            "armor": armor
+        },
+        "resources": {
+            "base_health": base_health,
+            "base_mana": base_mana,
+            "max_health": max_health,
+            "max_mana": max_mana
+        },
+        "weapon": {
+            "item_id": item.id,
+            "name": item.name,
+            "required_level": required_level,
+            "weapon_type": item.weapon_type,
+            "hand_type": item.hand_type,
+            "proficiency_spell_id": proficiency_spell_id,
+            "proficiency_name": proficiency_name,
+            "weapon_speed_s": weapon_speed_s,
+            "weapon_damage_min": damage_min,
+            "weapon_damage_max": damage_max,
+            "weapon_dps": weapon_dps
+        },
+        "unsupported_fields": [
+            "melee_crit_percent",
+            "spell_crit_percent"
+        ],
+        "provenance": provenance
+    })
+}
+
 #[cfg(test)]
 mod native_item_options_contract_tests {
     use super::{native_item_options, native_item_options_with_required_levels, ITEMS};
@@ -1279,283 +1558,4 @@ mod native_item_options_contract_tests {
             "NATIVE_ITEM_OPTIONS_INVALID_LEVEL"
         );
     }
-}
-
-/// Return a narrow, source-backed level-20 Paladin baseline context.
-///
-/// This is source data for the active P3 caller, not a prepared native combat
-/// actor. Unsupported classes, races, levels, or a changed native weapon row
-/// fail closed instead of silently returning a proxy.
-pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json::Value {
-    let source: serde_json::Value =
-        serde_json::from_str(include_str!("../../data/paladin-l20-source-context.json"))
-            .expect("checked-in Paladin L20 source context must be valid JSON");
-
-    let class_key = class.trim().to_ascii_lowercase();
-    let default_race = source
-        .get("default_race")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("dwarf");
-    let race_key = if race.trim().is_empty() {
-        default_race.to_string()
-    } else {
-        race.trim().to_ascii_lowercase()
-    };
-    let refusal = |code: &str, reason: &str| {
-        serde_json::json!({
-            "status": "refused",
-            "class": class_key.clone(),
-            "race": race_key.clone(),
-            "level": level,
-            "refusal": { "code": code, "reason": reason }
-        })
-    };
-
-    if class_key != "paladin" {
-        return refusal(
-            "unsupported_player_context",
-            "the checked-in source context currently covers Paladin only",
-        );
-    }
-    if level
-        != source
-            .get("level")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(20) as i32
-    {
-        return refusal(
-            "unsupported_player_context",
-            "the checked-in source context currently covers Paladin level 20 only",
-        );
-    }
-    let Some(race_context) = source.get("races").and_then(|races| races.get(&race_key)) else {
-        return refusal(
-            "unsupported_player_context",
-            "Paladin level 20 source rows are available for Human and Dwarf only",
-        );
-    };
-    let Some(base_stats) = race_context.get("base_stats") else {
-        return refusal("missing_source_fact", "race row has no primary-stat source");
-    };
-    let stat = |key: &str| {
-        base_stats
-            .get(key)
-            .and_then(serde_json::Value::as_i64)
-            .map(|value| value as f64)
-    };
-    let (Some(strength), Some(agility), Some(stamina), Some(intellect), Some(spirit)) = (
-        stat("strength"),
-        stat("agility"),
-        stat("stamina"),
-        stat("intellect"),
-        stat("spirit"),
-    ) else {
-        return refusal(
-            "missing_source_fact",
-            "race row is missing one or more primary stats",
-        );
-    };
-    let Some(base_health) = source
-        .get("base_health")
-        .and_then(serde_json::Value::as_i64)
-        .map(|value| value as f64)
-    else {
-        return refusal(
-            "missing_source_fact",
-            "Paladin level-20 base health is missing",
-        );
-    };
-    let Some(base_mana) = source
-        .get("base_mana")
-        .and_then(serde_json::Value::as_i64)
-        .map(|value| value as f64)
-    else {
-        return refusal(
-            "missing_source_fact",
-            "Paladin level-20 base mana is missing",
-        );
-    };
-
-    let Some(weapon_spec) = source.get("weapon") else {
-        return refusal(
-            "missing_source_fact",
-            "baseline weapon source row is missing",
-        );
-    };
-    let Some(weapon_id) = weapon_spec
-        .get("item_id")
-        .and_then(serde_json::Value::as_i64)
-        .and_then(|value| i32::try_from(value).ok())
-    else {
-        return refusal("missing_source_fact", "baseline weapon item id is invalid");
-    };
-    let Some(proficiency_spell_id) = weapon_spec
-        .get("proficiency_spell_id")
-        .and_then(serde_json::Value::as_i64)
-    else {
-        return refusal(
-            "missing_source_fact",
-            "one-handed mace proficiency id is missing",
-        );
-    };
-    let proficiency_name = weapon_spec
-        .get("proficiency_name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let race_proficiency_spell_id = race_context
-        .get("weapon_proficiency_spell_id")
-        .and_then(serde_json::Value::as_i64);
-    if proficiency_spell_id != 198
-        || proficiency_name != "One-Handed Maces"
-        || race_proficiency_spell_id != Some(proficiency_spell_id)
-    {
-        return refusal(
-            "weapon_proficiency_mismatch",
-            "the selected weapon no longer matches the race's source-backed one-handed mace proficiency",
-        );
-    }
-
-    let Some(item) = database_item(weapon_id) else {
-        return refusal(
-            "missing_source_fact",
-            "native ItemSparse row for baseline weapon is missing",
-        );
-    };
-    let Some(required_level) = data::item_required_levels().get(&weapon_id).copied() else {
-        return refusal(
-            "missing_source_fact",
-            "native ItemSparse.RequiredLevel row for baseline weapon is missing",
-        );
-    };
-    if required_level > level {
-        return refusal(
-            "weapon_level_illegal",
-            "baseline weapon required level exceeds the requested player level",
-        );
-    }
-    if item.item_type != "ItemTypeWeapon"
-        || item.weapon_type != "WeaponTypeMace"
-        || item.hand_type != "HandTypeMainHand"
-    {
-        return refusal(
-            "weapon_source_mismatch",
-            "native weapon row is no longer a one-handed main-hand mace",
-        );
-    }
-    let Some(expected_weapon) = source
-        .get("provenance")
-        .and_then(|provenance| provenance.get("weapon_item"))
-    else {
-        return refusal("missing_source_fact", "weapon provenance row is missing");
-    };
-    let expected_name = expected_weapon
-        .get("item_name")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("");
-    let expected_required_level = expected_weapon
-        .get("required_level")
-        .and_then(serde_json::Value::as_i64);
-    let expected_speed = expected_weapon
-        .get("weapon_speed_s")
-        .and_then(serde_json::Value::as_f64);
-    let expected_min = expected_weapon
-        .get("weapon_damage_min")
-        .and_then(serde_json::Value::as_f64);
-    let expected_max = expected_weapon
-        .get("weapon_damage_max")
-        .and_then(serde_json::Value::as_f64);
-    let Some(row) = item.row.as_ref() else {
-        return refusal(
-            "missing_source_fact",
-            "native weapon row has no source payload",
-        );
-    };
-    let Some(scaling) = scaling_option(row) else {
-        return refusal(
-            "missing_source_fact",
-            "native weapon has no base scaling option",
-        );
-    };
-    let damage_min = scaling.f64("weapon_damage_min");
-    let damage_max = scaling.f64("weapon_damage_max");
-    let weapon_speed_s = item.swing_speed;
-    if item.name != expected_name
-        || expected_required_level != Some(i64::from(required_level))
-        || expected_speed.is_none_or(|expected| (expected - weapon_speed_s).abs() > 1e-9)
-        || expected_min.is_none_or(|expected| (expected - damage_min).abs() > 1e-9)
-        || expected_max.is_none_or(|expected| (expected - damage_max).abs() > 1e-9)
-        || weapon_speed_s <= 0.0
-        || damage_min < 0.0
-        || damage_max <= 0.0
-        || damage_max < damage_min
-    {
-        return refusal(
-            "weapon_source_mismatch",
-            "native ItemSparse weapon stats no longer match the pinned source context",
-        );
-    }
-
-    let max_health = base_health - 180.0 + 10.0 * stamina;
-    let max_mana = base_mana - 280.0 + 15.0 * intellect;
-    let attack_power = 3.0 * level as f64 + 2.0 * strength - 20.0;
-    let armor = 2.0 * agility;
-    let weapon_dps = (damage_min + damage_max) / (2.0 * weapon_speed_s);
-    let provenance = source
-        .get("provenance")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-
-    serde_json::json!({
-        "status": "ok",
-        "context_kind": "source_backed_baseline_context_not_full_native_sim_actor",
-        "source_context_id": format!("paladin-{race_key}-l20-worn-mace-v1"),
-        "source_scope": source
-            .get("source_scope")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("inherited_vanilla_classic_not_forever_verified"),
-        "race_selection_note": source
-            .get("race_selection_note")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(""),
-        "class": class_key,
-        "race": race_key,
-        "race_id": race_context
-            .get("race_id")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or_default(),
-        "level": level,
-        "base_stats": {
-            "strength": strength,
-            "agility": agility,
-            "stamina": stamina,
-            "intellect": intellect,
-            "spirit": spirit,
-            "attack_power": attack_power,
-            "armor": armor
-        },
-        "resources": {
-            "base_health": base_health,
-            "base_mana": base_mana,
-            "max_health": max_health,
-            "max_mana": max_mana
-        },
-        "weapon": {
-            "item_id": item.id,
-            "name": item.name,
-            "required_level": required_level,
-            "weapon_type": item.weapon_type,
-            "hand_type": item.hand_type,
-            "proficiency_spell_id": proficiency_spell_id,
-            "proficiency_name": proficiency_name,
-            "weapon_speed_s": weapon_speed_s,
-            "weapon_damage_min": damage_min,
-            "weapon_damage_max": damage_max,
-            "weapon_dps": weapon_dps
-        },
-        "unsupported_fields": [
-            "melee_crit_percent",
-            "spell_crit_percent"
-        ],
-        "provenance": provenance
-    })
 }
