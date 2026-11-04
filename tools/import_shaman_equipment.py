@@ -171,6 +171,9 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
         "class_id": SHAMAN_CLASS_ID,
         "class_mask": SHAMAN_CLASS_MASK,
         "race_policy": "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
+        # Complete SkillLine index distinguishes a known unavailable proficiency from a
+        # missing/unsupported source mapping in the native consumer.
+        "skill_line_ids": sorted(skill_lines),
         "skills": skills,
     }
     output_path = data_dir / "shaman-equipment-skills.json"
@@ -200,6 +203,7 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
         "class_mask": SHAMAN_CLASS_MASK,
         "shaman_class_skill_row_count": shaman_class_rows,
         "skill_race_class_availability_counts": dict(sorted(availability_counts.items())),
+        "skill_line_id_count": len(skill_lines),
         "projected_skill_count": len(skills),
         "class_wide_skill_count": sum(skill["min_level"] is not None for skill in skills),
         "race_specific_or_unavailable_skill_count": sum(skill["min_level"] is None for skill in skills),
@@ -216,6 +220,7 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
     return {
         "client_build": client_build,
         "shaman_class_skill_row_count": shaman_class_rows,
+        "skill_line_id_count": len(skill_lines),
         "projected_skill_count": len(skills),
         "class_wide_skill_count": source_manifest["class_wide_skill_count"],
         "race_specific_or_unavailable_skill_count": source_manifest["race_specific_or_unavailable_skill_count"],
