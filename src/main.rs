@@ -1,6 +1,6 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, native_item_options, prepare_json_with, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
+    contracts::prepared_v2::PreparedV2, native_item_options, prepare_json_with, prepared_refusals,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
@@ -165,7 +165,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine item-options --class priest|mage --level N --spec unrestricted --slot SLOT\nforever-engine version");
         return Ok(());
     }
     if args.len() == 3 && args[0] == "check" && args[1] == "--infile" {
@@ -227,7 +227,7 @@ fn run() -> Result<(), Failure> {
     }
 
     if args[0] != "sim" && args[0] != "bench" && args[0] != "prepare" {
-        return Err("expected sim, prepare, bench, check or version".into());
+        return Err("expected sim, prepare, bench, check, item-options or version".into());
     }
     let mut infile = None;
     let mut request_file = None;
