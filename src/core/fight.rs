@@ -6018,7 +6018,20 @@ impl<A: Agent> Fight<A> {
         // A defeated target can still have active debuffs. End ONLY its aura
         // lifetime before reset; never call global cleanup on the actor.
         self.aura_done_iteration(Side::Target);
+        self.retire_defeated_world_enemy_attack();
         self.reset_unit(Side::Target);
+        if self.config.target_auto_swing_melee {
+            // Enemy reset computes an offset from a fight starting at t=0.
+            // A retained world's fresh enemy must swing relative to THIS
+            // pull, not immediately at a stale timestamp from the first.
+            let attack = self.autos.enemy_attack(Side::Target);
+            attack.swing_at = at_ns.checked_add(attack.swing_at)
+                .ok_or("RUST_NEXT_TARGET_ENEMY_SWING_CLOCK_OVERFLOW")?;
+            attack.natural_ready_at = at_ns.checked_add(attack.natural_ready_at)
+                .ok_or("RUST_NEXT_TARGET_ENEMY_SWING_CLOCK_OVERFLOW")?;
+            attack.previous_swing = at_ns.checked_add(attack.previous_swing)
+                .ok_or("RUST_NEXT_TARGET_ENEMY_SWING_CLOCK_OVERFLOW")?;
+        }
         self.pull_started_at = at_ns;
         self.duration = next_end_ns;
         self.end_of_combat = next_end_ns;
@@ -6896,6 +6909,30 @@ mod tests {
         assert!(fight.player.mana > 0.0, "native mana regeneration did not apply");
         assert_eq!(fight.now, end);
         assert!(fight.accepts_next_target_clock(end, end + 1_000_000_000, true));
+    }
+
+    #[test]
+    fn native_persistent_next_target_resets_only_enemy_swing_on_monotonic_clock() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/feral-bear-druid-defensives.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+        let at = fight.end_of_combat;
+        fight.begin_next_target(at, at + 5 * crate::core::time::NS_PER_SECOND)
+            .unwrap();
+        assert!(fight.config.target_auto_swing_melee);
+        assert!(!fight.autos.enemy.enabled, "enemy cannot attack before next pull starts");
+        assert!(fight.autos.enemy.swing_at >= at, "new enemy swing was backdated");
+        assert!(fight.autos.enemy.swing_at < at + fight.autos.enemy.cur_swing_duration);
     }
 
     #[test]
