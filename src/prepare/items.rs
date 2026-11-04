@@ -839,9 +839,11 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin") {
-                // ItemSparse is the complete client-build candidate universe for this path.
-                // A MythicSim-only row absent from that table is not a client item candidate.
+            if matches!(class, "shaman" | "paladin" | "mage") {
+                // These P3 consumers select from the pinned client-build ItemSparse
+                // universe. A MythicSim-only row absent from this source is not
+                // an unresolved RequiredLevel for a playable client item.
+                // Keep Priest on its existing partial/unknown policy.
                 response.excluded_non_client_item_count += 1;
             } else {
                 response.unverified_candidate_count += 1;
@@ -1223,6 +1225,23 @@ mod native_item_options_contract_tests {
                         && pair[0].item_id < pair[1].item_id)
             }));
         }
+    }
+
+    #[test]
+    fn mage_l30_excludes_non_client_items_instead_of_unknown_required_levels() {
+        // Mage P3 uses the same pinned client ItemSparse universe as the
+        // other native-backed P3 providers. Do not substitute a guessed level.
+        let response = native_item_options("mage", 30, "unrestricted", "all");
+        assert_eq!(response.status, "ok", "{:?}", response.refusal);
+        assert!(response.required_level_supported);
+        assert!(response.refusal.is_none());
+        assert_eq!(response.unverified_candidate_count, 0);
+        assert!(response.excluded_non_client_item_count > 0);
+        assert!(!response.items.is_empty());
+        assert!(response.items.iter().all(|item| {
+            item.required_level <= 30
+                && item.required_level_origin == "client_ItemSparse.RequiredLevel"
+        }));
     }
 
     #[test]
