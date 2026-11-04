@@ -337,7 +337,6 @@ fn priest_l20_base_stats(race: &str) -> Option<Stats> {
     Some(out)
 }
 
-
 #[derive(serde::Deserialize)]
 struct RogueL20CritSource {
     melee_agility_rate_level_1: f64,
@@ -961,7 +960,6 @@ mod level_contract_tests {
             assert_eq!(refusal.code, "level");
         }
     }
-
 
     #[test]
     fn rogue_l20_prepares_with_sourced_health_primary_stats_and_agility_conversion() {
