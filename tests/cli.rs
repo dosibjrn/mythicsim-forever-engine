@@ -317,20 +317,22 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
         serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
     // Native RaidSimResult serializes actions as a list of {id, targets},
     // not a map keyed by JSON-encoded ActionId.
+    // Native RaidSimResult uses protojson's repeated ActionMetrics array, not
+    // a spell-id-keyed object. Keep this assertion tied to the real wire
+    // format and count only source-backed rank-one Smite casts.
     let player_actions = report["result"]["raidMetrics"]["parties"][0]["players"][0]["actions"]
         .as_array()
-        .expect("the native Priest L20 actor must report its action metrics");
+        .expect("the native Priest L20 actor must report its action metrics array");
     let smite_casts = player_actions
         .iter()
         .filter(|action| action["id"]["spellId"] == 585)
-        .filter_map(|action| action["targets"].as_array())
-        .flat_map(|targets| targets.iter())
-        .map(|target| target["casts"].as_f64().unwrap_or(0.0))
-        .sum::<f64>();
+        .flat_map(|action| action["targets"].as_array().into_iter().flatten())
+        .map(|target| target["casts"].as_i64().unwrap_or(0))
+        .sum::<i64>();
     assert!(
-        smite_casts > 0.0,
-        "the native Priest L20 actor must cast source-backed rank-one Smite; action ids: {:?}",
-        player_actions.iter().map(|action| &action["id"]).collect::<Vec<_>>()
+        smite_casts > 0,
+        "the native Priest L20 actor must cast source-backed rank-one Smite; action metrics: {:?}",
+        player_actions
     );
     assert!(
         report["result"]["raidMetrics"]["dps"]["avg"]
