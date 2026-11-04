@@ -29,6 +29,22 @@ cargo run --locked --release -- sim --infile fixtures/mage/prepared-v2/frost-ref
 and prints the same JSON result that Go prints. You do not need Go to build or test
 the engine.
 
+
+### Talent options (read-only)
+
+`cargo run --locked -- talent-options --class druid --level 30` returns the
+TalentsForever tree slots for that class, including each talent's source field
+name, tree-string index, maximum rank, row/tier requirements, minimum reachable
+level, and any prerequisite with its required rank. The response also includes
+the total talent-point budget (`max(level - 9, 0)`) and the pinned source commit.
+All nine classes are supported. The same data is available in Rust via
+`forever_engine::native_talent_options(class, level)`.
+
+This is **candidate-discovery metadata**, not a build-validation rule. The
+simulator continues to allow broken prerequisites for comparative simulations,
+as the upstream TalentsForever talent picker does. The API does not claim
+that every tree slot has a scenario-relevant implemented combat effect.
+
 ## How it works
 
 1. Rust prepares the character from the application's request: gear, stats, auras,
