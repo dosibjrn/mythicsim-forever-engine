@@ -60,13 +60,21 @@ pub(super) fn options(class: Class) -> Vec<TalentOption> {
     let layout = native_layout(class);
     let mut result = Vec::new();
 
-    for (tree_index, tree) in source.as_array().expect("three class talent trees").iter().enumerate() {
+    for (tree_index, tree) in source
+        .as_array()
+        .expect("three class talent trees")
+        .iter()
+        .enumerate()
+    {
         let tree_name = tree["name"].as_str().expect("tree name").to_owned();
         let entries = tree["talents"].as_array().expect("talent slots");
         for (position, entry) in entries.iter().enumerate() {
             let source_field = entry["field_name"].as_str().expect("talent field");
             let native = layout.as_ref().and_then(|value| {
-                value["trees"].get(tree_index)?.get("talents")?.get(position)
+                value["trees"]
+                    .get(tree_index)?
+                    .get("talents")?
+                    .get(position)
             });
             let field = native
                 .and_then(|slot| slot["field"].as_str())
@@ -75,10 +83,15 @@ pub(super) fn options(class: Class) -> Vec<TalentOption> {
             let in_proto = native
                 .and_then(|slot| slot["in_proto"].as_bool())
                 .unwrap_or_else(|| {
-                    let proto_type = format!("proto.{}Talents", class.proto_name().trim_start_matches("Class"));
+                    let proto_type = format!(
+                        "proto.{}Talents",
+                        class.proto_name().trim_start_matches("Class")
+                    );
                     crate::contracts::request::field_by_name(&proto_type, &field).is_some()
                 });
-            let tier_points = entry["points_required_in_tree"].as_u64().expect("tier points") as u8;
+            let tier_points = entry["points_required_in_tree"]
+                .as_u64()
+                .expect("tier points") as u8;
             let min_level = entry["minimum_level"].as_u64().expect("minimum level") as u8;
             let mut prerequisites = vec![
                 Prerequisite::MinimumLevel { level: min_level },
@@ -121,8 +134,15 @@ mod tests {
     #[test]
     fn source_contains_all_nine_class_trees_and_explicit_arrows() {
         let classes = [
-            Class::Druid, Class::Hunter, Class::Mage, Class::Paladin, Class::Priest,
-            Class::Rogue, Class::Shaman, Class::Warlock, Class::Warrior,
+            Class::Druid,
+            Class::Hunter,
+            Class::Mage,
+            Class::Paladin,
+            Class::Priest,
+            Class::Rogue,
+            Class::Shaman,
+            Class::Warlock,
+            Class::Warrior,
         ];
         let mut count = 0;
         let mut arrows = 0;
@@ -140,9 +160,10 @@ mod tests {
                     } = prerequisite
                     {
                         arrows += 1;
-                        let parent = talents.iter().find(|t| {
-                            t.tree == talent.tree && t.position == *position
-                        }).unwrap();
+                        let parent = talents
+                            .iter()
+                            .find(|t| t.tree == talent.tree && t.position == *position)
+                            .unwrap();
                         assert_eq!(&parent.source_field, source_field);
                         assert_eq!(parent.max_ranks, *required_rank);
                     }
@@ -156,16 +177,19 @@ mod tests {
     #[test]
     fn current_paladin_holy_same_row_arrow_is_preserved() {
         let talents = options(Class::Paladin);
-        let boundless = talents.iter().find(|t| t.source_field == "boundlessLight").unwrap();
+        let boundless = talents
+            .iter()
+            .find(|t| t.source_field == "boundlessLight")
+            .unwrap();
         assert!(boundless.prerequisites.iter().any(|p| matches!(
             p,
             Prerequisite::TalentRank {
                 source_field, required_rank: 1, ..
             } if source_field == "holyShock"
         )));
-        assert!(boundless.prerequisites.iter().any(|p| matches!(
-            p,
-            Prerequisite::PointsInTree { points: 20, .. }
-        )));
+        assert!(boundless
+            .prerequisites
+            .iter()
+            .any(|p| matches!(p, Prerequisite::PointsInTree { points: 20, .. })));
     }
 }
