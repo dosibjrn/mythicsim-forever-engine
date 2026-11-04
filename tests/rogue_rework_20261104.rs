@@ -604,7 +604,9 @@ fn death_mark_releases_stored_damage_after_six_seconds() {
     };
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result;
+    let result = simulate_prepared(&prepared, RngMode::Stochastic)
+        .unwrap()
+        .result;
     let player = &result["raidMetrics"]["parties"][0]["players"][0];
     let damage_of = |spell_id: Option<i64>| -> f64 {
         player["actions"]
