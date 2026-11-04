@@ -145,7 +145,7 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
         })
 
     if not class_skill_rows:
-        raise ValueError(f"SkillRaceClassInfo contains no rows for {class_name} class mask {class_mask}")
+        raise ValueError(f"SkillRaceClassInfo contains no rows for {class_name.capitalize()} class mask {class_mask}")
     if not skill_lines:
         raise ValueError("SkillLine contains no rows")
 
