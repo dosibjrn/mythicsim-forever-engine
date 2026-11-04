@@ -2,7 +2,7 @@
 //! Activated only by FOREVER_GSIM_WORLD_BRIDGE=1. All damage comes from the
 //! unchanged native Fight::deal_damage; the world applies it before native
 //! scheduler resumes. This is a bounded multi-fight diagnostic, NOT P7 acceptance.
-use std::{cell::RefCell, io::{self, BufRead, Write}};
+use std::{cell::RefCell, collections::BTreeMap, io::{self, BufRead, Write}};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -42,6 +42,8 @@ struct Bridge {
 }
 thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
+    static SOURCE_ACTION_COUNTS: RefCell<BTreeMap<String, u64>> =
+        RefCell::new(BTreeMap::new());
 }
 
 pub(crate) fn enabled() -> bool {
@@ -50,6 +52,7 @@ pub(crate) fn enabled() -> bool {
 
 pub(crate) fn start(source_hash: &str) {
     assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
+    SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
         last_health: None, previous_ack_id: String::new(),
@@ -69,6 +72,7 @@ pub(crate) fn requested_iterations(source_count: u32) -> u32 {
 }
 
 pub(crate) fn begin_iteration(iteration: u32) {
+    SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
@@ -207,6 +211,22 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     })
 }
 
+fn record_source_action(action: &str) {
+    if !action.is_empty() {
+        SOURCE_ACTION_COUNTS.with(|counts| {
+            *counts.borrow_mut().entry(action.to_owned()).or_default() += 1;
+        });
+    }
+}
+
+/// Drain landed source-action damage events accumulated since the previous world window.
+pub(crate) fn take_source_action_counts() -> Value {
+    SOURCE_ACTION_COUNTS.with(|counts| {
+        let counts = std::mem::take(&mut *counts.borrow_mut());
+        json!(counts)
+    })
+}
+
 pub(crate) fn record_damage(
     time_ns: i64,
     damage: f64,
@@ -256,6 +276,7 @@ fn append_damage_event(
     caster_label: String,
 ) {
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
+    record_source_action(&action);
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
@@ -688,5 +709,21 @@ mod iteration_teardown_tests {
     fn next_iteration_requires_a_finished_previous_iteration() {
         BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
         begin_iteration(1);
+    }
+}
+
+
+#[cfg(test)]
+mod source_action_count_tests {
+    use super::{record_source_action, take_source_action_counts};
+    use serde_json::json;
+
+    #[test]
+    fn source_action_counts_are_positive_and_drained_per_window() {
+        record_source_action("spell:585");
+        record_source_action("spell:585");
+        record_source_action("");
+        assert_eq!(take_source_action_counts(), json!({"spell:585": 2}));
+        assert_eq!(take_source_action_counts(), json!({}));
     }
 }

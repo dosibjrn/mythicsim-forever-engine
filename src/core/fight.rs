@@ -5843,6 +5843,7 @@ impl<A: Agent> Fight<A> {
                     (mana_regen_gain - previous_mana_regen_gain).max(0.0),
                 "native_combat_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
+                "source_action_counts": world_bridge::take_source_action_counts(),
             }));
             previous_damage = total_damage;
             previous_health_damage = health_damage;

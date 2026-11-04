@@ -18,17 +18,19 @@ const FOREVER_ENUM_VALUES: [(&str, &str, i32); 2] = [
     ("proto.HunterOptions.Ammo", "SwiftstrikeShot", 14),
 ];
 
-/// Message fields Forever has that the pinned reference schema lacks (README, Rust-only
-/// mechanics), each added unless the message already has a field of that name or number. They
-/// number from 1000, clear of anything the reference or an upstream merge will add: the
-/// reference refuses them as unknown fields, so a request that sets one is a Rust-only request.
-/// Each is a `bool` of the message: (message, proto name, JSON name, number).
-const FOREVER_BOOL_FIELDS: [(&str, &str, &str, u32); 1] = [(
-    "proto.ConsumesSpec",
-    "oil_of_immolation",
-    "oilOfImmolation",
-    1000,
-)];
+/// Message fields Forever has that the pinned Go reference schema lacks. These numbers
+/// are deliberately outside the Go schema range; explicit level is a Rust-only request.
+/// Each entry is (message, proto name, JSON name, field number, kind).
+const FOREVER_SCALAR_FIELDS: [(&str, &str, &str, u32, FieldKind); 2] = [
+    (
+        "proto.ConsumesSpec",
+        "oil_of_immolation",
+        "oilOfImmolation",
+        1000,
+        FieldKind::Bool,
+    ),
+    ("proto.Player", "level", "level", 1001, FieldKind::Int32),
+];
 
 /// A field's protobuf kind, by Go's `protoreflect.Kind` name.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -185,7 +187,7 @@ fn schema() -> &'static Schema {
                 });
             }
         }
-        for (message, name, json_name, number) in FOREVER_BOOL_FIELDS {
+        for (message, name, json_name, number, kind) in FOREVER_SCALAR_FIELDS {
             let fields = &mut raw
                 .messages
                 .get_mut(message)
@@ -199,7 +201,7 @@ fn schema() -> &'static Schema {
                     name: name.to_string(),
                     json_name: json_name.to_string(),
                     number,
-                    kind: FieldKind::Bool,
+                    kind,
                     repeated: false,
                     packed: false,
                     optional: false,

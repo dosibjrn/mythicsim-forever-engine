@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::contracts::prepared_v2::ActionId;
 use crate::contracts::request::Message;
@@ -132,6 +133,10 @@ pub(crate) fn unit_level_f64(
 /// Go `RatingConversions` and `AddRatingConversions`.
 pub(crate) fn add_rating_conversions(sim: &mut Sim, unit: UnitId) {
     use constants::*;
+    // These are max-level Go constants. Never apply them to the sourced L20 Priest actor.
+    if sim.unit(unit).level != CHARACTER_LEVEL {
+        return;
+    }
     let conversions: [(Stat, Stat, f64, f64); 12] = [
         (
             Stat::MeleeHitRating,
@@ -216,6 +221,26 @@ pub(crate) fn add_rating_conversions(sim: &mut Sim, unit: UnitId) {
     }
 }
 
+const LEVEL_DEPENDENT_RATING_STATS: [Stat; 11] = [
+    Stat::MeleeHitRating,
+    Stat::SpellHitRating,
+    Stat::MeleeCritRating,
+    Stat::SpellCritRating,
+    Stat::MeleeHasteRating,
+    Stat::SpellHasteRating,
+    Stat::ExpertiseRating,
+    Stat::DefenseRating,
+    Stat::BlockRating,
+    Stat::DodgeRating,
+    Stat::ParryRating,
+];
+
+fn has_level_dependent_rating_stats(stats: &Stats) -> bool {
+    LEVEL_DEPENDENT_RATING_STATS
+        .into_iter()
+        .any(|stat| stats[stat] != 0.0)
+}
+
 /// Go `Character.addUniversalStatDependencies`.
 pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: UnitId) {
     add_rating_conversions(sim, unit);
@@ -225,8 +250,101 @@ pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: Uni
     sdm.add_stat_dependency(Stat::Agility, Stat::Armor, 2.0);
 }
 
-/// Go `BaseStats[{race, class}]`.
-fn base_stats(class: &str, race: &str) -> Option<Stats> {
+/// Legacy requests omit level and remain level 60. The only additional native actor
+/// currently sourced end-to-end is a level-20 Priest with one of the five Classic races.
+fn requested_player_level(player: &Message) -> Result<i32, Refusal> {
+    let requested = player.i32("level");
+    let level = if requested == 0 {
+        constants::CHARACTER_LEVEL
+    } else {
+        requested
+    };
+    if level == constants::CHARACTER_LEVEL {
+        return Ok(level);
+    }
+    let class = player.enum_name("class");
+    let race = player.enum_name("race");
+    if level == 20 && class == "ClassPriest" && base_stats(&class, &race, level).is_some() {
+        return Ok(level);
+    }
+    Err(Refusal::new(
+        "level",
+        format!(
+            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60 and Priest level 20 for sourced Classic races)"
+        ),
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct PriestL20CritSource {
+    spell_base_percent: f64,
+    spell_intellect_rate0: f64,
+    spell_intellect_rate_per_level: f64,
+    melee_agility_rate_level_1: f64,
+    melee_agility_rate_level_60: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct PriestL20Source {
+    class: String,
+    level: i32,
+    base_health: f64,
+    base_mana: f64,
+    crit: PriestL20CritSource,
+    races: BTreeMap<String, BTreeMap<String, f64>>,
+}
+
+fn priest_l20_source() -> &'static PriestL20Source {
+    static SOURCE: OnceLock<PriestL20Source> = OnceLock::new();
+    SOURCE.get_or_init(|| {
+        let parsed: PriestL20Source =
+            serde_json::from_str(include_str!("../../data/priest-l20-base-stats.json"))
+                .expect("Priest L20 source rows and conversions parse");
+        assert_eq!(parsed.class, "ClassPriest");
+        assert_eq!(parsed.level, 20);
+        parsed
+    })
+}
+
+/// CMaNGOS GetSpellCritFromIntellect: base + intellect / (rate0 + rate1 * level).
+fn priest_l20_crit_per_int() -> f64 {
+    let crit = &priest_l20_source().crit;
+    1.0 / (crit.spell_intellect_rate0
+        + crit.spell_intellect_rate_per_level * priest_l20_source().level as f64)
+}
+
+/// CMaNGOS GetMeleeCritFromAgility: agility / the level-interpolated class rate.
+fn priest_l20_crit_per_agi() -> f64 {
+    let source = priest_l20_source();
+    let level = source.level as f64;
+    let crit = &source.crit;
+    let agility_rate = crit.melee_agility_rate_level_1 * (60.0 - level) / 59.0
+        + crit.melee_agility_rate_level_60 * (level - 1.0) / 59.0;
+    1.0 / agility_rate
+}
+
+/// Source-backed Priest L20 primary stats, class resources and base spell crit.
+fn priest_l20_base_stats(race: &str) -> Option<Stats> {
+    let source = priest_l20_source();
+    let values = source.races.get(race)?;
+    let mut out = Stats::default();
+    for (name, value) in values {
+        out[Stat::by_name(name)?] = *value;
+    }
+    out[Stat::Health] = source.base_health;
+    out[Stat::Mana] = source.base_mana;
+    out[Stat::SpellCritPercent] = source.crit.spell_base_percent;
+    Some(out)
+}
+
+/// Go `BaseStats[{race, class}]` for L60; sourced Priest L20 rows otherwise.
+fn base_stats(class: &str, race: &str, level: i32) -> Option<Stats> {
+    if level == 20 && class == "ClassPriest" {
+        return priest_l20_base_stats(race);
+    }
+    if level != constants::CHARACTER_LEVEL {
+        return None;
+    }
     let values = crate::data::tables::tables()
         .base_stats
         .get(class)?
@@ -271,11 +389,12 @@ impl Sim {
                 "a player database is unsupported".to_string(),
             ));
         }
+        let level = requested_player_level(player)?;
         let index = party_index * 5 + player_index;
         let name = player.str("name").to_string();
         let mut unit = Unit::new(UnitType::Player, format!("{} (#{})", name, index + 1));
         unit.index = index;
-        unit.level = constants::CHARACTER_LEVEL;
+        unit.level = level;
         unit.reaction_time = Duration::from(player.i32("reaction_time_ms").max(10)) * MILLISECOND;
         unit.channel_clip_delay =
             (Duration::from(player.i32("channel_clip_delay_ms")) * MILLISECOND).max(0);
@@ -284,12 +403,12 @@ impl Sim {
         let race = player.enum_name("race");
         let class = player.enum_name("class");
         let equipment = items::equipment(player.message("equipment"), area_types)?;
-        let base_stats = base_stats(&class, &race)
+        let base_stats = base_stats(&class, &race, level)
             .ok_or_else(|| Refusal::new("race", format!("no base stats for {race} {class}")))?;
         unit.character = Some(Box::new(Character {
             name,
             race,
-            class,
+            class: class.clone(),
             disable_racials: player.bool("disable_racials"),
             equipment,
             consumables: player
@@ -370,6 +489,14 @@ impl Sim {
             }
         }
         let cached = self.compute_equip_stats(id);
+        if level != constants::CHARACTER_LEVEL && has_level_dependent_rating_stats(&cached) {
+            return Err(Refusal::new(
+                "level",
+                format!(
+                    "player level {level} {class} loadout contains combat-rating stats but no level-{level} rating conversion source is available"
+                ),
+            ));
+        }
         let character = self.character_mut(id);
         character.cached_equip_stats = cached;
         character.equip_cache_valid = true;
@@ -485,12 +612,7 @@ impl Sim {
             return self.enable_pet_mana_bar(unit);
         }
         if self.unit(unit).unit_type == UnitType::Player {
-            let class = self.character(unit).class.clone();
-            let crit_per_int = crate::data::tables::tables()
-                .crit_per_int_max_level
-                .get(&class)
-                .copied()
-                .unwrap_or(0.0);
+            let crit_per_int = self.crit_per_int(unit);
             self.unit_mut(unit).sdm.add_stat_dependency(
                 Stat::Intellect,
                 Stat::SpellCritPercent,
@@ -525,6 +647,26 @@ impl Sim {
         u.mana_bar.enabled = true;
         u.mana_bar.base_mana = base_mana;
         u.current_power_bar = super::sim::PowerBar::Mana;
+    }
+
+    /// Go `CritPerIntMaxLevel[class]`, with the sourced Priest L20 conversion when applicable.
+    pub(crate) fn crit_per_int(&self, unit: UnitId) -> f64 {
+        if self.unit(unit).level == 20 && self.character(unit).class == "ClassPriest" {
+            return priest_l20_crit_per_int();
+        }
+        crate::data::tables::tables()
+            .crit_per_int_max_level
+            .get(&self.character(unit).class)
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// Level-aware agility-to-crit conversion for the native Priest preparation path.
+    pub(crate) fn crit_per_agi(&self, unit: UnitId) -> f64 {
+        if self.unit(unit).level == 20 && self.character(unit).class == "ClassPriest" {
+            return priest_l20_crit_per_agi();
+        }
+        self.crit_per_agi_max_level(unit)
     }
 
     /// Go `CritPerAgiMaxLevel[class]`.
@@ -718,4 +860,122 @@ impl Sim {
 /// The pseudo stats a fresh player has.
 pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
     PseudoStats::new()
+}
+
+#[cfg(test)]
+mod level_contract_tests {
+    use super::{
+        constants, has_level_dependent_rating_stats, priest_l20_crit_per_agi,
+        priest_l20_crit_per_int, requested_player_level, Sim,
+    };
+    use crate::contracts::request::Message;
+    use crate::prepare::stats::{Stat, Stats};
+
+    #[test]
+    fn omitted_and_explicit_60_keep_legacy_level() {
+        for json in ["{}", r#"{"level":60}"#] {
+            let player = Message::from_json_text("proto.Player", json).unwrap();
+            assert_eq!(
+                requested_player_level(&player).unwrap(),
+                constants::CHARACTER_LEVEL
+            );
+        }
+    }
+
+    #[test]
+    fn only_sourced_priest_classic_races_accept_level_20() {
+        let priest = Message::from_json_text(
+            "proto.Player",
+            r#"{"level":20,"class":"ClassPriest","race":"RaceDwarf"}"#,
+        )
+        .unwrap();
+        assert_eq!(requested_player_level(&priest).unwrap(), 20);
+
+        for json in [
+            r#"{"level":20}"#,
+            r#"{"level":20,"class":"ClassMage","race":"RaceHuman"}"#,
+            r#"{"level":20,"class":"ClassPriest","race":"RaceGnome"}"#,
+            r#"{"level":19,"class":"ClassPriest","race":"RaceDwarf"}"#,
+            r#"{"level":-1,"class":"ClassPriest","race":"RaceDwarf"}"#,
+        ] {
+            let player = Message::from_json_text("proto.Player", json).unwrap();
+            let refusal = requested_player_level(&player).unwrap_err();
+            assert_eq!(refusal.code, "level");
+        }
+    }
+
+    #[test]
+    fn priest_l20_is_prepared_as_a_source_backed_native_actor() {
+        let player = Message::from_json_text(
+            "proto.Player",
+            r#"{"level":20,"class":"ClassPriest","race":"RaceDwarf"}"#,
+        )
+        .unwrap();
+        let mut sim = Sim::new();
+        let unit = sim.new_character(0, 0, &player, &[]).unwrap();
+
+        assert_eq!(sim.unit(unit).level, 20);
+        let base = sim.character(unit).base_stats;
+        assert_eq!(base[Stat::Strength], 25.0);
+        assert_eq!(base[Stat::Agility], 21.0);
+        assert_eq!(base[Stat::Stamina], 31.0);
+        assert_eq!(base[Stat::Intellect], 48.0);
+        assert_eq!(base[Stat::Spirit], 50.0);
+        assert_eq!(base[Stat::Health], 237.0);
+        assert_eq!(base[Stat::Mana], 437.0);
+        assert_eq!(base[Stat::SpellCritPercent], 2.97);
+        assert_eq!(base[Stat::PhysicalCritPercent], 0.0);
+
+        // L20 never inherits the pinned level-60 combat-rating conversions.
+        assert_eq!(
+            sim.unit(unit)
+                .sdm
+                .stat_dependency_coeff(Stat::MeleeHitRating, Stat::PhysicalHitPercent),
+            0.0
+        );
+        sim.enable_mana_bar(unit);
+        let crit_per_int = priest_l20_crit_per_int();
+        assert_eq!(
+            sim.unit(unit)
+                .sdm
+                .stat_dependency_coeff(Stat::Intellect, Stat::SpellCritPercent),
+            crit_per_int
+        );
+        assert_eq!(
+            sim.unit(unit)
+                .sdm
+                .stat_dependency_coeff(Stat::Intellect, Stat::Mana),
+            15.0
+        );
+        assert_eq!(
+            sim.unit(unit)
+                .sdm
+                .stat_dependency_coeff(Stat::Stamina, Stat::Health),
+            10.0
+        );
+
+        // This is the same class-specific dependency installed by NewPriest.
+        let crit_per_agi = sim.crit_per_agi(unit);
+        assert_eq!(crit_per_agi, priest_l20_crit_per_agi());
+        sim.unit_mut(unit).sdm.add_stat_dependency(
+            Stat::Agility,
+            Stat::PhysicalCritPercent,
+            crit_per_agi,
+        );
+
+        let raw = sim.unit(unit).stats.clone();
+        let applied = sim.unit_mut(unit).sdm.sort_and_apply_stat_dependencies(raw);
+        assert_eq!(applied[Stat::Health], 367.0);
+        assert_eq!(applied[Stat::Mana], 877.0);
+        assert!((applied[Stat::SpellCritPercent] - (2.97 + 48.0 * crit_per_int)).abs() < 1e-10);
+        assert!((applied[Stat::PhysicalCritPercent] - 21.0 * crit_per_agi).abs() < 1e-10);
+    }
+
+    #[test]
+    fn level_20_rating_stats_are_detected_instead_of_using_level_60_rates() {
+        let mut stats = Stats::default();
+        assert!(!has_level_dependent_rating_stats(&stats));
+        stats[Stat::SpellHitRating] = 1.0;
+        assert!(has_level_dependent_rating_stats(&stats));
+    }
 }
