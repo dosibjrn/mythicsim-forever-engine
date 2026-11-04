@@ -1215,7 +1215,9 @@ fn a_rotation_for_a_removed_crowd_pummeler_prepares() {
     let reference = prepare_json_with(go_tree.as_bytes(), "rust", Rules::GoReference).unwrap();
     let reference: PreparedV2 = serde_json::from_value(reference).unwrap();
     check_prepared(&reference).unwrap();
-    let result = simulate_prepared(&reference, RngMode::Stochastic).unwrap().result;
+    let result = simulate_prepared(&reference, RngMode::Stochastic)
+        .unwrap()
+        .result;
     let player = &result["raidMetrics"]["parties"][0]["players"][0];
     assert_eq!(player["dps"]["avg"].as_f64(), Some(735.1341492796465));
 }
