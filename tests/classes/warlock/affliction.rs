@@ -137,7 +137,7 @@ fn the_pet_dismissal_line_keeps_the_float_residue() {
     value["sim"]["iterations"] = json!(1);
     let log = |value: &Value| {
         let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
-        let report = simulate_prepared(&prepared).unwrap();
+        let report = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
         report.result["logs"].as_str().unwrap().to_string()
     };
     let residue = "\"Intellect\": 70.000,\"SpellDamage\": -0.000,\"Spirit\"";

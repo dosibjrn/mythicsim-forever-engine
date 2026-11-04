@@ -207,7 +207,7 @@ impl RogueAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2) -> Result<Fight<RogueAgent>, String> {
+    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<RogueAgent>, String> {
         let auras: Vec<(String, RogueAura)> = prepared
             .effects
             .iter()
@@ -254,7 +254,7 @@ impl RogueAgent {
             )
             .collect();
         let spell = |exported: &ExportedSpell| RogueAgent::spell(prepared, exported);
-        let mut fight = Fight::new(prepared, RogueAgent::default(), spell, |unit, label| {
+        let mut fight = Fight::new(prepared, rng_mode, RogueAgent::default(), spell, |unit, label| {
             auras
                 .iter()
                 .find(|(name, kind)| {

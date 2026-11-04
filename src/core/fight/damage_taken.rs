@@ -284,7 +284,7 @@ impl<A: Agent> Fight<A> {
             - defender.reduced_crit_taken_percent)
             / 100.0
             - defender.table.spell_crit_suppression;
-        if can_crit && self.random("Magical Crit Roll") < crit.max(0.0) {
+        if can_crit && self.proc(crit.max(0.0), "Magical Crit Roll") {
             result.outcome = OUTCOME_CRIT;
             let state = &self.spells[spell];
             result.damage *= crit_damage_multiplier(

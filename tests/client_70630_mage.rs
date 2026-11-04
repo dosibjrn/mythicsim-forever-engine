@@ -64,7 +64,7 @@ fn log(rules: Rules, rotation: Vec<Value>, seconds: f64) -> (Value, Vec<String>)
     player["distanceFromTarget"] = 5.into();
     let prepared = prepare_json_with(request.to_string().as_bytes(), "rust", rules).unwrap();
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
-    let report = simulate_prepared(&typed).unwrap();
+    let report = simulate_prepared(&typed, forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap().to_string();
     (prepared, logs.lines().map(str::to_string).collect())
 }

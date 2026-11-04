@@ -76,7 +76,7 @@ pub(crate) fn bind_bounty(
 impl NaturesBounty {
     fn roll(&self, fight: &mut Fight<DruidAgent>, which: usize) -> bool {
         let label = self.labels[which].clone();
-        fight.random(&label) <= self.proc_chance
+        fight.proc(self.proc_chance, &label)
     }
 
     /// The mana trigger's `OnCastComplete`.

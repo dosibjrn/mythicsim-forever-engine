@@ -139,7 +139,7 @@ impl Heals {
         // crit, which the Oath's aura took off.
         let mut unsworn_crit = 0.0;
         if let Some(oath) = fight.agent.oath.filter(|oath| oath.on(fight, target)) {
-            if fight.random("Oath of Light") < oath.holder_share {
+            if fight.proc(oath.holder_share, "Oath of Light") {
                 amount += match rank.kind {
                     HealKind::HolyLight => oath.holy_light,
                     HealKind::FlashOfLight => oath.flash_of_light,

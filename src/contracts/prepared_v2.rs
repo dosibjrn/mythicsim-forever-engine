@@ -1977,6 +1977,8 @@ pub enum Effect {
         rank: FireballRank,
         debuff_aura: String,
     },
+    /// Source-native Forever Entangling Roots: timed periodic combat occurs in the Druid agent.
+    EntanglingRoots {},
     /// Innervate's cast and aura: full spirit regeneration at a multiple, attributed to its own
     /// regeneration metrics.
     Innervate {
@@ -5260,6 +5262,7 @@ impl Effect {
             Effect::Wrath {} => "wrath",
             Effect::Moonfire { .. } => "moonfire",
             Effect::InsectSwarm { .. } => "insect_swarm",
+            Effect::EntanglingRoots {} => "entangling_roots",
             Effect::Innervate { .. } => "innervate",
             Effect::OmenOfClarity { .. } => "omen_of_clarity",
             Effect::NaturesGrace { .. } => "natures_grace",

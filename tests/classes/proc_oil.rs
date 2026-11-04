@@ -30,7 +30,7 @@ fn simulate(main: i64, off: i64, bonus_spell_damage: f64) -> (Value, Value) {
     let stats = &mut prepared["player"]["stats"]["SpellDamage"];
     *stats = json!(stats.as_f64().unwrap() + bonus_spell_damage);
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
-    let report = forever_engine::simulate_prepared(&typed).unwrap();
+    let report = forever_engine::simulate_prepared(&typed, forever_engine::RngMode::Stochastic).unwrap();
     (prepared, report.result)
 }
 

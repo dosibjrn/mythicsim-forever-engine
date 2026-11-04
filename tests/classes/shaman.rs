@@ -160,7 +160,7 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -379,7 +379,7 @@ fn stormstrike_regen(mut value: Value, forever: bool) -> (Option<f64>, f64) {
         value["player"]["casting_regen_at_once"] = json!(true);
     }
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let gain = player["resources"]
         .as_array()
@@ -439,7 +439,7 @@ fn water_shield_crits_restore_mana() {
     assert!(!effect["trigger_spells"].as_array().unwrap().is_empty());
     let prepared: PreparedV2 = serde_json::from_value(prepared).unwrap();
     assert_eq!(prepared_coverage(&prepared), Vec::<String>::new());
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let row = player["resources"]
         .as_array()

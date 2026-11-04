@@ -41,8 +41,9 @@ pub(super) fn naturalist(rules: Rules) -> &'static Ladder {
 }
 
 /// The talents the Druid package reads, by the proto's field names. The ones Go leaves
-/// unmodelled (Improved Entangling Roots, Overgrowth, Brutal Impact, Feral Charge, Nature's
-/// Focus and the healing talents) have no field.
+/// unmodelled (Overgrowth, Brutal Impact, Feral Charge, Nature's Focus and the healing
+/// talents) have no field. Improved Entangling Roots ranks are parsed but the effect
+/// remains unmodelled until native Roots/root-break behavior is implemented.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Talents {
     pub improved_wrath: i32,
@@ -51,6 +52,7 @@ pub(crate) struct Talents {
     pub improved_moonfire: i32,
     pub natures_majesty: i32,
     pub natures_reach: i32,
+    pub improved_entangling_roots: i32,
     pub natures_splendor: bool,
     pub insect_swarm: bool,
     pub vengeance: i32,
@@ -102,6 +104,7 @@ impl Talents {
             improved_moonfire: m.i32("improved_moonfire"),
             natures_majesty: m.i32("natures_majesty"),
             natures_reach: m.i32("natures_reach"),
+            improved_entangling_roots: m.i32("improved_entangling_roots"),
             natures_splendor: m.bool("natures_splendor"),
             insect_swarm: m.bool("insect_swarm"),
             vengeance: m.i32("vengeance"),
@@ -138,5 +141,36 @@ impl Talents {
             predatory_discipline: extra("predatory_discipline"),
             bloom: extra("bloom"),
         }
+    }
+}
+
+#[cfg(test)]
+mod native_improved_roots_rank_tests {
+    use super::Talents;
+    use crate::prepare::talent_layout;
+
+    #[test]
+    fn native_improved_roots_rank_intake() {
+        for rank in 0..=3 {
+            let build = format!("000000{rank}");
+            let (message, extras) = talent_layout::fill(
+                "proto.DruidTalents",
+                "druid",
+                &build,
+                &super::super::FOREVER_TREES,
+            )
+            .expect("legal Forever Balance Improved Roots rank");
+            assert_eq!(
+                Talents::from_message(&message, &extras).improved_entangling_roots,
+                rank
+            );
+        }
+        assert!(talent_layout::fill(
+            "proto.DruidTalents",
+            "druid",
+            "0000004",
+            &super::super::FOREVER_TREES,
+        )
+        .is_err());
     }
 }

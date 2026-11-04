@@ -1190,7 +1190,7 @@ impl<A: Agent> Fight<A> {
         let after_target = result.damage;
         // Go OutcomeTickPhysicalCrit, or Dot.OutcomeTick.
         let index = target.index();
-        if can_crit && self.random("Physical Crit Roll") < self.physical_crit_chance(spell) {
+        if can_crit && self.proc(self.physical_crit_chance(spell), "Physical Crit Roll") {
             result.outcome = OUTCOME_CRIT;
             result.damage *= self.crit_multiplier(spell);
             self.spells[spell].metrics[index].crit_ticks += 1;
@@ -1751,7 +1751,7 @@ impl<A: Agent> Fight<A> {
         result: &mut SpellResult,
         count: bool,
     ) -> bool {
-        if self.random("Physical Crit Roll") < self.physical_crit_chance(spell) {
+        if self.proc(self.physical_crit_chance(spell), "Physical Crit Roll") {
             self.land_crit(spell, result, count);
             return true;
         }

@@ -46,7 +46,7 @@ fn shieldsworn(fight: &mut Fight<PaladinAgent>, target: Side) {
     }
     if let Some(specialization) = fight.agent.shield_specialization.clone() {
         if specialization.chance != 1.0
-            && fight.random("Shield Specialization - Shieldsworn") > specialization.chance
+            && !fight.proc(specialization.chance, "Shield Specialization - Shieldsworn")
         {
             return;
         }

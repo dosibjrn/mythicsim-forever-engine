@@ -69,7 +69,7 @@ fn holy_binding_puts_half_of_each_flash_heal_on_the_priest() {
 fn the_healer_priest_sims_with_holy_binding() {
     let prepared = prepare(&request(), "rust").unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
     let hps = result["raidMetrics"]["parties"][0]["players"][0]["hps"]["avg"]
         .as_f64()
         .unwrap();

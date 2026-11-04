@@ -36,7 +36,7 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -210,7 +210,7 @@ fn warrior_swaps_match_go_every_iteration() {
     for name in WARRIOR_SWAPS {
         let prepared = warrior_prepared(&warrior_request(name), name);
         assert_eq!(prepared_coverage(&prepared), Vec::<String>::new(), "{name}");
-        let report = forever_engine::simulate_prepared(&prepared).unwrap();
+        let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("fixtures/warrior/item-swap/{name}.go-dps.json"));
         let go: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
@@ -272,7 +272,7 @@ fn mortal_strike_hits_with_the_swapped_two_hander() {
     request["simOptions"]["iterations"] = json!(1);
     request["simOptions"]["debugFirstIteration"] = json!(true);
     let prepared = warrior_prepared(&request, name);
-    let logs = forever_engine::simulate_prepared(&prepared).unwrap().result["logs"]
+    let logs = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result["logs"]
         .as_str()
         .unwrap()
         .to_string();

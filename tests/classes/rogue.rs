@@ -181,7 +181,7 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = serde_json::json!(1);
     value["sim"]["debug_first_iteration"] = serde_json::json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -274,7 +274,7 @@ fn combat_result(value: Value, iterations: u64) -> Value {
     value["sim"]["iterations"] = serde_json::json!(iterations);
     value["sim"]["debug_first_iteration"] = serde_json::json!(false);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    forever_engine::simulate_prepared(&prepared).unwrap().result
+    forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
 }
 
 /// The white swings of one hand (`OtherActionAttack` tag 1 or 2) against the target: the count

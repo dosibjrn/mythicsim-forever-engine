@@ -60,7 +60,7 @@ fn every_prepared_result_records_the_engine_identity() {
         .join("fixtures/mage/prepared-v2/frost-reference.prepared.json");
     let mut value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     value["sim"]["iterations"] = serde_json::json!(1);
-    let report = simulate_prepared(&serde_json::from_value(value).unwrap()).unwrap();
+    let report = simulate_prepared(&serde_json::from_value(value).unwrap(), forever_engine::RngMode::Stochastic).unwrap();
     let written = serde_json::to_value(&report).unwrap();
     assert_eq!(
         written["identity"],

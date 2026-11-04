@@ -46,7 +46,7 @@ fn conjured_uses(mut prepared: Value) -> Vec<(f64, i64)> {
     prepared["encounter"]["duration_ns"] = json!(300_000_000_000_i64);
     prepared["encounter"]["duration_variation_ns"] = json!(0);
     let prepared: PreparedV2 = serde_json::from_value(prepared).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     let mut uses = Vec::new();
     for line in logs

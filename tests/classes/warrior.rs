@@ -401,7 +401,7 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -1614,7 +1614,7 @@ fn rage_gain_threat(name: &str, multiplied: bool) -> Vec<f64> {
     effect_mut(&mut value, "rage_bar")["threat_multiplied"] = json!(multiplied);
     let targets = value["encounter"]["target_count"].as_u64().unwrap_or(1) as usize;
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared).unwrap();
+    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let player = &report.result["raidMetrics"]["parties"][0]["players"][0];
     let action = player["actions"]
         .as_array()
@@ -1747,7 +1747,7 @@ fn a_strike_on_an_extra_attack_names_the_extra_attack() {
             .unwrap()
             .remove("condition");
         let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-        let mut report = forever_engine::simulate_prepared(&prepared).unwrap();
+        let mut report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
         let player = "/raidMetrics/parties/0/players/0";
         assert!(report
             .result

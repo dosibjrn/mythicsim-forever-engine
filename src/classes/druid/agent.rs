@@ -45,6 +45,7 @@ pub(crate) enum DruidSpell {
     Moonfire,
     MoonfireDot,
     InsectSwarm,
+    EntanglingRoots,
     Innervate,
     CatForm,
     BearForm,
@@ -383,6 +384,7 @@ impl DruidAgent {
             "moonfire" if spell.damage_effect.is_some() => Some(DruidSpell::Moonfire),
             "moonfire_dot" if spell.dot.is_some() => Some(DruidSpell::MoonfireDot),
             "insect_swarm" if spell.dot.is_some() => Some(DruidSpell::InsectSwarm),
+            "entangling_roots" if spell.dot.is_some() => Some(DruidSpell::EntanglingRoots),
             "hurricane" if spell.dot.is_some() => Some(DruidSpell::Hurricane),
             "hurricane" => Some(DruidSpell::HurricaneTick),
             "innervate" => Some(DruidSpell::Innervate),
@@ -405,7 +407,7 @@ impl DruidAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2) -> Result<Fight<DruidAgent>, String> {
+    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<DruidAgent>, String> {
         let auras = class_auras(prepared);
         let target_auras: Vec<(String, DruidAura)> = prepared
             .effects
@@ -423,6 +425,7 @@ impl DruidAgent {
             .collect();
         let mut fight = Fight::new(
             prepared,
+            rng_mode,
             DruidAgent::default(),
             |exported| {
                 let position = positions
@@ -457,6 +460,16 @@ impl DruidAgent {
                 _ => None,
             })
         };
+        // Native-only Forever spell: source data owns base tick numbers, not a
+        // Python or Go copy. Root/break and real 2D CC remain unimplemented.
+        if let Some(roots) = find_spell(&fight, 9853, 0) {
+            let dot = fight.spells[roots].dot.ok_or("Entangling Roots lacks its dot")?;
+            let row = crate::prepare::spelldata::Ladder::ranked(&[9853]).highest();
+            fight.dots[dot].tick_base = Some(row.periodic_effect().average(
+                crate::prepare::character::constants::CHARACTER_LEVEL,
+            ));
+            fight.dots[dot].tick_can_crit = row.periodic_can_crit();
+        }
         for effect in &prepared.effects {
             match effect {
                 Effect::Heals {
@@ -1165,6 +1178,7 @@ impl Agent for DruidAgent {
             }
             DruidSpell::MoonfireDot => moonfire::apply_dot(fight, spell, target),
             DruidSpell::InsectSwarm => insect_swarm::apply(fight, spell, target),
+            DruidSpell::EntanglingRoots => insect_swarm::apply(fight, spell, target),
             DruidSpell::Innervate => {
                 let aura = Self::innervate(fight).aura;
                 fight.activate_aura(aura);
@@ -1436,7 +1450,9 @@ impl Agent for DruidAgent {
                 let book = fight.agent.heals.clone().expect("the heals are bound");
                 book.tick(fight, dot);
             }
-            DruidSpell::MoonfireDot | DruidSpell::InsectSwarm => fight.snapshot_dot_tick(dot),
+            DruidSpell::MoonfireDot | DruidSpell::InsectSwarm | DruidSpell::EntanglingRoots => {
+                fight.snapshot_dot_tick(dot)
+            }
             DruidSpell::Hurricane => {
                 let state = fight.agent.hurricane.expect("Hurricane is bound");
                 let side = fight.dots[dot].side;

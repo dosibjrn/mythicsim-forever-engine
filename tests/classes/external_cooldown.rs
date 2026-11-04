@@ -33,7 +33,7 @@ fn casts(mut value: Value, sources: u64) -> Vec<f64> {
     }
     value["sim"]["iterations"] = json!(1);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = simulate_prepared(&prepared).unwrap();
+    let report = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"]
         .as_str()
         .unwrap()
@@ -107,7 +107,7 @@ fn a_source_returns_when_its_cooldown_ends() {
 fn cast_times(mut value: Value, spell: u32) -> Vec<f64> {
     value["sim"]["iterations"] = json!(1);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = simulate_prepared(&prepared).unwrap();
+    let report = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let suffix = format!("Major cooldown used: {{SpellID: {spell}, Tag: -1}}");
     report.result["logs"]
         .as_str()

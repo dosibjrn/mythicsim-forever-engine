@@ -111,7 +111,7 @@ impl<A: Agent> Fight<A> {
         }
         let after_target = amount;
         let index = target.index();
-        let outcome = if self.random("Healing Crit Roll") < self.heal_crit_chance(spell) {
+        let outcome = if self.proc(self.heal_crit_chance(spell), "Healing Crit Roll") {
             amount *= self.heal_crit_multiplier(spell);
             self.spells[spell].metrics[index].crits += 1;
             OUTCOME_CRIT
@@ -216,7 +216,7 @@ impl<A: Agent> Fight<A> {
         let target = Side::Player.index();
         let chance =
             (self.unit(state.caster).powers.spell_crit_percent + state.bonus_crit_percent) / 100.0;
-        let crit = self.random("Healing Crit Roll") < chance;
+        let crit = self.proc(chance, "Healing Crit Roll");
         let outcome = if crit {
             let state = &self.spells[spell];
             let base_multiplier = if state.magic_defense { 1.5 } else { 2.0 };

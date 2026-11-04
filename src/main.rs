@@ -1,7 +1,8 @@
 use forever_engine::{
-    contracts::prepared_v2::PreparedV2, prepare_json_with, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
-    PreparedError, Refusal, Request, Rules, SOURCE_REVISION,
+    contracts::prepared_v2::PreparedV2, gear_options, native_two_pull_windows,
+    native_two_world_targets, prepare_json_with, prepared_refusals, simulate, simulate_prepared,
+    simulate_prepared_gated, validate_prepared, Gated, PrepareError, PreparedError, Refusal,
+    Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -165,7 +166,70 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine version");
+        return Ok(());
+    }
+
+    if args[0] == "gear-options" {
+        if args.len() != 3 || args[1] != "--item-types" {
+            return Err("gear-options requires --item-types ItemTypeHead,ItemTypeHands,...".into());
+        }
+        let item_types: Vec<String> = args[2]
+            .split(',')
+            .map(str::trim)
+            .map(str::to_string)
+            .collect();
+        if item_types.is_empty() || item_types.iter().any(String::is_empty) {
+            return Err("gear-options requires at least one nonempty item type".into());
+        }
+        let mut unique = std::collections::BTreeSet::new();
+        if item_types.iter().any(|item_type| !unique.insert(item_type)) {
+            return Err("gear-options item types must be unique".into());
+        }
+        let output = serde_json::to_string_pretty(&gear_options(&item_types))
+            .map_err(|err| err.to_string())?;
+        println!("{output}");
+        return Ok(());
+    }
+    if args[0] == "native-world-pulls" {
+        if args.len() != 7 || args[1] != "--infile" || args[3] != "--targets" || args[5] != "--rng-mode" {
+            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100".into());
+        }
+        let target_count = args[4].parse::<usize>()
+            .map_err(|_| "native-world-pulls target count must be an integer")?;
+        if !(2..=100).contains(&target_count) {
+            return Err("native-world-pulls requires --targets 2..100".into());
+        }
+        let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
+        let prepared = prepared_v2(&input)?
+            .ok_or("native-world-pulls requires a prepared v2 input")?;
+        let mode = RngMode::parse_cli(&args[6])?;
+        let report = native_two_world_targets(&prepared, target_count, mode)
+            .map_err(|err| err.to_string())?;
+        println!("{}", serde_json::json!({
+            "engine": "forever-engine",
+            "source_sha256": prepared.request_sha256,
+            "result": report, "checkpoint_certified": false,
+        }));
+        return Ok(());
+    }
+    if args[0] == "native-pulls" {
+        if args.len() != 7 || args[1] != "--infile"
+            || args[3] != "--targets" || args[4] != "2" || args[5] != "--rng-mode" {
+            return Err("native-pulls requires --infile PREPARED_V2.json --targets 2".into());
+        }
+        let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
+        let prepared = prepared_v2(&input)?
+            .ok_or("native-pulls requires a prepared v2 input")?;
+        let mode = RngMode::parse_cli(&args[6])?;
+        let windows = native_two_pull_windows(&prepared, mode).map_err(|err| err.to_string())?;
+        println!("{}", serde_json::json!({
+            "engine": "forever-engine",
+            "source_sha256": prepared.request_sha256,
+            "scenario_id": prepared.scenario_id,
+            "result": windows,
+            "checkpoint_certified": false,
+        }));
         return Ok(());
     }
     if args.len() == 3 && args[0] == "check" && args[1] == "--infile" {
@@ -180,6 +244,7 @@ fn run() -> Result<(), Failure> {
     if args[0] != "sim" && args[0] != "bench" && args[0] != "prepare" {
         return Err("expected sim, prepare, bench, check or version".into());
     }
+    let mut rng_mode: Option<RngMode> = None;
     let mut infile = None;
     let mut request_file = None;
     let mut scenario = None;
@@ -210,6 +275,13 @@ fn run() -> Result<(), Failure> {
                 };
                 if target.replace(value.clone()).is_some() {
                     return Err(format!("duplicate {flag}").into());
+                }
+            }
+            "--rng-mode" => {
+                index += 1;
+                let value = args.get(index).ok_or("--rng-mode requires a value")?;
+                if rng_mode.replace(RngMode::parse_cli(value)?).is_some() {
+                    return Err("duplicate --rng-mode".into());
                 }
             }
             "--trace" if !trace => trace = true,
@@ -262,6 +334,7 @@ fn run() -> Result<(), Failure> {
     if scenario.is_some() && request_file.is_none() {
         return Err("--scenario requires --request".into());
     }
+    let rng_mode = rng_mode.ok_or("sim and bench require explicit --rng-mode balanced|stochastic")?;
     let prepared_from_request = match request_file {
         Some(request) => {
             if infile.is_some() || args[0] != "sim" {
@@ -289,7 +362,7 @@ fn run() -> Result<(), Failure> {
                 status: EXIT_REJECTED,
                 message: Some(PreparedError::Invalid(err).to_string()),
             })?;
-            match simulate_prepared_gated(&prepared).map_err(|err| err.to_string())? {
+            match simulate_prepared_gated(&prepared, rng_mode).map_err(|err| err.to_string())? {
                 Gated::Simulated(report) => *report,
                 Gated::Refused(refusals) => {
                     println!("{}", coverage_report(&prepared, &refusals)?);
@@ -300,7 +373,7 @@ fn run() -> Result<(), Failure> {
                 }
             }
         } else {
-            simulate_prepared(&prepared).map_err(|err| err.to_string())?
+            simulate_prepared(&prepared, rng_mode).map_err(|err| err.to_string())?
         };
         if rotation_stats {
             report.add_rotation_stats();
@@ -310,11 +383,11 @@ fn run() -> Result<(), Failure> {
                 return Err("bench requires 0 to 20 warmups and 1 to 100 samples".into());
             }
             for _ in 1..warmups {
-                black_box(simulate_prepared(black_box(&prepared)).map_err(|err| err.to_string())?);
+                black_box(simulate_prepared(black_box(&prepared), rng_mode).map_err(|err| err.to_string())?);
             }
             let mut timings = Vec::with_capacity(samples as usize);
             for _ in 0..samples {
-                let sample = black_box(simulate_prepared(black_box(&prepared)))
+                let sample = black_box(simulate_prepared(black_box(&prepared), rng_mode))
                     .map_err(|err| err.to_string())?;
                 if sample.result != report.result {
                     return Err("bench samples produced different results".into());

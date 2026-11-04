@@ -10,6 +10,7 @@
 //! The runtime is built from a validated prepared v2 input. Static modifiers are already
 //! applied there and are never applied again here.
 
+pub(crate) mod world_bridge;
 mod absorb;
 mod aura;
 mod blade_of_hanna;
@@ -72,7 +73,7 @@ use crate::{
     },
     core::{
         queue::{Handle, PendingQueue},
-        rng::SimRng,
+        rng::{RngMode, SimRng},
         time::{NEVER_EXPIRES, STARTING_CD_TIME},
     },
     mechanics::mana::RegenInputs,
@@ -1711,6 +1712,7 @@ pub(crate) struct Fight<A: Agent> {
     pub(crate) now: i64,
     pub(crate) duration: i64,
     end_of_combat: i64,
+    pull_started_at: i64,
     /// Go `executePhase` and `nextExecuteDuration` for a fight timed by duration.
     pub(crate) execute_phase: i32,
     next_execute: i64,
@@ -2350,6 +2352,7 @@ impl<A: Agent> Fight<A> {
     /// `class_spell` and `class_aura` map exported entries to class behavior.
     pub(crate) fn new(
         prepared: &PreparedV2,
+        rng_mode: RngMode,
         agent: A,
         class_spell: impl Fn(&crate::contracts::prepared_v2::Spell) -> Option<A::Spell>,
         class_aura: impl Fn(&str, &str) -> Option<A::Aura>,
@@ -4055,9 +4058,10 @@ impl<A: Agent> Fight<A> {
             now: 0,
             duration: config.base_duration,
             end_of_combat: config.base_duration,
+            pull_started_at: 0,
             execute_phase: 0,
             next_execute: NEVER_EXPIRES,
-            rng: SimRng::new(prepared.sim.labeled_rng, prepared.sim.seed as u64),
+            rng: SimRng::new(rng_mode, prepared.sim.labeled_rng, prepared.sim.seed as u64),
             queue: PendingQueue::default(),
             min_tracker_time: NEVER_EXPIRES,
             min_task_time: NEVER_EXPIRES,
@@ -5670,6 +5674,9 @@ impl<A: Agent> Fight<A> {
             self.apply_enemy_slow_priorities();
         }
         let started = crate::core::stopwatch::Stopwatch::start();
+        if world_bridge::enabled() {
+            self.config.iterations = world_bridge::requested_iterations(self.config.iterations);
+        }
         let iterations = self.config.iterations;
         let mut total_duration = 0i64;
         let mut first_duration = 0i64;
@@ -5680,6 +5687,7 @@ impl<A: Agent> Fight<A> {
             // Go keeps one buffer: every iteration with debug, otherwise only the first.
             let logged = self.config.debug || (iteration == 0 && self.config.debug_first_iteration);
             self.log = logged.then(Vec::new);
+            if world_bridge::enabled() { world_bridge::begin_iteration(iteration as u32); }
             self.run_once();
             if let Some(lines) = self.log.take() {
                 logs.extend(lines);
@@ -5694,7 +5702,7 @@ impl<A: Agent> Fight<A> {
     }
 
     /// Go `runOnce`: reset, prepull, the event loop and cleanup.
-    fn run_once(&mut self) {
+    fn prepare_first_native_pull(&mut self) {
         self.reset();
         // Go PrePull: time starts at the first prepull action; later ones run first at a tie.
         let count = self.prepull.len() as i32;
@@ -5738,8 +5746,194 @@ impl<A: Agent> Fight<A> {
             self.schedule(at, PRIORITY_PREPULL + count - index as i32, action);
         }
         self.schedule(0, PRIORITY_PREPULL + count + 1, Action::EncounterStart);
+    }
+
+    fn run_once(&mut self) {
+        self.prepare_first_native_pull();
         while self.step() {}
+        // A real applied gsim lethal ACK ends this pull even if the saved
+        // encounter's duration has not elapsed. Preserve the actual world
+        // clock in the native result rather than charging an unplayed tail.
+        if world_bridge::enabled() && world_bridge::acknowledged_lethal() {
+            self.duration = self.now.max(1);
+        }
+        if world_bridge::enabled() { world_bridge::finish(self.duration, self.encounter_damage_taken); }
         self.cleanup();
+    }
+
+
+    /// Multiple distinct gsim world deaths on one retained source-Rust actor.
+    /// This diagnostic does NOT charge movement/recovery or certify P4–P6.
+    pub(crate) fn native_two_world_targets(&mut self, target_count: usize)
+        -> Result<serde_json::Value, &'static str>
+    {
+        if !world_bridge::enabled() {
+            return Err("RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM");
+        }
+        if !(2..=100).contains(&target_count) {
+            return Err("RUST_MULTI_WORLD_TARGET_COUNT_INVALID");
+        }
+        if !self.extra_targets_built {
+            self.build_extra_targets();
+            self.build_exclusive_tracking();
+            self.apply_enemy_slow_priorities();
+        }
+        self.rng.reseed(self.config.seed as u64);
+        self.log = None;
+        world_bridge::begin_iteration(0);
+        self.prepare_first_native_pull();
+        let mut windows = Vec::with_capacity(target_count);
+        let mut previous_damage = 0.0;
+        let mut previous_health_damage = 0.0_f64;
+        let mut previous_health_damage_events = 0;
+        let mut previous_mana_regen_gain = 0.0_f64;
+        let mut previous_mana_regen_events = 0_i32;
+
+        for index in 0..target_count {
+            if index != 0 {
+                // No free actor reset. This intentionally retains the current
+                // no-downtime diagnostic clock until real paid travel/recovery
+                // is coupled through the same native/world timeline.
+                let next_at = self.now.checked_add(1_000_000)
+                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                let next_end = next_at.checked_add(self.config.base_duration)
+                    .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
+                self.begin_next_target(next_at, next_end)?;
+            }
+            while self.step() {}
+            if !world_bridge::acknowledged_lethal() {
+                return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
+            }
+            let total_damage = self.encounter_damage_taken;
+            // Only native Rust owns player damage and its resource metrics.
+            // Health may regenerate between attacks; remaining HP is not damage taken.
+            let health_damage = -self.resources[self.damage_taken_health].gain;
+            let health_damage_events = self.resources[self.damage_taken_health].events;
+            if health_damage < previous_health_damage
+                || health_damage_events < previous_health_damage_events
+            {
+                return Err("RUST_WORLD_HEALTH_DAMAGE_RECEIPT_NONMONOTONIC");
+            }
+            // Existing source-native 2-second mana ticks own these gains.
+            // These events include in-combat ticks, NOT paid between-pull rest.
+            let mana_regen_gain = self.resources[self.mana_regen_casting].actual_gain
+                + self.resources[self.mana_regen_not_casting].actual_gain;
+            let mana_regen_events = self.resources[self.mana_regen_casting].events
+                + self.resources[self.mana_regen_not_casting].events;
+            if !mana_regen_gain.is_finite()
+                || mana_regen_gain < previous_mana_regen_gain - 1e-8
+                || mana_regen_events < previous_mana_regen_events
+            {
+                return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
+            }
+            windows.push(serde_json::json!({
+                "index": index,
+                "native_kill_ns": self.now,
+                "native_damage": total_damage - previous_damage,
+                "actor_mana": self.player.mana,
+                "actor_health": self.player.health,
+                "native_health_damage_taken": health_damage - previous_health_damage,
+                "native_health_damage_events": health_damage_events - previous_health_damage_events,
+                "native_combat_mana_regen_actual_gain":
+                    (mana_regen_gain - previous_mana_regen_gain).max(0.0),
+                "native_combat_mana_regen_events":
+                    mana_regen_events - previous_mana_regen_events,
+            }));
+            previous_damage = total_damage;
+            previous_health_damage = health_damage;
+            previous_health_damage_events = health_damage_events;
+            previous_mana_regen_gain = mana_regen_gain;
+            previous_mana_regen_events = mana_regen_events;
+        }
+        let report = serde_json::json!({
+            "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
+            "continuous_native_actor": true, "actual_2d_ack": true,
+            "paid_recovery": false, "world_targets_killed": target_count,
+            "windows": windows,
+        });
+        self.cleanup();
+        Ok(report)
+    }
+
+    /// Callable two-window source-Rust continuation smoke, NOT a 100-mob/2D gate.
+    /// Both windows use real native scheduler actions and the same player/queue.
+    /// This diagnostic is duration-bounded; no mob death or paid downtime is claimed.
+    pub(crate) fn native_two_pull_windows(&mut self)
+        -> Result<serde_json::Value, &'static str>
+    {
+        if world_bridge::enabled() {
+            return Err("RUST_TWO_WINDOW_2D_CONTROLLER_NOT_CONNECTED");
+        }
+        if !self.extra_targets_built {
+            self.build_extra_targets();
+            self.build_exclusive_tracking();
+            self.apply_enemy_slow_priorities();
+        }
+        self.rng.reseed(self.config.seed as u64);
+        self.log = None;
+        self.prepare_first_native_pull();
+        while self.step() {}
+        let first_end_ns = self.end_of_combat;
+        let first = serde_json::json!({
+            "index": 0, "end_ns": first_end_ns,
+            "actor_mana": self.player.mana, "actor_health": self.player.health,
+        });
+        let second_end_ns = first_end_ns.checked_add(self.config.base_duration)
+            .ok_or("RUST_TWO_WINDOW_DURATION_OVERFLOW")?;
+        self.begin_next_target(first_end_ns, second_end_ns)?;
+        while self.step() {}
+        let second = serde_json::json!({
+            "index": 1, "end_ns": self.end_of_combat,
+            "actor_mana": self.player.mana, "actor_health": self.player.health,
+        });
+        let report = serde_json::json!({
+            "scope": "NATIVE_TWO_DURATION_WINDOWS_DIAGNOSTIC_NOT_GATE",
+            "selected_native_combat": true,
+            "actual_2d_ack": false, "paid_recovery": false,
+            "continuous_actor": true, "windows": [first, second],
+        });
+        self.cleanup();
+        Ok(report)
+    }
+
+    /// Begin a second distinct world target on the SAME native actor.
+    /// No iteration reset, resource reset, cooldown reset, aura reset or queue clear.
+    /// Until paid downtime is implemented in the native session, accept only
+    /// an immediate next pull; skipping scheduled recovery events is illegal.
+    /// Native-only duration windows continue at the old exact end timestamp.
+    /// A live world may kill its target earlier, but only the separate
+    /// world_bridge::begin_next_target() validates the actual lethal ACK.
+    fn accepts_next_target_clock(&self, at_ns: i64, next_end_ns: i64,
+        live_world: bool) -> bool
+    {
+        at_ns >= self.now && at_ns >= 0 && next_end_ns > at_ns
+            && (if live_world { at_ns <= self.end_of_combat }
+                else { at_ns == self.end_of_combat })
+    }
+
+    pub(crate) fn begin_next_target(&mut self, at_ns: i64, next_end_ns: i64)
+        -> Result<(), &'static str>
+    {
+        if !self.accepts_next_target_clock(at_ns, next_end_ns, world_bridge::enabled()) {
+            return Err("RUST_NEXT_TARGET_CLOCK_INVALID");
+        }
+        if world_bridge::enabled() {
+            world_bridge::begin_next_target(at_ns)?;
+        }
+        self.advance_to(at_ns);
+        // Target auras/armor are new; player, pets, timers and queued
+        // native actions remain exactly those of the preceding encounter.
+        // A defeated target can still have active debuffs. End ONLY its aura
+        // lifetime before reset; never call global cleanup on the actor.
+        self.aura_done_iteration(Side::Target);
+        self.reset_unit(Side::Target);
+        self.pull_started_at = at_ns;
+        self.duration = next_end_ns;
+        self.end_of_combat = next_end_ns;
+        self.execute_phase = 0;
+        self.next_execute_phase();
+        self.schedule(at_ns, PRIORITY_PREPULL + 1, Action::EncounterStart);
+        Ok(())
     }
 
     /// Go `Simulation.reset` and `Environment.reset`.
@@ -5760,9 +5954,10 @@ impl<A: Agent> Fight<A> {
         for batch in &mut self.travel_batches {
             batch.clear();
         }
+        self.pull_started_at = 0;
+        self.end_of_combat = self.duration;
         self.execute_phase = 0;
         self.next_execute_phase();
-        self.end_of_combat = self.duration;
         self.now = 0;
         self.min_tracker_time = NEVER_EXPIRES;
         self.min_task_time = NEVER_EXPIRES;
@@ -5906,12 +6101,12 @@ impl<A: Agent> Fight<A> {
             unit.armor = self.config.melee.defender_armor;
             unit.armor_delta = 0.0;
             if self.sunder.is_some() {
-                self.schedule(0, PRIORITY_DOT, Action::SunderTick(position as u8, 0));
+                self.schedule(self.now, PRIORITY_DOT, Action::SunderTick(position as u8, 0));
             }
             if let Some(expose) = &self.external_expose {
                 let delay = expose.delay;
                 self.targets[position].armor = expose.armor_before;
-                self.schedule(delay, PRIORITY_DOT, Action::ExternalExpose(position as u8));
+                self.schedule(self.now + delay, PRIORITY_DOT, Action::ExternalExpose(position as u8));
             }
         }
         if side == Side::Player {
@@ -5967,7 +6162,8 @@ impl<A: Agent> Fight<A> {
             phase => panic!("executePhase = {phase} invalid"),
         };
         self.execute_phase = phase;
-        self.next_execute = ((1.0 - proportion) * self.duration as f64) as i64;
+        self.next_execute = self.pull_started_at +
+            ((1.0 - proportion) * (self.end_of_combat - self.pull_started_at) as f64) as i64;
     }
 
     /// Go `IsExecutePhase20`.
@@ -5982,6 +6178,41 @@ impl<A: Agent> Fight<A> {
 
     /// Go `Simulation.Step`. Returns false when the fight is over.
     fn step(&mut self) -> bool {
+        // A committed source-native lethal world ACK must stop scheduling
+        // attacks on the now-dead target. The same actor may later be
+        // continued explicitly using begin_next_target, without a reset.
+        if world_bridge::enabled() && world_bridge::acknowledged_lethal() {
+            return false;
+        }
+        if world_bridge::enabled() {
+            let next_native = self.queue.peek_time().unwrap_or(NEVER_EXPIRES)
+                .min(self.autos.min_time).min(self.min_task_time)
+                .min(self.end_of_combat);
+            if let Some(boundary) = world_bridge::due(next_native, self.end_of_combat) {
+                if boundary > self.now { self.advance_to(boundary); }
+                let (distance, front, moving) = world_bridge::exchange(
+                    boundary, self.duration, self.encounter_damage_taken);
+                if distance != self.config.distance {
+                    self.config.distance = distance;
+                    self.changed(reads::CASTS);
+                }
+                // Facing can invalidate cached APL FrontOfTarget conditions
+                // even when the distance is unchanged. Mirror range's
+                // production invalidation at the native scheduler boundary.
+                if self.config.melee.in_front_of_target != front {
+                    self.config.melee.in_front_of_target = front;
+                    self.changed(reads::CASTS);
+                }
+                // The source-Rust spell cast rules already test player.moving;
+                // use the real gsim route status to enforce them, including
+                // between SpatialPlayerMoveStep events, without teleporting.
+                if self.player.moving != moving {
+                    self.player.moving = moving;
+                    self.changed(reads::CASTS);
+                }
+                return true;
+            }
+        }
         // Go runs due weapon swings before the next pending action, ties included.
         let next = self.queue.peek_time().unwrap_or(NEVER_EXPIRES);
         if self.due_weapon_attack(next) && self.autos.min_time <= self.min_task_time {
@@ -5998,6 +6229,11 @@ impl<A: Agent> Fight<A> {
             }
             self.advance_tasks();
             return true;
+        }
+        // Preserve scheduled post-pull events for a continuing native session.
+        // The existing one-shot iteration still resets the queue on its next run.
+        if next > self.end_of_combat {
+            return false;
         }
         let Some((time, handle, action)) = self.queue.pop() else {
             return false;
@@ -6344,7 +6580,7 @@ impl<A: Agent> Fight<A> {
     fn fixed_uptime_roll(&mut self, index: usize, first: bool) {
         let fixed = self.fixed_uptime[index];
         if first {
-            if self.random("FixedAura") < fixed.uptime {
+            if self.proc(fixed.uptime, "FixedAura") {
                 let span = (fixed.duration - fixed.tick_length) as f64;
                 let random = fixed.tick_length + (span * self.random("FixedAuraDur")) as i64;
                 self.aura_mut(fixed.aura).duration = random;
@@ -6353,7 +6589,7 @@ impl<A: Agent> Fight<A> {
             }
             return;
         }
-        if self.random("FixedAura") < fixed.chance_per_tick {
+        if self.proc(fixed.chance_per_tick, "FixedAura") {
             self.activate_aura(fixed.aura);
             if self.aura(fixed.aura).max_stacks > 0 {
                 self.add_stack(fixed.aura);
@@ -6501,6 +6737,120 @@ impl<A: Agent> Fight<A> {
 #[cfg(test)]
 mod tests {
     use super::{Mp5Path, Side, DEFENDERS, MAX_TARGETS};
+
+    #[test]
+    fn native_persistent_early_world_kill_clock_boundary() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
+        fight.prepare_first_native_pull();
+        let now = fight.now;
+        let cap = fight.end_of_combat;
+        assert!(cap > now + 2_000_000);
+        let early = now + 1_000_000;
+        // A real early gsim world kill can be the next pull timestamp,
+        // but the unchanged native-only duration-window cannot.
+        assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));
+        assert!(!fight.accepts_next_target_clock(early, early + 2_000_000, false));
+        assert!(fight.accepts_next_target_clock(cap, cap + 2_000_000, false));
+        assert!(!fight.accepts_next_target_clock(cap + 1, cap + 2_000_000, true));
+        assert!(!fight.accepts_next_target_clock(now - 1, cap + 1, true));
+        assert!(!fight.accepts_next_target_clock(early, early, true));
+        // This test does not fake a lethal source event or certify a hybrid mob.
+    }
+
+    #[test]
+    fn native_persistent_next_target_retains_actor_and_native_queue() {
+        use super::{Action, PRIORITY_PREPULL, PRIORITY_REGEN};
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
+        if !fight.extra_targets_built {
+            fight.build_extra_targets();
+            fight.build_exclusive_tracking();
+            fight.apply_enemy_slow_priorities();
+        }
+        eprintln!("NATIVE_NEXT_TARGET_STAGE=initial_reset");
+        fight.reset();
+        fight.schedule(0, PRIORITY_PREPULL + 1, Action::EncounterStart);
+        let mut steps = 0;
+        while fight.step() {
+            steps += 1;
+            assert!(steps < 100_000, "first native pull did not terminate");
+        }
+        assert!(steps > 1, "native combat did not execute");
+        eprintln!("NATIVE_NEXT_TARGET_STAGE=first_pull_done");
+        let first_end = fight.end_of_combat;
+        let kept_mana = fight.config.max_mana * 0.37;
+        let kept_health = fight.config.max_health * 0.61;
+        fight.player.mana = kept_mana;
+        fight.player.health = kept_health;
+        let kept_timer = fight.timers.first().copied();
+        let future = fight.queue.push(first_end + 5_000_000, PRIORITY_REGEN, Action::ManaTick);
+        let old_now = fight.now;
+        assert_eq!(fight.begin_next_target(first_end - 1, first_end + 2_000_000_000),
+            Err("RUST_NEXT_TARGET_CLOCK_INVALID"));
+        assert_eq!(fight.now, old_now);
+        eprintln!("NATIVE_NEXT_TARGET_STAGE=transition");
+        fight.begin_next_target(first_end, first_end + 2_000_000_000).unwrap();
+        assert_eq!(fight.player.mana, kept_mana);
+        assert_eq!(fight.player.health, kept_health);
+        assert_eq!(fight.timers.first().copied(), kept_timer);
+        assert!(fight.queue.cancel(future), "queued native future action was lost");
+        assert!(fight.next_execute >= first_end);
+        let mut second_steps = 0;
+        while fight.step() {
+            second_steps += 1;
+            assert!(second_steps < 100_000, "second native pull did not terminate");
+        }
+        assert!(second_steps > 0, "second target did not run native combat");
+        assert!(fight.now >= first_end, "native clock reset on second target");
+    }
+
+    #[test]
+    fn native_persistent_next_target_offsets_target_armor_events() {
+        use super::{AuraRef, ExternalExpose, SunderRamp};
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        // Both source-backed armor ramps previously scheduled events at t=0
+        // after the first pull, so the next native scheduler could rewind.
+        for with_sunder in [true, false] {
+            let mut fight = crate::classes::druid::agent::DruidAgent::fight(&prepared, crate::core::rng::RngMode::Stochastic).unwrap();
+            if !fight.extra_targets_built {
+                fight.build_extra_targets();
+                fight.build_exclusive_tracking();
+                fight.apply_enemy_slow_priorities();
+            }
+            fight.prepare_first_native_pull();
+            let mut steps = 0;
+            while fight.step() {
+                steps += 1;
+                assert!(steps < 100_000, "first native pull did not terminate");
+            }
+            let at = fight.end_of_combat;
+            assert!(at > 1_000_000_000);
+            let aura = AuraRef { side: Side::Target, index: 0 };
+            if with_sunder {
+                fight.sunder = Some(SunderRamp {
+                    aura, period: 2_000_000_000, ticks: 1,
+                    armor_by_stacks: vec![0.0], blocked: false,
+                });
+            } else {
+                fight.external_expose = Some(ExternalExpose {
+                    aura, delay: 1_000_000_000, armor_before: 0.0,
+                });
+            }
+            fight.begin_next_target(at, at + 3_000_000_000).unwrap();
+            assert!(fight.queue.peek_time().unwrap() >= at,
+                "second target queued source armor event before its own spawn");
+        }
+    }
 
     /// Go adds a bonus to the raw stats and takes it away again: 77 plus Mana Tide Totem's
     /// 483.33 and minus it again is a few ulps short of 77, and the path keeps that.

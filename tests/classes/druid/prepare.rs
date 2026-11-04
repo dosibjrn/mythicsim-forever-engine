@@ -210,3 +210,77 @@ fn a_tanking_bear_is_prepared_with_the_target_swing() {
         .expect("a tanking bear is prepared");
     assert!(prepared["enemy"].is_object());
 }
+
+#[test]
+fn forever_roots_preparation_uses_native_spell_data_and_improved_rank() {
+    let original: Value = serde_json::from_slice(
+        &fs::read(directory().join("balance-every-talent-at-max.request.json")).unwrap()
+    ).unwrap();
+    for (rank, multiplier) in [(0, 1.0), (1, 1.25), (2, 1.5), (3, 1.75)] {
+        let mut request = original.clone();
+        let player = &mut request["raid"]["parties"][0]["players"][0];
+        // The all-talents-max fixture is intentionally illegal under Forever:
+        // Predatory Discipline has one rank, not the three in that Go fixture.
+        // Exercise the real legal Forever talent layout with only Roots selected.
+        player["talentsString"] = Value::String(format!("000000{rank}"));
+        let prepared = forever_engine::prepare_json(
+            &serde_json::to_vec(&request).unwrap(),
+            "native-roots-rank",
+        ).expect("Forever Druid prepares");
+        let roots = prepared["player"]["spells"].as_array().unwrap().iter()
+            .find(|spell| spell["action_id"]["spell_id"] == 9853)
+            .expect("source-native Rank 6 Entangling Roots");
+        assert_eq!(roots["class_spell"], "entangling_roots");
+        let dot = &roots["dot"];
+        assert_eq!(dot["base_tick_count"], 9);
+        assert_eq!(dot["base_tick_length_ns"], 3_000_000_000_i64);
+        assert_eq!(dot["periodic_damage_multiplier"].as_f64(), Some(multiplier));
+    }
+}
+
+#[test]
+fn forever_roots_native_periodic_ticks_change_with_rank() {
+    // Production Rust executor, not a GameIR/source-catalogue assertion.
+    // Same encounter, seed and rotation; only the legally allocated rank changes.
+    fn run(rank: i32) -> (f64, String) {
+        let mut request: Value = serde_json::from_slice(
+            &fs::read(directory().join("balance-every-talent-at-max.request.json")).unwrap()
+        ).unwrap();
+        let player = &mut request["raid"]["parties"][0]["players"][0];
+        player["talentsString"] = Value::String(format!("000000{rank}"));
+        player["rotation"]["priorityList"] = serde_json::json!([
+            {"action": {
+                "castSpell": {"spellId": {"spellId": 9853}},
+                "condition": {"not": {"val": {
+                    "dotIsActive": {"spellId": {"spellId": 9853}}
+                }}}
+            }},
+            {"action": {"castSpell": {"spellId": {"spellId": 9912}}}}
+        ]);
+        request["simOptions"]["iterations"] = serde_json::json!(32);
+        request["encounter"]["duration"] = serde_json::json!(60.0);
+        request["encounter"]["durationVariation"] = serde_json::json!(0.0);
+        let prepared = forever_engine::prepare_json(
+            &serde_json::to_vec(&request).unwrap(), "native-roots-periodic-control"
+        ).expect("Forever source-native request prepares");
+        let prepared: forever_engine::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_value(prepared).expect("native prepared contract");
+        let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+            .expect("selected genuine Rust combat executes Roots");
+        let dps = report.result["raidMetrics"]["dps"]["avg"].as_f64()
+            .expect("native real combat DPS");
+        let first_log = report.result["logs"].as_str().unwrap_or("").to_owned();
+        (dps, first_log)
+    }
+
+    let (base, base_log) = run(0);
+    let (improved, improved_log) = run(3);
+    assert!(base_log.contains("Casting {SpellID: 9853}"),
+        "native Roots must actually cast, not merely be prepared: {base_log}");
+    assert!(improved_log.contains("Casting {SpellID: 9853}"),
+        "rank-3 build must actually cast Roots: {improved_log}");
+    assert!(base.is_finite() && base > 0.0 && improved.is_finite(),
+        "native combat must produce finite positive damage: {base}, {improved}");
+    assert!(improved > base,
+        "same-seed native combat with +75% Roots tick damage should improve DPS: {base} -> {improved}");
+}
