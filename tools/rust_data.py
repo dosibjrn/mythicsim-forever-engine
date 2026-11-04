@@ -132,6 +132,12 @@ def write_data(raw):
     extras = {"curves": spells["curves"], "hand_triggers": spells["hand_triggers"]}
     emit("spell-extras.json", json.dumps(extras, sort_keys=True, separators=(",", ":")) + "\n")
     emit("go-tables.json", json.dumps(load(raw / "go-tables.json"), indent=1, sort_keys=True) + "\n")
+    # Preserve the native client ItemSparse projection across reference-data reimports.
+    # Its source is the pinned client's DB2 table, not the Forever database.
+    for name in ("item-required-levels.jsonl", "item-required-levels.manifest.json"):
+        path = DATA / name
+        if path.exists():
+            files[name] = file_digest(path)
     manifest = {
         "schema_version": 1,
         "engine_revision": PIN,
@@ -153,6 +159,41 @@ def check():
         errors.append(f"data client build {manifest.get('client_build')} is not {CLIENT_BUILD}")
     if manifest.get("tool_sha256") != tool_digest():
         errors.append("tools/rust-data changed since the data was imported")
+    source_manifest_path = DATA / "item-required-levels.manifest.json"
+    if not source_manifest_path.exists():
+        errors.append("missing native ItemSparse.RequiredLevel source manifest")
+    else:
+        source_manifest = load(source_manifest_path)
+        source = source_manifest.get("source", {})
+        if source.get("provider") != "wago.tools":
+            errors.append("native item-level source is not the pinned Wago DB2 export")
+        if source.get("client_build") != CLIENT_BUILD:
+            errors.append("native ItemSparse source build differs from the pinned client build")
+        if source.get("table") != "ItemSparse" or source.get("field") != "RequiredLevel":
+            errors.append("native item-level source is not ItemSparse.RequiredLevel")
+        if not source.get("csv_sha256"):
+            errors.append("native ItemSparse source manifest lacks its CSV digest")
+        if "item-required-levels.manifest.json" not in manifest.get("files", {}):
+            errors.append("native ItemSparse source manifest is not pinned by data/manifest.json")
+        levels_path = DATA / "item-required-levels.jsonl"
+        if not levels_path.exists() or not levels_path.read_text(encoding="utf-8").strip():
+            errors.append("native ItemSparse.RequiredLevel projection is empty")
+        else:
+            rows = [json.loads(line) for line in levels_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()]
+            ids = [int(row["id"]) for row in rows]
+            if len(ids) != len(set(ids)):
+                errors.append("native ItemSparse.RequiredLevel projection contains duplicate IDs")
+            if ids != sorted(ids):
+                errors.append("native ItemSparse.RequiredLevel projection is not sorted by item ID")
+            if any(int(row["required_level"]) < 0 for row in rows):
+                errors.append("native ItemSparse.RequiredLevel projection contains a negative level")
+            if int(source_manifest.get("matched_item_count", -1)) != len(rows):
+                errors.append("native ItemSparse source manifest row count differs from the projection")
+            native_count = int(source_manifest.get("native_item_count", 0))
+            missing_count = int(source_manifest.get("native_items_without_item_sparse_row", -1))
+            if native_count <= 0 or missing_count != native_count - len(rows):
+                errors.append("native ItemSparse source manifest item counts are inconsistent")
     for name, digest in manifest["files"].items():
         path = DATA / name
         if not path.exists():

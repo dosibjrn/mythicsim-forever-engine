@@ -1,0 +1,70 @@
+name: Work2 combined native P3 options and P7.4 ACK smoke
+
+on:
+  push:
+    branches:
+      - work/work2-combined-p3-item-options-p74-world-ack-20261104
+    paths:
+      - 'src/**'
+      - 'data/**'
+      - 'tools/import_item_sparse.py'
+      - 'tools/import_item_sparse_test.py'
+      - 'tools/rust_data.py'
+      - '.github/workflows/work2-combined-p3-p74.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'data/**'
+      - 'tools/import_item_sparse.py'
+      - 'tools/import_item_sparse_test.py'
+      - 'tools/rust_data.py'
+      - '.github/workflows/work2-combined-p3-p74.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  combined-native-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f
+        with:
+          cache-save-if: false
+      - name: Verify pinned ItemSparse data and importer
+        run: |
+          set -euo pipefail
+          python3 tools/rust_data.py check
+          python3 -m unittest discover -s tools -p 'import_item_sparse_test.py'
+      - name: Test restored native P3 API and preserved P7.4 world ACK
+        run: |
+          set -euo pipefail
+          cargo test --locked native_item_options_contract_tests -- --nocapture
+          cargo test --locked parses_native_item_required_levels_without_inferring_from_item_level -- --nocapture
+          cargo test --locked cleanup_damage_is_acknowledged_before_next_iteration -- --nocapture
+          cargo test --locked terminal_flush_rejects_an_unacknowledged_cleanup_event -- --nocapture
+          cargo test --locked cleanup_damage_after_lethal_ack_is_rejected -- --nocapture
+          cargo test --locked lethal_world_death_skips_only_target_final_dot_tick -- --nocapture
+      - name: Query real Priest and Mage L20 source-backed item options
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --bin forever-engine
+          for class in priest mage; do
+            target/debug/forever-engine item-options --class "$class" --level 20 --spec unrestricted --slot all > "$RUNNER_TEMP/$class-item-options.json"
+            python3 - "$class" "$RUNNER_TEMP/$class-item-options.json" <<'PY'
+          import json, sys
+          class_name, filename = sys.argv[1:]
+          result = json.load(open(filename, encoding="utf-8"))
+          assert result["status"] in {"ok", "partial_level_unknown"}, (class_name, result.get("refusal"))
+          assert result["required_level_supported"] is True
+          assert result["items"], class_name
+          assert all(item["required_level"] <= 20 for item in result["items"])
+          assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in result["items"])
+          assert isinstance(result["unverified_candidate_count"], int)
+          if result["status"] == "partial_level_unknown":
+              assert result["unverified_candidate_count"] > 0
+          print(class_name, "known", len(result["items"]), "excluded_unknown", result["unverified_candidate_count"])
+          PY
+          done
