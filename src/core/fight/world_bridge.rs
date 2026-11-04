@@ -255,12 +255,7 @@ fn append_damage_event(
     caster_index: u32,
     caster_label: String,
 ) {
-    if bridge.iteration_finished {
-        // Fight::run_once calls finish() before cleanup(). Damage callbacks
-        // emitted while cleanup tears down the completed fight are not part
-        // of the encounter and must not leak into the next iteration's ACKs.
-        return;
-    }
+    assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -380,9 +375,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "RUST_WORLD_DAMAGE_ACK_IDENTITY_INVALID");
     let accepted = ack["applied_event_ids"].as_array()
         .expect("RUST_WORLD_DAMAGE_ACK_EVENT_IDS_MISSING");
-    assert!(accepted.len() == event_ids.len()
-        && accepted.iter().zip(event_ids.iter()).all(|(a,b)| a.as_str() == Some(b)),
-        "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH");
+    assert_damage_acknowledgement(&event_ids, accepted);
     let ack_before = number(&ack, "world_target_health_before");
     let ack_after = number(&ack, "world_target_health_after");
     let expected_damage: f64 = events.iter().map(|e| e.damage).sum();
@@ -408,26 +401,50 @@ pub(crate) fn acknowledged_lethal() -> bool {
     })
 }
 
+fn assert_damage_acknowledgement(event_ids: &[String], accepted: &[Value]) {
+    assert!(accepted.len() == event_ids.len()
+        && accepted.iter().zip(event_ids.iter()).all(|(a, b)| a.as_str() == Some(b)),
+        "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH");
+}
+
+fn mark_iteration_finished() {
+    BRIDGE.with(|state| {
+        let mut state = state.borrow_mut();
+        let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
+        assert!(bridge.pending.is_empty(), "RUST_WORLD_FINISH_UNFLUSHED");
+        bridge.iteration_finished = true;
+    });
+}
+
 pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
     // The terminal world flush is at the next representable gsim millisecond.
     // This is an explicit diagnostic boundary, never a claim of P7 parity.
-    let last = BRIDGE.with(|state| state.borrow().as_ref()
-        .expect("RUST_WORLD_NOT_STARTED").last_tick_ns);
-    if acknowledged_lethal() {
+    let (last, lethal_ack, pending_empty) = BRIDGE.with(|state| {
+        let state = state.borrow();
+        let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
+        (
+            bridge.last_tick_ns,
+            bridge.sequence > 0
+                && bridge.last_health == Some(0.0)
+                && bridge.previous_ack_id.len() == 64,
+            bridge.pending.is_empty(),
+        )
+    });
+    if lethal_ack {
         // gsim has already applied the last native event and killed the mob.
-        // Another range tick would address a dead world target and violate
-        // the causal ACK sequence. No fabricated terminal world exchange.
+        // A cleanup event after that ACK is a real lifecycle violation; never
+        // drop it or try to apply more damage to an already-dead target.
+        assert!(pending_empty, "RUST_WORLD_LETHAL_HAS_PENDING_EVENTS");
         assert!(duration_ns == last, "RUST_WORLD_LETHAL_DURATION_NOT_ACK_CLOCK");
     } else {
         let clock = ((duration_ns + 999_999) / 1_000_000) * 1_000_000;
         let clock = clock.max(last + 1_000_000);
         let _ = exchange(clock, duration_ns, cumulative_damage);
     }
+    mark_iteration_finished();
     BRIDGE.with(|state| {
-        let mut state = state.borrow_mut();
-        let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        assert!(bridge.pending.is_empty(), "RUST_WORLD_FINISH_UNFLUSHED");
-        bridge.iteration_finished = true;
+        let state = state.borrow();
+        let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
         send(&json!({
             "type": "native_rust_world_iteration_done",
             "iteration_index": bridge.iteration,
@@ -496,7 +513,10 @@ mod disabled_bridge_tests {
 
 #[cfg(test)]
 mod iteration_teardown_tests {
-    use super::{append_damage_event, begin_iteration, Bridge, BRIDGE};
+    use super::{
+        append_damage_event, assert_damage_acknowledgement, begin_iteration,
+        mark_iteration_finished, Bridge, BRIDGE,
+    };
 
     fn bridge(iteration_finished: bool) -> Bridge {
         Bridge {
@@ -514,43 +534,59 @@ mod iteration_teardown_tests {
     }
 
     #[test]
-    fn teardown_damage_after_finish_does_not_leak_into_next_iteration() {
-        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(true)));
+    fn cleanup_damage_is_acknowledged_before_next_iteration() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
 
-        // The production runner finishes the world handshake before native
-        // cleanup. A teardown callback must not become an unacknowledged event.
+        // cleanup() can emit final native damage. It must remain pending until
+        // the terminal exchange sends it and verifies the matching world ACK.
         BRIDGE.with(|state| {
             let mut state = state.borrow_mut();
+            let bridge = state.as_mut().unwrap();
             append_damage_event(
-                state.as_mut().unwrap(),
+                bridge,
                 10,
                 5.0,
                 false,
                 true,
                 false,
-                "teardown-proc".to_owned(),
+                "cleanup-proc".to_owned(),
                 "target".to_owned(),
                 "player",
                 0,
                 "Druid".to_owned(),
             );
+            assert_eq!(bridge.pending.len(), 1);
+            assert_eq!(bridge.event_ordinal, 1);
         });
+
+        // This is the same take-and-ACK sequence used by exchange().
+        let events = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            std::mem::take(&mut state.as_mut().unwrap().pending)
+        });
+        let event_ids = events.iter().map(|event| event.event_id.clone()).collect::<Vec<_>>();
+        assert_eq!(event_ids, vec!["native-effect-1"]);
+        let accepted = event_ids.iter().cloned()
+            .map(serde_json::Value::String).collect::<Vec<_>>();
+        assert_damage_acknowledgement(&event_ids, &accepted);
+
+        // Only after the matching ACK may finish close the iteration and the
+        // next stochastic iteration begin.
+        mark_iteration_finished();
+        begin_iteration(1);
         BRIDGE.with(|state| {
             let state = state.borrow();
             let bridge = state.as_ref().unwrap();
+            assert!(!bridge.iteration_finished);
             assert!(bridge.pending.is_empty());
-            assert_eq!(bridge.event_ordinal, 0);
         });
 
-        // The next real stochastic iteration reopens event collection.
-        begin_iteration(1);
-        BRIDGE.with(|state| {
-            assert!(!state.borrow().as_ref().unwrap().iteration_finished);
-        });
+        // The next iteration accepts its own combat damage normally.
         BRIDGE.with(|state| {
             let mut state = state.borrow_mut();
+            let bridge = state.as_mut().unwrap();
             append_damage_event(
-                state.as_mut().unwrap(),
+                bridge,
                 20,
                 7.0,
                 false,
@@ -562,15 +598,41 @@ mod iteration_teardown_tests {
                 0,
                 "Druid".to_owned(),
             );
-        });
-        BRIDGE.with(|state| {
-            let state = state.borrow();
-            let bridge = state.as_ref().unwrap();
             assert_eq!(bridge.pending.len(), 1);
-            assert_eq!(bridge.event_ordinal, 1);
             assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
         });
         BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH")]
+    fn terminal_flush_rejects_an_unacknowledged_cleanup_event() {
+        assert_damage_acknowledgement(
+            &["native-effect-1".to_owned()],
+            &[],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_AFTER_FINISH")]
+    fn damage_after_finished_iteration_is_rejected_not_dropped() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(true)));
+        BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            append_damage_event(
+                state.as_mut().unwrap(),
+                10,
+                5.0,
+                false,
+                true,
+                false,
+                "late-proc".to_owned(),
+                "target".to_owned(),
+                "player",
+                0,
+                "Druid".to_owned(),
+            );
+        });
     }
 
     #[test]
