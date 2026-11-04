@@ -7,6 +7,7 @@
 //! rotation presses Berserker Rage: the Automatic (Arms or Fury) preset hides that line, and its
 //! survival major cooldown never autocasts above the defensive health threshold, as in Go.
 
+use forever_engine::RngMode;
 use forever_engine::{
     check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared, Rules,
 };
@@ -62,7 +63,7 @@ fn first_fight_log(stance: &str, list: Value, seconds: f64) -> String {
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared).unwrap().result["logs"]
+    simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result["logs"]
         .as_str()
         .unwrap()
         .to_string()
