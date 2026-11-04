@@ -104,7 +104,7 @@ class ImportPaladinEquipmentTests(unittest.TestCase):
         self.assertEqual(skills["Mail"]["availability_values"], [0])
         self.assertEqual(skills["Cloth"]["min_level"], 1)
         self.assertEqual(skills["Shield"]["min_level"], 1)
-        self.assertEqual(skills["Plate Mail"]["min_level"], 1)
+        self.assertEqual(skills["Plate Mail"]["min_level"], 40)
         self.assertIsNone(skills["Swords"]["min_level"])
         self.assertFalse(skills["Swords"]["race_unrestricted"])
         self.assertEqual(summary["class_wide_skill_count"], 7)
