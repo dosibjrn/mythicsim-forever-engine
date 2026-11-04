@@ -9,6 +9,13 @@ on:
       - tools/import_shaman_equipment.py
       - tools/import_shaman_equipment_test.py
       - data/manifest.json
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/shaman-equipment-source.yml
+      - tools/import_shaman_equipment.py
+      - tools/import_shaman_equipment_test.py
+      - data/manifest.json
 
 permissions:
   contents: write
@@ -19,12 +26,13 @@ concurrency:
 
 jobs:
   import:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'work/work1-shaman-l20-item-options-20261104'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Download DB2 exports for the pinned client build
         shell: bash
@@ -64,4 +72,4 @@ jobs:
             exit 0
           fi
           git commit -m "data: import Shaman equipment skills from pinned client"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
