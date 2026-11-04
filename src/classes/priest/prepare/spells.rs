@@ -30,7 +30,7 @@ fn spell_action(id: i32) -> ActionId {
 
 /// Use the pinned native client row when registering Priest spells for a
 /// lower-level actor. The established level-60 spellbook is unchanged.
-fn rank_available_at_level(rank: &Row, level: i32) -> bool {
+pub(super) fn rank_available_at_level(rank: &Row, level: i32) -> bool {
     level == 60 || (rank.spell_level > 0 && i32::from(rank.spell_level) <= level)
 }
 
