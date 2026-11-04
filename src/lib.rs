@@ -7,6 +7,8 @@
 //! original public API and prepared v1 JSON contract.
 
 pub mod contracts;
+pub mod options;
+pub use options::{get_options, CharacterOptions, Class as OptionsClass};
 pub use core::rng::RngMode;
 pub mod report;
 
