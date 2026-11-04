@@ -4,6 +4,7 @@
 //! Flurry at three ranks, Improved Whirlwind, Reckless Swings and Spearing Strike's 75%. Only
 //! Forever's rules read them; the Go reference keeps the frozen data and the proto's tree order.
 
+use forever_engine::RngMode;
 use forever_engine::{
     check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared,
     PrepareError, Rules,
@@ -95,7 +96,7 @@ fn first_fight_log(request: &Value, seconds: f64, targets: usize) -> String {
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared).unwrap().result["logs"]
+    simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result["logs"]
         .as_str()
         .unwrap()
         .to_string()
