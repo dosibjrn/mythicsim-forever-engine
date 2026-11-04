@@ -470,7 +470,6 @@ mod persistent_next_target_tests {
     }
 }
 
-
 #[cfg(test)]
 mod disabled_bridge_tests {
     use super::{enabled, record_damage};
