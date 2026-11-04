@@ -250,8 +250,8 @@ pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: Uni
     sdm.add_stat_dependency(Stat::Agility, Stat::Armor, 2.0);
 }
 
-/// Legacy requests omit level and remain level 60. The only additional native actor
-/// currently sourced end-to-end is a level-20 Priest with one of the five Classic races.
+/// Legacy requests omit level and remain level 60. Level-20 Priest and Rogue actors
+/// use CMaNGOS-sourced native base stats and level-dependent class conversions.
 fn requested_player_level(player: &Message) -> Result<i32, Refusal> {
     let requested = player.i32("level");
     let level = if requested == 0 {
@@ -264,13 +264,13 @@ fn requested_player_level(player: &Message) -> Result<i32, Refusal> {
     }
     let class = player.enum_name("class");
     let race = player.enum_name("race");
-    if level == 20 && class == "ClassPriest" && base_stats(&class, &race, level).is_some() {
+    if level == 20 && base_stats(&class, &race, level).is_some() {
         return Ok(level);
     }
     Err(Refusal::new(
         "level",
         format!(
-            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60 and Priest level 20 for sourced Classic races)"
+            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest L20 and Rogue L20 for sourced Classic races)"
         ),
     ))
 }
@@ -337,10 +337,64 @@ fn priest_l20_base_stats(race: &str) -> Option<Stats> {
     Some(out)
 }
 
-/// Go `BaseStats[{race, class}]` for L60; sourced Priest L20 rows otherwise.
+
+#[derive(serde::Deserialize)]
+struct RogueL20CritSource {
+    melee_agility_rate_level_1: f64,
+    melee_agility_rate_level_60: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct RogueL20Source {
+    class: String,
+    level: i32,
+    base_health: f64,
+    crit: RogueL20CritSource,
+    races: BTreeMap<String, BTreeMap<String, f64>>,
+}
+
+fn rogue_l20_source() -> &'static RogueL20Source {
+    static SOURCE: OnceLock<RogueL20Source> = OnceLock::new();
+    SOURCE.get_or_init(|| {
+        let parsed: RogueL20Source =
+            serde_json::from_str(include_str!("../../data/rogue-l20-base-stats.json"))
+                .expect("Rogue L20 sourced attributes and conversion parse");
+        assert_eq!(parsed.class, "ClassRogue");
+        assert_eq!(parsed.level, 20);
+        parsed
+    })
+}
+
+/// CMaNGOS Player::GetMeleeCritFromAgility, using the Rogue's level-interpolated rate.
+fn rogue_l20_crit_per_agi() -> f64 {
+    let source = rogue_l20_source();
+    let level = source.level as f64;
+    let crit = &source.crit;
+    let agility_rate = crit.melee_agility_rate_level_1 * (60.0 - level) / 59.0
+        + crit.melee_agility_rate_level_60 * (level - 1.0) / 59.0;
+    1.0 / agility_rate
+}
+
+/// Source-backed Rogue L20 primary attributes and class HP (no mana bar).
+fn rogue_l20_base_stats(race: &str) -> Option<Stats> {
+    let source = rogue_l20_source();
+    let values = source.races.get(race)?;
+    let mut out = Stats::default();
+    for (name, value) in values {
+        out[Stat::by_name(name)?] = *value;
+    }
+    out[Stat::Health] = source.base_health;
+    Some(out)
+}
+
+/// Go `BaseStats[{race, class}]` for L60; sourced class L20 rows otherwise.
 fn base_stats(class: &str, race: &str, level: i32) -> Option<Stats> {
-    if level == 20 && class == "ClassPriest" {
-        return priest_l20_base_stats(race);
+    if level == 20 {
+        return match class {
+            "ClassPriest" => priest_l20_base_stats(race),
+            "ClassRogue" => rogue_l20_base_stats(race),
+            _ => None,
+        };
     }
     if level != constants::CHARACTER_LEVEL {
         return None;
@@ -663,8 +717,12 @@ impl Sim {
 
     /// Level-aware agility-to-crit conversion for the native Priest preparation path.
     pub(crate) fn crit_per_agi(&self, unit: UnitId) -> f64 {
-        if self.unit(unit).level == 20 && self.character(unit).class == "ClassPriest" {
-            return priest_l20_crit_per_agi();
+        if self.unit(unit).level == 20 {
+            return match self.character(unit).class.as_str() {
+                "ClassPriest" => priest_l20_crit_per_agi(),
+                "ClassRogue" => rogue_l20_crit_per_agi(),
+                _ => 0.0,
+            };
         }
         self.crit_per_agi_max_level(unit)
     }
@@ -866,7 +924,7 @@ pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
 mod level_contract_tests {
     use super::{
         constants, has_level_dependent_rating_stats, priest_l20_crit_per_agi,
-        priest_l20_crit_per_int, requested_player_level, Sim,
+        priest_l20_crit_per_int, requested_player_level, rogue_l20_crit_per_agi, Sim,
     };
     use crate::contracts::request::Message;
     use crate::prepare::stats::{Stat, Stats};
@@ -901,6 +959,48 @@ mod level_contract_tests {
             let player = Message::from_json_text("proto.Player", json).unwrap();
             let refusal = requested_player_level(&player).unwrap_err();
             assert_eq!(refusal.code, "level");
+        }
+    }
+
+
+    #[test]
+    fn rogue_l20_prepares_with_sourced_health_primary_stats_and_agility_conversion() {
+        let player = Message::from_json_text(
+            "proto.Player",
+            r#"{"level":20,"class":"ClassRogue","race":"RaceHuman"}"#,
+        )
+        .unwrap();
+        assert_eq!(requested_player_level(&player).unwrap(), 20);
+        let mut sim = Sim::new();
+        let unit = sim.new_character(0, 0, &player, &[]).unwrap();
+        assert_eq!(sim.unit(unit).level, 20);
+        let stats = sim.character(unit).base_stats;
+        assert_eq!(stats[Stat::Strength], 37.0);
+        assert_eq!(stats[Stat::Agility], 53.0);
+        assert_eq!(stats[Stat::Stamina], 35.0);
+        assert_eq!(stats[Stat::Intellect], 23.0);
+        assert_eq!(stats[Stat::Spirit], 28.0);
+        assert_eq!(stats[Stat::Health], 233.0);
+        assert_eq!(stats[Stat::Mana], 0.0);
+        assert_eq!(sim.crit_per_agi(unit), rogue_l20_crit_per_agi());
+        assert_ne!(sim.crit_per_agi(unit), sim.crit_per_agi_max_level(unit));
+        assert_eq!(
+            sim.unit(unit)
+                .sdm
+                .stat_dependency_coeff(Stat::MeleeCritRating, Stat::PhysicalCritPercent),
+            0.0
+        );
+    }
+
+    #[test]
+    fn rogue_l20_unsupported_race_and_level_fail_closed() {
+        for json in [
+            r#"{"level":20,"class":"ClassRogue","race":"RaceBloodElf"}"#,
+            r#"{"level":19,"class":"ClassRogue","race":"RaceHuman"}"#,
+            r#"{"level":30,"class":"ClassRogue","race":"RaceHuman"}"#,
+        ] {
+            let player = Message::from_json_text("proto.Player", json).unwrap();
+            assert_eq!(requested_player_level(&player).unwrap_err().code, "level");
         }
     }
 
