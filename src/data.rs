@@ -122,10 +122,10 @@ const ITEM_REQUIRED_LEVELS: &str = include_str!("../data/item-required-levels.js
 #[derive(serde::Deserialize)]
 struct ItemRequiredLevelRow {
     id: i32,
-    required_level: i32,
+    required_level: Option<i32>,
 }
 
-fn parse_item_required_levels(text: &str) -> HashMap<i32, i32> {
+fn parse_item_required_levels(text: &str) -> HashMap<i32, Option<i32>> {
     let mut levels = HashMap::new();
     for (line_number, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
@@ -137,12 +137,14 @@ fn parse_item_required_levels(text: &str) -> HashMap<i32, i32> {
                 line_number + 1
             )
         });
-        assert!(
-            row.required_level >= 0,
-            "data/item-required-levels.jsonl:{}: negative RequiredLevel for item {}",
-            line_number + 1,
-            row.id
-        );
+        if let Some(required_level) = row.required_level {
+            assert!(
+                required_level >= 0,
+                "data/item-required-levels.jsonl:{}: negative RequiredLevel for item {}",
+                line_number + 1,
+                row.id
+            );
+        }
         assert!(
             levels.insert(row.id, row.required_level).is_none(),
             "data/item-required-levels.jsonl:{}: duplicate item ID {}",
@@ -154,8 +156,8 @@ fn parse_item_required_levels(text: &str) -> HashMap<i32, i32> {
 }
 
 /// The native ItemSparse RequiredLevel field, keyed by item ID.
-pub(crate) fn item_required_levels() -> &'static HashMap<i32, i32> {
-    static LEVELS: OnceLock<HashMap<i32, i32>> = OnceLock::new();
+pub(crate) fn item_required_levels() -> &'static HashMap<i32, Option<i32>> {
+    static LEVELS: OnceLock<HashMap<i32, Option<i32>>> = OnceLock::new();
     LEVELS.get_or_init(|| parse_item_required_levels(ITEM_REQUIRED_LEVELS))
 }
 
@@ -181,8 +183,11 @@ mod tests {
             r#"{"id":647,"required_level":52}"#,
             "\n",
         ));
-        assert_eq!(levels.get(&25), Some(&1));
-        assert_eq!(levels.get(&647), Some(&52));
+        assert_eq!(levels.get(&25), Some(&Some(1)));
+        assert_eq!(levels.get(&647), Some(&Some(52)));
+        assert_eq!(levels.get(&999), None);
+        let unknown = parse_item_required_levels(r#"{"id":999,"required_level":null}"#);
+        assert_eq!(unknown.get(&999), Some(&None));
         assert_eq!(parse_item_required_levels("\n").len(), 0);
     }
 

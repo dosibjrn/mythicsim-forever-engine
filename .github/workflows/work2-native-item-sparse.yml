@@ -90,7 +90,7 @@ jobs:
           ]
           if result["status"] == "partial_level_unknown":
               assert result["unverified_candidate_count"] > 0
-          print(f"{class_name} L20: {len(items)} source-backed candidates; {result['unverified_candidate_count']} eligible native candidates excluded without RequiredLevel")
+          print(f"{class_name} L20: {len(items)} source-backed candidates; {result['unverified_candidate_count']} client items with unknown RequiredLevel; {result['absent_from_client_build_count']} native candidates absent from this client build")
           PY
           done
 

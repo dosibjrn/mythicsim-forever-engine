@@ -46,7 +46,7 @@ def import_item_sparse(csv_path, data_dir=DATA):
         raise ValueError("native data/items.jsonl contains no item IDs")
 
     csv_path = Path(csv_path)
-    required_levels = {}
+    item_sparse_rows = {}
     csv_row_count = 0
     with csv_path.open("r", encoding="utf-8-sig", newline="") as source:
         reader = csv.DictReader(source)
@@ -60,29 +60,30 @@ def import_item_sparse(csv_path, data_dir=DATA):
             item_id = int(raw_id)
             if item_id not in native_ids:
                 continue
-            if item_id in required_levels:
+            if item_id in item_sparse_rows:
                 raise ValueError(f"duplicate ItemSparse ID {item_id}")
             raw_level = row.get("RequiredLevel")
             if raw_level is None or not raw_level.strip():
-                raise ValueError(f"ItemSparse ID {item_id} has no RequiredLevel value")
-            required_level = int(raw_level)
-            if required_level < 0:
-                raise ValueError(f"ItemSparse ID {item_id} has negative RequiredLevel {required_level}")
-            required_levels[item_id] = required_level
+                required_level = None
+            else:
+                required_level = int(raw_level)
+                if required_level < 0:
+                    raise ValueError(f"ItemSparse ID {item_id} has negative RequiredLevel {required_level}")
+            item_sparse_rows[item_id] = required_level
 
-    if not required_levels:
+    if not item_sparse_rows:
         raise ValueError("ItemSparse produced no rows matching native data/items.jsonl")
 
     jsonl = "".join(
-        json.dumps({"id": item_id, "required_level": required_levels[item_id]},
+        json.dumps({"id": item_id, "required_level": item_sparse_rows[item_id]},
                    separators=(",", ":")) + "\n"
-        for item_id in sorted(required_levels)
+        for item_id in sorted(item_sparse_rows)
     )
     output_path = data_dir / "item-required-levels.jsonl"
     output_path.write_text(jsonl, encoding="utf-8")
 
     source_manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": {
             "provider": "wago.tools",
             "table": "ItemSparse",
@@ -92,8 +93,11 @@ def import_item_sparse(csv_path, data_dir=DATA):
             "csv_sha256": digest(csv_path),
         },
         "native_item_count": len(native_ids),
-        "matched_item_count": len(required_levels),
-        "native_items_without_item_sparse_row": len(native_ids) - len(required_levels),
+        "matched_item_count": len(item_sparse_rows),
+        "native_items_without_item_sparse_row": len(native_ids) - len(item_sparse_rows),
+        "native_items_with_unknown_required_level": sum(
+            required_level is None for required_level in item_sparse_rows.values()
+        ),
         "csv_row_count": csv_row_count,
     }
     source_manifest_path = data_dir / "item-required-levels.manifest.json"
@@ -108,8 +112,11 @@ def import_item_sparse(csv_path, data_dir=DATA):
     return {
         "client_build": client_build,
         "native_item_count": len(native_ids),
-        "matched_item_count": len(required_levels),
-        "missing_native_item_count": len(native_ids) - len(required_levels),
+        "matched_item_count": len(item_sparse_rows),
+        "missing_native_item_count": len(native_ids) - len(item_sparse_rows),
+        "unknown_required_level_count": sum(
+            required_level is None for required_level in item_sparse_rows.values()
+        ),
         "csv_row_count": csv_row_count,
         "output_sha256": digest(output_path),
         "csv_sha256": digest(csv_path),

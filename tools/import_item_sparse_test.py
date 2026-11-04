@@ -53,6 +53,7 @@ class ImportItemSparseTests(unittest.TestCase):
         self.assertEqual(result["client_build"], "1.60.1.70425")
         self.assertEqual(result["matched_item_count"], 2)
         self.assertEqual(result["missing_native_item_count"], 0)
+        self.assertEqual(result["unknown_required_level_count"], 0)
         manifest = json.loads((self.data / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(
             manifest["files"]["item-required-levels.jsonl"],
@@ -62,10 +63,28 @@ class ImportItemSparseTests(unittest.TestCase):
         self.assertEqual(source["source"]["field"], "RequiredLevel")
         self.assertEqual(source["source"]["client_build"], "1.60.1.70425")
 
-    def test_rejects_a_missing_required_level_in_a_native_item_row(self):
-        self.csv.write_text("ID,RequiredLevel\n100,\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "no RequiredLevel"):
-            import_item_sparse(self.csv, self.data)
+    def test_preserves_a_native_item_with_unknown_required_level_as_null(self):
+        self.csv.write_text("ID,RequiredLevel\n100,\n300,30\n", encoding="utf-8")
+        result = import_item_sparse(self.csv, self.data)
+        rows = [
+            json.loads(line)
+            for line in (self.data / "item-required-levels.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(rows, [{"id": 100, "required_level": None}])
+        self.assertEqual(result["matched_item_count"], 1)
+        self.assertEqual(result["missing_native_item_count"], 1)
+        self.assertEqual(result["unknown_required_level_count"], 1)
+
+    def test_excludes_native_ids_absent_from_the_pinned_client(self):
+        self.csv.write_text("ID,RequiredLevel\n100,10\n300,30\n", encoding="utf-8")
+        result = import_item_sparse(self.csv, self.data)
+        rows = [
+            json.loads(line)
+            for line in (self.data / "item-required-levels.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(rows, [{"id": 100, "required_level": 10}])
+        self.assertEqual(result["missing_native_item_count"], 1)
+        self.assertEqual(result["unknown_required_level_count"], 0)
 
     def test_rejects_duplicate_native_item_rows(self):
         self.csv.write_text("ID,RequiredLevel\n100,1\n100,2\n", encoding="utf-8")

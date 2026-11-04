@@ -437,7 +437,9 @@ pub struct NativeItemOptionsResponse {
     pub slot: String,
     pub source: String,
     pub required_level_supported: bool,
-    /// Native candidates excluded because the pinned ItemSparse row has no RequiredLevel.
+    /// Native class/slot candidates absent from the pinned client build's ItemSparse table.
+    pub absent_from_client_build_count: usize,
+    /// Candidates present in ItemSparse whose RequiredLevel field is blank.
     pub unverified_candidate_count: usize,
     pub items: Vec<NativeItemOption>,
     pub refusal: Option<NativeItemOptionsRefusal>,
@@ -546,7 +548,7 @@ fn native_item_options_with_required_levels(
     level: i32,
     spec: &str,
     slot: &str,
-    required_levels: &std::collections::HashMap<i32, i32>,
+    required_levels: &std::collections::HashMap<i32, Option<i32>>,
 ) -> NativeItemOptionsResponse {
     let class_input = class.trim().to_ascii_lowercase();
     let spec_input = spec.trim().to_ascii_lowercase();
@@ -596,6 +598,7 @@ fn native_item_options_with_required_levels(
         slot: slot_input.clone(),
         source: "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string(),
         required_level_supported: false,
+        absent_from_client_build_count: 0,
         unverified_candidate_count: 0,
         items: Vec::new(),
         refusal: refusal.map(|(code, reason)| NativeItemOptionsRefusal {
@@ -632,7 +635,11 @@ fn native_item_options_with_required_levels(
         {
             continue;
         }
-        let Some(required_level) = required_levels.get(&item.id).copied() else {
+        let Some(required_level) = required_levels.get(&item.id) else {
+            response.absent_from_client_build_count += 1;
+            continue;
+        };
+        let Some(required_level) = *required_level else {
             response.unverified_candidate_count += 1;
             continue;
         };
@@ -703,10 +710,10 @@ mod native_item_options_contract_tests {
     use super::{native_item_options, native_item_options_with_required_levels, ITEMS};
     use std::collections::HashMap;
 
-    fn synthetic_levels() -> HashMap<i32, i32> {
+    fn synthetic_levels() -> HashMap<i32, Option<i32>> {
         ITEMS
             .keys()
-            .filter_map(|key| i32::try_from(key).ok().map(|id| (id, 1)))
+            .filter_map(|key| i32::try_from(key).ok().map(|id| (id, Some(1))))
             .collect()
     }
 
@@ -746,7 +753,7 @@ mod native_item_options_contract_tests {
         );
         assert!(!baseline.items.is_empty());
         let excluded_id = baseline.items[0].item_id;
-        levels.insert(excluded_id, 21);
+        levels.insert(excluded_id, Some(21));
         let filtered = native_item_options_with_required_levels(
             "priest",
             20,
@@ -790,7 +797,7 @@ mod native_item_options_contract_tests {
         );
         assert!(!complete.items.is_empty());
         let excluded_id = complete.items[0].item_id;
-        levels.remove(&excluded_id);
+        levels.insert(excluded_id, None);
 
         let response = native_item_options_with_required_levels(
             "priest",
@@ -807,6 +814,33 @@ mod native_item_options_contract_tests {
                 && item.required_level <= 20
                 && item.required_level_origin == "client_ItemSparse.RequiredLevel"
         }));
+    }
+
+    #[test]
+    fn items_absent_from_the_pinned_client_are_not_unknown_level_candidates() {
+        let mut levels = synthetic_levels();
+        let baseline = native_item_options_with_required_levels(
+            "priest",
+            20,
+            "unrestricted",
+            "chest",
+            &levels,
+        );
+        assert!(!baseline.items.is_empty());
+        let absent_id = baseline.items[0].item_id;
+        levels.remove(&absent_id);
+
+        let response = native_item_options_with_required_levels(
+            "priest",
+            20,
+            "unrestricted",
+            "chest",
+            &levels,
+        );
+        assert_eq!(response.status, "ok");
+        assert_eq!(response.absent_from_client_build_count, 1);
+        assert_eq!(response.unverified_candidate_count, 0);
+        assert!(response.items.iter().all(|item| item.item_id != absent_id));
     }
 
     #[test]
