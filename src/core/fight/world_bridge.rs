@@ -47,7 +47,7 @@ struct Bridge {
 thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
     static SOURCE_ACTION_COUNTS: RefCell<BTreeMap<String, u64>> =
-        RefCell::new(BTreeMap::new());
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn enabled() -> bool {
