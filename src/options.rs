@@ -130,9 +130,9 @@ pub struct ItemOption {
     pub stats: Vec<(usize, f64)>,
     pub unique: bool,
     /// From the pinned historical Wowhead decisions catalogue, when available.
-    pub required_level: Option<i32>,
+    pub legacy_required_level: Option<i32>,
     /// "observed" is a sourced fact; "inferred_median" is not a legality proof.
-    pub required_level_origin: Option<String>,
+    pub legacy_required_level_origin: Option<String>,
     /// Captured eligibility IDs; absence is not evidence of a class restriction.
     pub historical_class_ids: Vec<i32>,
     pub prerequisites: Vec<Prerequisite>,
@@ -249,36 +249,20 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
             .map(|(index, amount)| (index, *amount))
             .collect();
         let historical = legacy_item_fact(row.i32("id"));
-        // A source-observed requirement excludes items above this checkpoint;
-        // inferred values are still only hints and never become hard rules.
-        if historical.is_some_and(|fact| {
-            fact.origin == "observed" && fact.required_level > i32::from(level)
-        }) {
-            continue;
-        }
+        // Legacy Wowhead requirements are evidence only. The pinned client
+        // ItemSparse.RequiredLevel is authoritative and can disagree even with
+        // an old "observed" Wowhead value; never filter native items here.
         let mut prerequisites = Vec::new();
         if !allowlist.is_empty() {
             prerequisites.push(Prerequisite::ClassAllowlist { classes: allowlist });
         }
-        match historical {
-            Some(fact) if fact.origin == "observed" => {
-                if let Ok(required) = u8::try_from(fact.required_level) {
-                    if required > 0 {
-                        prerequisites.push(Prerequisite::MinimumLevel { level: required });
-                    }
-                } else {
-                    prerequisites.push(Prerequisite::Unresolved {
-                        key: "item_required_level_out_of_range",
-                    });
-                }
-            }
-            Some(_) => prerequisites.push(Prerequisite::Unresolved {
-                key: "item_required_level_inferred",
-            }),
-            None => prerequisites.push(Prerequisite::Unresolved {
-                key: "item_required_level",
-            }),
-        }
+        prerequisites.push(Prerequisite::Unresolved {
+            key: if historical.is_some() {
+                "item_required_level_pending_client_itemsparse"
+            } else {
+                "item_required_level"
+            },
+        });
         prerequisites.push(Prerequisite::Unresolved {
             key: "item_equip_proficiency",
         });
@@ -291,8 +275,8 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
             weapon_type: row.enum_name("weapon_type"),
             stats,
             unique: row.bool("unique"),
-            required_level: historical.map(|fact| fact.required_level),
-            required_level_origin: historical.map(|fact| fact.origin.clone()),
+            legacy_required_level: historical.map(|fact| fact.required_level),
+            legacy_required_level_origin: historical.map(|fact| fact.origin.clone()),
             historical_class_ids: historical
                 .map(|fact| fact.class_ids.clone())
                 .unwrap_or_default(),
@@ -359,40 +343,41 @@ mod tests {
                         key: "item_required_level"
                     }
                 ));
-                i.required_level_origin.is_some() || has_missing
+                i.legacy_required_level_origin.is_some() || has_missing
             }));
     }
 
     #[test]
-    fn observed_required_levels_filter_options_but_inferred_levels_remain_hints() {
+    fn legacy_wowhead_levels_are_exposed_but_do_not_override_client_legality() {
         let mage20 = get_options(20, Class::Mage).unwrap();
         let mage60 = get_options(60, Class::Mage).unwrap();
         let observed20 = mage20
             .items
             .iter()
-            .filter(|item| item.required_level_origin.as_deref() == Some("observed"))
+            .filter(|item| item.legacy_required_level_origin.as_deref() == Some("observed"))
             .count();
         let observed60 = mage60
             .items
             .iter()
-            .filter(|item| item.required_level_origin.as_deref() == Some("observed"))
+            .filter(|item| item.legacy_required_level_origin.as_deref() == Some("observed"))
             .count();
         assert!(observed20 > 0);
-        assert!(observed60 > observed20);
-        assert!(mage20.items.iter().all(|item| {
-            item.required_level_origin.as_deref() != Some("observed")
-                || item.required_level.unwrap_or(0) <= 20
+        assert_eq!(observed60, observed20);
+        assert!(mage20.items.iter().any(|item| {
+            item.legacy_required_level_origin.as_deref() == Some("observed")
+                && item.legacy_required_level.unwrap_or(0) > 20
         }));
-        assert!(mage60.items.iter().filter(|item| {
-            item.required_level_origin.as_deref() == Some("inferred_median")
+        assert!(mage20.items.iter().filter(|item| {
+            item.legacy_required_level_origin.is_some()
         }).all(|item| {
             item.prerequisites.iter().any(|p| matches!(
                 p,
                 Prerequisite::Unresolved {
-                    key: "item_required_level_inferred"
+                    key: "item_required_level_pending_client_itemsparse"
                 }
             ))
         }));
+        assert!(!mage20.coverage.eligibility_complete);
     }
 
     #[test]
