@@ -6,6 +6,8 @@
 //! explicit, so consumers cannot silently turn an incomplete source into a
 //! larger, illegal search space. No second build validator is introduced.
 
+mod talents;
+
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -86,6 +88,10 @@ impl FromStr for Class {
 pub enum Prerequisite {
     MinimumLevel { level: u8 },
     ClassAllowlist { classes: Vec<String> },
+    /// Five points in this tree for each earlier tier.
+    PointsInTree { tree: String, points: u8 },
+    /// Native tree position of the parent and the required parent rank.
+    TalentRank { source_field: String, position: usize, required_rank: u32 },
     Unresolved { key: &'static str },
 }
 
@@ -118,6 +124,8 @@ pub struct TalentOption {
     /// Index of the talent in the native client's tree order, starting at zero.
     pub position: usize,
     pub field: String,
+    /// Identifier in the pinned TalentsForever talent tree.
+    pub source_field: String,
     pub name: String,
     pub max_ranks: u32,
     pub in_proto: bool,
@@ -140,6 +148,8 @@ pub struct CharacterOptions {
     pub source_revision: &'static str,
     pub level: u8,
     pub class: Class,
+    pub talent_points_available: u8,
+    pub talent_source_revision: &'static str,
     pub spells: Vec<SpellOption>,
     pub items: Vec<ItemOption>,
     pub talents: Vec<TalentOption>,
@@ -244,50 +254,14 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         });
     }
 
-    let layout = match class {
-        Class::Druid => Some(crate::forever_druid_talent_layout()),
-        Class::Mage => Some(crate::classes::mage::prepare::forever_talent_layout_json()),
-        _ => None,
-    };
-    let mut talents = Vec::new();
-    if let Some(layout) = &layout {
-        for tree in layout["trees"].as_array().expect("native talent trees") {
-            let tree_name = tree["key"].as_str().expect("native tree key").to_owned();
-            for (position, talent) in tree["talents"]
-                .as_array()
-                .expect("native tree talents")
-                .iter()
-                .enumerate()
-            {
-                talents.push(TalentOption {
-                    tree: tree_name.clone(),
-                    position,
-                    field: talent["field"]
-                        .as_str()
-                        .expect("native talent field")
-                        .to_owned(),
-                    name: talent["name"]
-                        .as_str()
-                        .expect("native talent name")
-                        .to_owned(),
-                    max_ranks: talent["max_ranks"].as_u64().expect("native max ranks") as u32,
-                    in_proto: talent["in_proto"].as_bool().unwrap_or(true),
-                    // The source layout only lists sequential positions; it
-                    // does not expose tier rows or specific parent node IDs.
-                    prerequisites: vec![Prerequisite::Unresolved {
-                        key: "talent_unlocks",
-                    }],
-                });
-            }
-        }
-    }
-
+    // The exact pinned TalentsForever client tree owns talent slots and arrows.
+    // This is discovery metadata, never a new simulation legality guard.
+    let talents = talents::options(class);
     let mut missing = vec![
         "spellbook_training_and_talent_grants",
         "item_level_and_equipment_constraints",
-        "talent_tier_and_parent_unlocks",
     ];
-    if layout.is_none() {
+    if !matches!(class, Class::Druid | Class::Mage) {
         missing.push("native_class_talent_layout");
     }
     Ok(CharacterOptions {
@@ -296,6 +270,8 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         source_revision: SOURCE_REVISION,
         level,
         class,
+        talent_points_available: level.saturating_sub(9),
+        talent_source_revision: talents::source_revision(),
         spells,
         items,
         talents,
