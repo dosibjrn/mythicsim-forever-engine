@@ -206,7 +206,7 @@ pub(crate) fn new_item(spec: &Message) -> Result<Item, Refusal> {
 }
 
 /// Go `ItemTypeToSlot`.
-fn item_type_to_slot(item_type: &str) -> Option<usize> {
+pub(crate) fn item_type_to_slot(item_type: &str) -> Option<usize> {
     Some(match item_type {
         "ItemTypeHead" => slot::HEAD,
         "ItemTypeNeck" => slot::NECK,

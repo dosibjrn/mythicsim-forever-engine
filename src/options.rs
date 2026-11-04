@@ -115,6 +115,8 @@ pub struct ItemOption {
 #[derive(Clone, Debug, Serialize)]
 pub struct TalentOption {
     pub tree: String,
+    /// Index of the talent in the native client's tree order, starting at zero.
+    pub position: usize,
     pub field: String,
     pub name: String,
     pub max_ranks: u32,
@@ -197,23 +199,9 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         };
         let item_type = row.enum_name("type");
         // The engine does not equip an unknown item type.
-        if !matches!(
-            item_type.as_str(),
-            "ItemTypeHead"
-                | "ItemTypeNeck"
-                | "ItemTypeShoulder"
-                | "ItemTypeBack"
-                | "ItemTypeChest"
-                | "ItemTypeWrist"
-                | "ItemTypeHands"
-                | "ItemTypeWaist"
-                | "ItemTypeLegs"
-                | "ItemTypeFeet"
-                | "ItemTypeFinger"
-                | "ItemTypeTrinket"
-                | "ItemTypeWeapon"
-                | "ItemTypeRanged"
-        ) {
+        if item_type != "ItemTypeWeapon"
+            && crate::prepare::items::item_type_to_slot(&item_type).is_none()
+        {
             continue;
         }
         let allowlist = row.enum_names("class_allowlist");
@@ -265,9 +253,15 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
     if let Some(layout) = &layout {
         for tree in layout["trees"].as_array().expect("native talent trees") {
             let tree_name = tree["key"].as_str().expect("native tree key").to_owned();
-            for talent in tree["talents"].as_array().expect("native tree talents") {
+            for (position, talent) in tree["talents"]
+                .as_array()
+                .expect("native tree talents")
+                .iter()
+                .enumerate()
+            {
                 talents.push(TalentOption {
                     tree: tree_name.clone(),
+                    position,
                     field: talent["field"]
                         .as_str()
                         .expect("native talent field")
@@ -350,7 +344,7 @@ mod tests {
         assert!(druid
             .talents
             .iter()
-            .any(|t| t.field == "lacerate" && t.max_ranks == 1 && !t.in_proto));
+            .any(|t| t.field == "lacerate" && t.position == 11 && t.max_ranks == 1 && !t.in_proto));
         let mage = get_options(30, Class::Mage).unwrap();
         assert!(mage
             .talents
