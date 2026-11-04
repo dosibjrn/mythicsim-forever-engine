@@ -315,9 +315,29 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     );
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    let player_actions = report["result"]["raidMetrics"]["parties"][0]["players"][0]["actions"]
+        .as_object()
+        .expect("the native Priest L20 actor must report its action metrics");
+    let smite_casts = player_actions
+        .iter()
+        .filter_map(|(action_id, metrics)| {
+            let action_id: serde_json::Value = serde_json::from_str(action_id).ok()?;
+            if action_id.get("spellId").and_then(serde_json::Value::as_u64) != Some(585) {
+                return None;
+            }
+            Some(
+                metrics["targets"]
+                    .as_array()?
+                    .iter()
+                    .map(|target| target["casts"].as_f64().unwrap_or(0.0))
+                    .sum::<f64>(),
+            )
+        })
+        .sum::<f64>();
     assert!(
-        report["counts"]["casts"].as_f64().unwrap_or(0.0) > 0.0,
-        "the native Priest L20 actor must cast a source-backed action; report: {report}"
+        smite_casts > 0.0,
+        "the native Priest L20 actor must cast source-backed rank-one Smite; action metrics: {:?}",
+        player_actions.keys().collect::<Vec<_>>()
     );
     assert!(
         report["result"]["raidMetrics"]["dps"]["avg"]
