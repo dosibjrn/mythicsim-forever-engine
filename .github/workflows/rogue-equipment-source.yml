@@ -1,0 +1,67 @@
+name: Rogue equipment DB2 source projection
+
+on:
+  push:
+    branches: [work2/rogue-l20-native-source-skills-20261104]
+    paths:
+      - .github/workflows/rogue-equipment-source.yml
+      - tools/import_paladin_equipment.py
+      - tools/import_rogue_equipment.py
+      - tools/import_rogue_equipment_test.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch exact client-build DB2 equipment skill tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$(python3 -c 'import json; print(json.load(open("data/manifest.json"))["client_build"])')"
+          for table in SkillLine SkillRaceClassInfo; do
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+              --user-agent "MythicSim source importer" \
+              "https://wago.tools/db2/${table}/csv?build=${build}" \
+              -o "/tmp/${table}.csv"
+            test -s "/tmp/${table}.csv"
+            sha256sum "/tmp/${table}.csv"
+          done
+      - name: Prove importer isolation and project real Rogue equipment eligibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools -p 'import_*equipment_test.py'
+          python3 tools/import_rogue_equipment.py /tmp/SkillLine.csv /tmp/SkillRaceClassInfo.csv
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          skills = json.loads(Path("data/rogue-equipment-skills.json").read_text())
+          assert skills["client_build"] == json.loads(Path("data/manifest.json").read_text())["client_build"]
+          assert skills["class"] == "rogue" and skills["class_mask"] == 8, skills
+          assert skills["skills"], skills
+          print("ROGUE_EQUIPMENT_PROJECTION_START", flush=True)
+          print(json.dumps(skills, sort_keys=True, separators=(",", ":")), flush=True)
+          print("ROGUE_EQUIPMENT_PROJECTION_END", flush=True)
+          print("ROGUE_EQUIPMENT_MANIFEST_START", flush=True)
+          print(Path("data/rogue-equipment-skills.manifest.json").read_text().strip(), flush=True)
+          print("ROGUE_EQUIPMENT_MANIFEST_END", flush=True)
+          PY
+      - name: Upload canonical source projection and manifests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rogue-equipment-projection
+          path: |
+            /tmp/SkillLine.csv
+            /tmp/SkillRaceClassInfo.csv
+            data/manifest.json
+            data/rogue-equipment-skills.json
+            data/rogue-equipment-skills.manifest.json
+          if-no-files-found: warn
+          retention-days: 14
