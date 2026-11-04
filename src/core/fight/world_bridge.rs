@@ -207,30 +207,76 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     })
 }
 
-pub(crate) fn record_damage(time_ns: i64, damage: f64, crit: bool, landed: bool,
-    periodic: bool, action: String, target_label: String,
-    caster_type: &str, caster_index: u32, caster_label: String) {
-    if !enabled() { return; }
+pub(crate) fn record_damage(
+    time_ns: i64,
+    damage: f64,
+    crit: bool,
+    landed: bool,
+    periodic: bool,
+    action: String,
+    target_label: String,
+    caster_type: &str,
+    caster_index: u32,
+    caster_label: String,
+) {
     assert!(damage.is_finite() && damage > 0.0 && landed, "RUST_WORLD_DAMAGE_INVALID");
+    if !enabled() {
+        return;
+    }
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        if bridge.iteration_finished {
-            // Fight::run_once calls finish() before cleanup(). Damage callbacks
-            // emitted while cleanup tears down the completed fight are not part
-            // of the encounter and must not leak into the next iteration's ACKs.
-            return;
-        }
-        bridge.event_ordinal += 1;
-        bridge.pending.push(DamageEvent {
-            event_id: format!("native-effect-{}", bridge.event_ordinal),
-            native_time_ns: time_ns, damage, source_action_id: action,
-            rank: 0, landed, crit, periodic,
-            native_target_index: 0, native_target_unit_index: 0,
-            native_target_label: target_label,
-            native_caster_type: caster_type.to_owned(), native_caster_unit_index: caster_index,
-            native_caster_label: caster_label,
-        });
+        append_damage_event(
+            bridge,
+            time_ns,
+            damage,
+            crit,
+            landed,
+            periodic,
+            action,
+            target_label,
+            caster_type,
+            caster_index,
+            caster_label,
+        );
+    });
+}
+
+fn append_damage_event(
+    bridge: &mut Bridge,
+    time_ns: i64,
+    damage: f64,
+    crit: bool,
+    landed: bool,
+    periodic: bool,
+    action: String,
+    target_label: String,
+    caster_type: &str,
+    caster_index: u32,
+    caster_label: String,
+) {
+    if bridge.iteration_finished {
+        // Fight::run_once calls finish() before cleanup(). Damage callbacks
+        // emitted while cleanup tears down the completed fight are not part
+        // of the encounter and must not leak into the next iteration's ACKs.
+        return;
+    }
+    bridge.event_ordinal += 1;
+    bridge.pending.push(DamageEvent {
+        event_id: format!("native-effect-{}", bridge.event_ordinal),
+        native_time_ns: time_ns,
+        damage,
+        source_action_id: action,
+        rank: 0,
+        landed,
+        crit,
+        periodic,
+        native_target_index: 0,
+        native_target_unit_index: 0,
+        native_target_label: target_label,
+        native_caster_type: caster_type.to_owned(),
+        native_caster_unit_index: caster_index,
+        native_caster_label: caster_label,
     });
 }
 
@@ -427,7 +473,7 @@ mod persistent_next_target_tests {
 
 #[cfg(test)]
 mod iteration_teardown_tests {
-    use super::{begin_iteration, record_damage, Bridge, BRIDGE};
+    use super::{append_damage_event, begin_iteration, Bridge, BRIDGE};
 
     fn bridge(iteration_finished: bool) -> Bridge {
         Bridge {
@@ -450,11 +496,22 @@ mod iteration_teardown_tests {
 
         // The production runner finishes the world handshake before native
         // cleanup. A teardown callback must not become an unacknowledged event.
-        record_damage(
-            10, 5.0, false, true, false,
-            "teardown-proc".to_owned(), "target".to_owned(),
-            "player", 0, "Druid".to_owned(),
-        );
+        BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            append_damage_event(
+                state.as_mut().unwrap(),
+                10,
+                5.0,
+                false,
+                true,
+                false,
+                "teardown-proc".to_owned(),
+                "target".to_owned(),
+                "player",
+                0,
+                "Druid".to_owned(),
+            );
+        });
         BRIDGE.with(|state| {
             let state = state.borrow();
             let bridge = state.as_ref().unwrap();
@@ -467,11 +524,22 @@ mod iteration_teardown_tests {
         BRIDGE.with(|state| {
             assert!(!state.borrow().as_ref().unwrap().iteration_finished);
         });
-        record_damage(
-            20, 7.0, false, true, false,
-            "combat-proc".to_owned(), "target".to_owned(),
-            "player", 0, "Druid".to_owned(),
-        );
+        BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            append_damage_event(
+                state.as_mut().unwrap(),
+                20,
+                7.0,
+                false,
+                true,
+                false,
+                "combat-proc".to_owned(),
+                "target".to_owned(),
+                "player",
+                0,
+                "Druid".to_owned(),
+            );
+        });
         BRIDGE.with(|state| {
             let state = state.borrow();
             let bridge = state.as_ref().unwrap();
