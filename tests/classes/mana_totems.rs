@@ -3,6 +3,7 @@
 //! under the totem rather than as regeneration. Only the booking changes: the mana gained, every
 //! row's sum and the damage are the same as with the regeneration rows alone.
 
+use forever_engine::RngMode;
 use forever_engine::{contracts::prepared_v2::PreparedV2, prepare_json};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
@@ -35,7 +36,7 @@ fn prepare(request: &Value) -> Value {
 
 fn simulate(prepared: &Value) -> Value {
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
-    forever_engine::simulate_prepared(&typed).unwrap().result
+    forever_engine::simulate_prepared(&typed, RngMode::Stochastic).unwrap().result
 }
 
 fn mana_rows(result: &Value) -> Vec<Value> {
