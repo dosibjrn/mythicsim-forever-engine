@@ -298,7 +298,6 @@ pub(crate) fn shaman_equipment_skills() -> Result<&'static ShamanEquipmentSkills
     }
 }
 
-
 const PALADIN_EQUIPMENT_SKILLS: &str = include_str!("../data/paladin-equipment-skills.json");
 
 #[derive(serde::Deserialize)]
@@ -442,7 +441,6 @@ pub(crate) fn paladin_equipment_skills() -> Result<&'static PaladinEquipmentSkil
         Err(()) => Err("the pinned Paladin SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
     }
 }
-
 
 /// The native ItemSparse RequiredLevel field, keyed by item ID.
 pub(crate) fn item_required_levels() -> &'static HashMap<i32, i32> {
