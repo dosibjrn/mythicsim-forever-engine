@@ -76,7 +76,9 @@ fn spell(prepared: &Value, spell_id: i64) -> &Value {
 fn simulate(prepared: &Value) -> Value {
     let prepared: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result
+    simulate_prepared(&prepared, RngMode::Stochastic)
+        .unwrap()
+        .result
 }
 
 /// The log of the first fight of a prepared request.
