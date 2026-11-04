@@ -134,6 +134,28 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         self.assertEqual(skills["Staves"]["min_level"], 1)
         self.assertEqual(skills["Leather"]["min_level"], 1)
 
+    def test_normalizes_signed_32_bit_race_mask_words(self):
+        skill_lines = [{"ID": 136, "DisplayName_lang": "Staves", "CategoryID": 7}]
+        rows = [self.row(1, 136, -1)]
+        _, payload, _, _ = self.run_import(skill_lines, rows)
+        self.assertEqual(payload["race_mask"], 0xFFFFFFFF)
+        self.assertEqual(payload["race_ids"], list(range(1, 33)))
+        self.assertEqual(payload["skills"][0]["min_level"], 1)
+
+    def test_normalizes_both_signed_race_mask_words_without_sign_extension(self):
+        skill_lines = [{"ID": 136, "DisplayName_lang": "Staves", "CategoryID": 7}]
+        rows = [self.row(1, 136, -1)]
+        rows[0]["RaceMasks_1"] = -1
+        _, payload, _, _ = self.run_import(skill_lines, rows)
+        self.assertEqual(payload["race_mask"], (1 << 64) - 1)
+        self.assertEqual(payload["race_ids"], list(range(1, 65)))
+        skill = payload["skills"][0]
+        self.assertEqual(skill["min_level"], 1)
+        self.assertEqual(
+            list(skill["per_race_min_level"]),
+            [str(race_id) for race_id in range(1, 65)],
+        )
+
     def test_rejects_missing_skill_line_reference(self):
         skill_lines = [{"ID": 44, "DisplayName_lang": "Axes", "CategoryID": 6}]
         rows = [self.row(1, 999, -1)]
