@@ -122,6 +122,15 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         rows = [self.row(1, 44, -1)]
         _, payload, _, _ = self.run_import(skill_lines, rows)
         self.assertEqual(payload["skill_line_ids"], [43, 44, 229])
+        self.assertEqual(
+            payload["skill_line_names"],
+            [
+                {"skill_id": 43, "name": "Swords"},
+                {"skill_id": 44, "name": "Axes"},
+                {"skill_id": 229, "name": "Polearms"},
+            ],
+        )
+        self.assertEqual(payload["schema_version"], 2)
         skill_ids = {skill["skill_id"] for skill in payload["skills"]}
         self.assertIn(44, skill_ids)
         self.assertNotIn(43, skill_ids)

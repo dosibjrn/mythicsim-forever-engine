@@ -165,7 +165,7 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
     skills.sort(key=lambda item: (item["name"].casefold(), item["skill_id"]))
 
     output = {
-        "schema_version": 1,
+        "schema_version": 2,
         "client_build": client_build,
         "class": "shaman",
         "class_id": SHAMAN_CLASS_ID,
@@ -174,6 +174,10 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
         # Complete SkillLine index distinguishes a known unavailable proficiency from a
         # missing/unsupported source mapping in the native consumer.
         "skill_line_ids": sorted(skill_lines),
+        "skill_line_names": [
+            {"skill_id": skill_id, "name": skill_lines[skill_id]["name"]}
+            for skill_id in sorted(skill_lines)
+        ],
         "skills": skills,
     }
     output_path = data_dir / "shaman-equipment-skills.json"
