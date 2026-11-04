@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/work2-combined-p3-item-options-p74-world-ack-20261104
+      - work2/paladin-l20-native-source-context-20261104
     paths:
       - 'src/**'
       - 'data/**'
@@ -37,6 +38,26 @@ jobs:
           set -euo pipefail
           python3 tools/rust_data.py check
           python3 -m unittest discover -s tools -p 'import_item_sparse_test.py'
+          python3 -m unittest discover -s tools -p 'import_paladin_equipment_test.py'
+      - name: Format changed Rust modules and export exact patch
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+          git diff -- src/data.rs src/prepare/items.rs src/main.rs > "$RUNNER_TEMP/paladin-rustfmt.patch"
+          if [ -s "$RUNNER_TEMP/paladin-rustfmt.patch" ]; then
+            echo "Rustfmt patch captured for review"
+          else
+            echo "No rustfmt changes required"
+          fi
+      - name: Export rustfmt patch for exact Paladin branch
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paladin-rustfmt-patch
+          path: ${{ runner.temp }}/paladin-rustfmt.patch
+          if-no-files-found: ignore
+
       - name: Test restored native P3 API and preserved P7.4 world ACK
         run: |
           set -euo pipefail
@@ -46,12 +67,12 @@ jobs:
           cargo test --locked terminal_flush_rejects_an_unacknowledged_cleanup_event -- --nocapture
           cargo test --locked cleanup_damage_after_lethal_ack_is_rejected -- --nocapture
           cargo test --locked lethal_world_death_skips_only_target_final_dot_tick -- --nocapture
-      - name: Query real Priest and Mage L20 source-backed item options
+      - name: Query real Priest, Mage, and Paladin L20 source-backed item options
         shell: bash
         run: |
           set -euo pipefail
           cargo build --locked --bin forever-engine
-          for class in priest mage; do
+          for class in priest mage paladin; do
             target/debug/forever-engine item-options --class "$class" --level 20 --spec unrestricted --slot all > "$RUNNER_TEMP/$class-item-options.json"
             python3 - "$class" "$RUNNER_TEMP/$class-item-options.json" <<'PY'
           import json, sys
@@ -63,8 +84,25 @@ jobs:
           assert all(item["required_level"] <= 20 for item in result["items"])
           assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in result["items"])
           assert isinstance(result["unverified_candidate_count"], int)
-          if result["status"] == "partial_level_unknown":
+          if class_name == "paladin":
+              assert result["status"] == "ok", result
+              assert result["unverified_candidate_count"] == 0, result
+              assert result["excluded_non_client_item_count"] > 0, result
+              assert "SkillLine+SkillRaceClassInfo" in result["source"], result["source"]
+              assert any(
+                  item["weapon_type"] == "WeaponTypeMace"
+                  and item["weapon_damage_min"] is not None
+                  and item["weapon_damage_max"] is not None
+                  and item["weapon_speed"] is not None
+                  for item in result["items"]
+              ), "Paladin options must include a source-backed mace"
+          elif result["status"] == "partial_level_unknown":
               assert result["unverified_candidate_count"] > 0
-          print(class_name, "known", len(result["items"]), "excluded_unknown", result["unverified_candidate_count"])
+          print(
+              class_name,
+              "known", len(result["items"]),
+              "excluded_non_client", result.get("excluded_non_client_item_count", 0),
+              "unverified", result["unverified_candidate_count"],
+          )
           PY
           done

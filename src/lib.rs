@@ -40,7 +40,7 @@ pub fn implemented_prepared_effects() -> &'static [&'static str] {
     engine::coverage::implemented_effects()
 }
 pub use prepare::items::{
-    native_item_options, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
+    native_item_options, native_player_context, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
 };
 pub use report::{Counts, Report, TraceEvent, Work};
 
