@@ -393,7 +393,6 @@ pub(crate) fn effect_stats(effect: &Message) -> Stats {
     scaling_option(effect).map_or_else(Stats::default, |option| stats_from_map(option, "stats"))
 }
 
-
 /// One read-only candidate projected from MythicSim's embedded SimItem database.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct NativeItemOption {
@@ -492,22 +491,21 @@ fn native_item_matches_slot(item: &Item, source_slot: &str, requested_slot: &str
         "main_hand" => matches!(source_slot, "main_hand" | "one_hand" | "two_hand"),
         "one_hand" | "two_hand" => source_slot == requested_slot,
         "offhand" | "off_hand" => source_slot == "off_hand",
-        "wand" => {
-            source_slot == "ranged" && item.ranged_weapon_type == "RangedWeaponTypeWand"
-        }
-        "ranged" => {
-            source_slot == "ranged" && item.ranged_weapon_type != "RangedWeaponTypeWand"
-        }
+        "wand" => source_slot == "ranged" && item.ranged_weapon_type == "RangedWeaponTypeWand",
+        "ranged" => source_slot == "ranged" && item.ranged_weapon_type != "RangedWeaponTypeWand",
         "trinket" | "relic" => source_slot == requested_slot,
-        "head" | "neck" | "shoulder" | "back" | "chest" | "wrist" | "hands"
-        | "waist" | "legs" | "feet" | "shirt" | "tabard" => source_slot == requested_slot,
+        "head" | "neck" | "shoulder" | "back" | "chest" | "wrist" | "hands" | "waist" | "legs"
+        | "feet" | "shirt" | "tabard" => source_slot == requested_slot,
         _ => false,
     }
 }
 
 fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bool {
     if !item.class_allowlist.is_empty()
-        && !item.class_allowlist.iter().any(|allowed| allowed == class_proto)
+        && !item
+            .class_allowlist
+            .iter()
+            .any(|allowed| allowed == class_proto)
     {
         return false;
     }
@@ -516,8 +514,10 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
     if matches!(
         slot,
         Some("head" | "shoulder" | "chest" | "wrist" | "hands" | "waist" | "legs" | "feet")
-    ) && !matches!(item.armor_type.as_str(), "ArmorTypeUnknown" | "ArmorTypeCloth")
-    {
+    ) && !matches!(
+        item.armor_type.as_str(),
+        "ArmorTypeUnknown" | "ArmorTypeCloth"
+    ) {
         return false;
     }
 
@@ -556,26 +556,27 @@ pub fn native_item_options(
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
-        "all" | "head" | "neck" | "shoulder" | "back" | "chest" | "wrist"
-        | "hands" | "waist" | "legs" | "feet" | "shirt" | "tabard" | "relic"
-        | "ring" | "finger" | "trinket" | "weapon" | "main_hand" | "one_hand"
-        | "two_hand" | "offhand" | "off_hand" | "ranged" | "wand" => {
-            Some(slot_input.as_str())
-        }
+        "all" | "head" | "neck" | "shoulder" | "back" | "chest" | "wrist" | "hands" | "waist"
+        | "legs" | "feet" | "shirt" | "tabard" | "relic" | "ring" | "finger" | "trinket"
+        | "weapon" | "main_hand" | "one_hand" | "two_hand" | "offhand" | "off_hand" | "ranged"
+        | "wand" => Some(slot_input.as_str()),
         _ => None,
     };
     let refusal = if normalized_class.is_none() {
-        Some(("NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS", format!(
-            "native item-options currently supports priest and mage, not {class}"
-        )))
+        Some((
+            "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
+            format!("native item-options currently supports priest and mage, not {class}"),
+        ))
     } else if !(1..=60).contains(&level) {
-        Some(("NATIVE_ITEM_OPTIONS_INVALID_LEVEL", format!(
-            "level must be between 1 and 60, received {level}"
-        )))
+        Some((
+            "NATIVE_ITEM_OPTIONS_INVALID_LEVEL",
+            format!("level must be between 1 and 60, received {level}"),
+        ))
     } else if spec_input != "unrestricted" {
-        Some(("NATIVE_ITEM_OPTIONS_UNSUPPORTED_SPEC", format!(
-            "native item-options currently supports the unrestricted profile, not {spec}"
-        )))
+        Some((
+            "NATIVE_ITEM_OPTIONS_UNSUPPORTED_SPEC",
+            format!("native item-options currently supports the unrestricted profile, not {spec}"),
+        ))
     } else if canonical_slot.is_none() {
         Some(("NATIVE_ITEM_OPTIONS_UNSUPPORTED_SLOT", format!(
             "unsupported item slot {slot}"
@@ -589,7 +590,7 @@ pub fn native_item_options(
         class: class_input,
         level,
         spec: spec_input,
-        slot: slot_input,
+        slot: slot_input.clone(),
         source: "mythicsim:data/items.jsonl".to_string(),
         required_level_supported: false,
         items: Vec::new(),
@@ -645,8 +646,12 @@ pub fn native_item_options(
             ranged_weapon_type: item.ranged_weapon_type,
             stats,
             pseudo_stats: item.pseudo_stats,
-            weapon_damage_min: scaling.has("weapon_damage_min").then(|| scaling.f64("weapon_damage_min")),
-            weapon_damage_max: scaling.has("weapon_damage_max").then(|| scaling.f64("weapon_damage_max")),
+            weapon_damage_min: scaling
+                .has("weapon_damage_min")
+                .then(|| scaling.f64("weapon_damage_min")),
+            weapon_damage_max: scaling
+                .has("weapon_damage_max")
+                .then(|| scaling.f64("weapon_damage_max")),
             weapon_speed: (item.swing_speed > 0.0).then_some(item.swing_speed),
             quality_modifier: item.quality_modifier,
             unique: item.unique,
@@ -679,15 +684,25 @@ mod native_item_options_tests {
         assert_eq!(response.status, "ok", "{response:?}");
         assert!(response.refusal.is_none());
         assert!(!response.items.is_empty());
-        response.items.into_iter().map(|item| item.item_id).collect()
+        response
+            .items
+            .into_iter()
+            .map(|item| item.item_id)
+            .collect()
     }
 
     #[test]
     fn priest_and_mage_receive_native_cloth_options_but_not_leather() {
         for class in ["priest", "mage"] {
             let chest = ids(class, "chest");
-            assert!(chest.contains(&200), "{class} should receive Thick Cloth Vest");
-            assert!(!chest.contains(&60), "{class} must not receive Layered Tunic");
+            assert!(
+                chest.contains(&200),
+                "{class} should receive Thick Cloth Vest"
+            );
+            assert!(
+                !chest.contains(&60),
+                "{class} must not receive Layered Tunic"
+            );
         }
     }
 
@@ -696,7 +711,10 @@ mod native_item_options_tests {
         let priest_weapons = ids("priest", "weapon");
         let mage_weapons = ids("mage", "weapon");
         assert!(priest_weapons.contains(&36), "Priest can use Worn Mace");
-        assert!(!priest_weapons.contains(&25), "Priest cannot use Worn Shortsword");
+        assert!(
+            !priest_weapons.contains(&25),
+            "Priest cannot use Worn Shortsword"
+        );
         assert!(mage_weapons.contains(&25), "Mage can use Worn Shortsword");
         assert!(!mage_weapons.contains(&36), "Mage cannot use Worn Mace");
     }
@@ -705,13 +723,25 @@ mod native_item_options_tests {
     fn native_class_allowlist_and_wand_options_are_respected() {
         let priest_trinkets = ids("priest", "trinket");
         let mage_trinkets = ids("mage", "trinket");
-        assert!(priest_trinkets.contains(&2919), "Priest-only relic remains Priest-only");
-        assert!(!mage_trinkets.contains(&2919), "Priest-only relic is excluded for Mage");
+        assert!(
+            priest_trinkets.contains(&2919),
+            "Priest-only relic remains Priest-only"
+        );
+        assert!(
+            !mage_trinkets.contains(&2919),
+            "Priest-only relic is excluded for Mage"
+        );
 
         let mage_offhands = ids("mage", "offhand");
         let priest_offhands = ids("priest", "offhand");
-        assert!(mage_offhands.contains(&7507), "Mage-only Arcane Orb remains Mage-only");
-        assert!(!priest_offhands.contains(&7507), "Mage-only Arcane Orb is excluded for Priest");
+        assert!(
+            mage_offhands.contains(&7507),
+            "Mage-only Arcane Orb remains Mage-only"
+        );
+        assert!(
+            !priest_offhands.contains(&7507),
+            "Mage-only Arcane Orb is excluded for Priest"
+        );
 
         assert!(ids("priest", "wand").contains(&5069));
         assert!(ids("mage", "wand").contains(&5069));
@@ -723,17 +753,27 @@ mod native_item_options_tests {
     #[test]
     fn native_options_return_stats_and_explicit_refusals() {
         let response = native_item_options("mage", 20, "unrestricted", "chest");
-        let robe = response.items.iter().find(|item| item.item_id == 200).unwrap();
+        let robe = response
+            .items
+            .iter()
+            .find(|item| item.item_id == 200)
+            .unwrap();
         assert_eq!(robe.item_level, Some(22));
         assert!(robe.stats.contains_key("Armor"));
         assert!(!response.required_level_supported);
 
         let unknown = native_item_options("warrior", 20, "unrestricted", "chest");
         assert_eq!(unknown.status, "refused");
-        assert_eq!(unknown.refusal.unwrap().code, "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS");
+        assert_eq!(
+            unknown.refusal.unwrap().code,
+            "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS"
+        );
 
         let bad_level = native_item_options("priest", 61, "unrestricted", "chest");
         assert_eq!(bad_level.status, "refused");
-        assert_eq!(bad_level.refusal.unwrap().code, "NATIVE_ITEM_OPTIONS_INVALID_LEVEL");
+        assert_eq!(
+            bad_level.refusal.unwrap().code,
+            "NATIVE_ITEM_OPTIONS_INVALID_LEVEL"
+        );
     }
 }
