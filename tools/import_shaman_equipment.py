@@ -73,7 +73,7 @@ def race_mask(row, table, line_number):
 
 def race_mask_is_unrestricted(mask):
     # SkillRaceClassInfo uses both an empty mask and an all-bits mask for no race restriction.
-    return mask == 0 or mask < 0 or mask in (0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+    return mask in (0, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
 
 
 def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=DATA):
