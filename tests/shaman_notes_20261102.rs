@@ -3,6 +3,7 @@
 //! and Lava Burst's talent slot giving Call of Thunder. The Go reference keeps the frozen data
 //! (client 1.60.1.70425) and its numbers.
 
+use forever_engine::RngMode;
 use forever_engine::{prepare_json_with, simulate_prepared, Rules};
 use serde_json::{json, Value};
 use std::{fs, path::Path};
@@ -289,7 +290,7 @@ fn a_rotation_line_naming_lava_burst_is_dropped() {
 
     let dps = |request: &Value, rules: Rules| {
         let prepared = serde_json::from_value(prepared(request, rules)).unwrap();
-        let report = simulate_prepared(&prepared).unwrap();
+        let report = simulate_prepared(&prepared, RngMode::Stochastic).unwrap();
         let player = report.result["raidMetrics"]["parties"][0]["players"][0].clone();
         let lava_burst_casts = player["actions"]
             .as_array()
