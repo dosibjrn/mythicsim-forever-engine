@@ -256,6 +256,7 @@ fn append_damage_event(
     caster_label: String,
 ) {
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
+    assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -392,12 +393,25 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     (distance, front, moving)
 }
 
+fn has_lethal_ack(bridge: &Bridge) -> bool {
+    bridge.sequence > 0
+        && bridge.last_health == Some(0.0)
+        && bridge.previous_ack_id.len() == 64
+}
+
+pub(crate) fn lethal_ack_received() -> bool {
+    BRIDGE.with(|state| {
+        let state = state.borrow();
+        let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
+        has_lethal_ack(bridge)
+    })
+}
+
 pub(crate) fn acknowledged_lethal() -> bool {
     BRIDGE.with(|state| {
         let state = state.borrow();
         let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
-        bridge.sequence > 0 && bridge.last_health == Some(0.0)
-            && bridge.previous_ack_id.len() == 64 && bridge.pending.is_empty()
+        has_lethal_ack(bridge) && bridge.pending.is_empty()
     })
 }
 
@@ -424,9 +438,7 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
         let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
         (
             bridge.last_tick_ns,
-            bridge.sequence > 0
-                && bridge.last_health == Some(0.0)
-                && bridge.previous_ack_id.len() == 64,
+            has_lethal_ack(bridge),
             bridge.pending.is_empty(),
         )
     });
@@ -626,6 +638,27 @@ mod iteration_teardown_tests {
     #[should_panic(expected = "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH")]
     fn terminal_flush_rejects_an_unacknowledged_cleanup_event() {
         assert_damage_acknowledgement(&["native-effect-1".to_owned()], &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK")]
+    fn cleanup_damage_after_lethal_ack_is_rejected() {
+        let mut state = bridge(false);
+        state.last_health = Some(0.0);
+        state.previous_ack_id = "a".repeat(64);
+        append_damage_event(
+            &mut state,
+            10,
+            5.0,
+            false,
+            true,
+            false,
+            "late-proc".to_owned(),
+            "target".to_owned(),
+            "player",
+            0,
+            "Druid".to_owned(),
+        );
     }
 
     #[test]
