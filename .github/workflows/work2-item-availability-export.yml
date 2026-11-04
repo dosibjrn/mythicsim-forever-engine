@@ -120,7 +120,7 @@ jobs:
               "items": rows,
           }
           out = pathlib.Path("item-availability-export.json")
-          out.write_text(json.dumps(output, sort_keys=True, separators=(",", ":")) + "\\n", encoding="utf-8")
+          out.write_text(json.dumps(output, sort_keys=True, separators=(",", ":")) + chr(10), encoding="utf-8")
 
           origin_codes = {
               "observed": 0,
@@ -136,8 +136,8 @@ jobs:
                       raise SystemExit(f"unknown required-level origin: {row['required_level_origin']}")
                   acquisition_level = row["acquisition_min_level"]
                   handle.write(
-                      f"{row['item_id']}\\t{row['required_level']}\\t{code}\\t"
-                      f"{'' if acquisition_level is None else acquisition_level}\\n"
+                      f"{row['item_id']}{chr(9)}{row['required_level']}{chr(9)}{code}{chr(9)}"
+                      f"{'' if acquisition_level is None else acquisition_level}{chr(10)}"
                   )
 
           metadata = {
@@ -161,7 +161,7 @@ jobs:
           }
           metadata_path = pathlib.Path("data/item_availability_manifest.json")
           metadata_path.write_text(
-              json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\\n",
+              json.dumps(metadata, sort_keys=True, separators=(",", ":")) + chr(10),
               encoding="utf-8",
           )
           print(json.dumps({
