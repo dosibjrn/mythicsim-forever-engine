@@ -48,7 +48,10 @@ fn melee_ability(row: &Row, mask: i64, flags: SpellFlag) -> SpellConfig {
 impl Rogue {
     /// Go `registerAmbushSpell`.
     pub(super) fn register_ambush_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().ambush.highest();
+        let rank = spell_data().ambush.highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         // The client states the weapon share as a percentage on effect 2 (250, where TBC had
         // 275), counting from 1 by position.
         let weapon_damage = rank.effect_n(2).average(CHARACTER_LEVEL) / 100.0;
@@ -74,7 +77,14 @@ impl Rogue {
 
     /// Go `registerBackstabSpell`.
     pub(super) fn register_backstab_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().backstab.highest_for(sim.rules);
+        let rank = if sim.unit(unit).level == 60 {
+            spell_data().backstab.highest_for(sim.rules)
+        } else {
+            spell_data().backstab.highest_at_level(sim.unit(unit).level)
+        };
+        if rank.is_nil() {
+            return;
+        }
         let weapon_damage = rank.effect_n(2).average(CHARACTER_LEVEL) / 100.0;
         let spell = sim.register_spell(
             unit,
@@ -98,7 +108,12 @@ impl Rogue {
 
     /// Go `registerEviscerate`.
     pub(super) fn register_eviscerate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().eviscerate.highest();
+        let rank = spell_data()
+            .eviscerate
+            .highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         let spell = sim.register_spell(
             unit,
             SpellConfig {
@@ -123,7 +138,12 @@ impl Rogue {
     /// Go `registerExposeArmorSpell`: Forever repurposes Improved Expose Armor, whose combo
     /// points handed back on a full spend live in the cast.
     pub(super) fn register_expose_armor_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().expose_armor.highest();
+        let rank = spell_data()
+            .expose_armor
+            .highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         let auras = new_enemy_aura_array(sim, armor::expose_armor_aura);
         let related = aura_array_map(sim, &auras);
         self.auras.expose_armor = auras;
@@ -149,7 +169,12 @@ impl Rogue {
     /// Go `registerKidneyShot`: it stuns for a second and a second a combo point, and raises the
     /// damage the target takes from the rogue with Improved Kidney Shot.
     pub(super) fn register_kidney_shot(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().kidney_shot.highest();
+        let rank = spell_data()
+            .kidney_shot
+            .highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         let action = spell_action(rank.id);
         let damage_taken = 1.0
             + spell_data()
@@ -209,7 +234,10 @@ impl Rogue {
 
     /// Go `registerGarrote`.
     pub(super) fn register_garrote(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().garrote.highest();
+        let rank = spell_data().garrote.highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         let tick = rank.periodic_effect();
         let tick_length = tick.period();
         let spell = sim.get_or_register_spell(
@@ -243,7 +271,10 @@ impl Rogue {
 
     /// Go `registerRupture`.
     pub(super) fn register_rupture(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().rupture.highest();
+        let rank = spell_data().rupture.highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         let tick_length = rank.periodic_effect().period();
         let spell = sim.register_spell(
             unit,
@@ -278,7 +309,12 @@ impl Rogue {
 
     /// Go `registerSinisterStrikeSpell`.
     pub(super) fn register_sinister_strike_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().sinister_strike.highest();
+        let rank = spell_data()
+            .sinister_strike
+            .highest_at_level(sim.unit(unit).level);
+        if rank.is_nil() {
+            return;
+        }
         let spell = sim.register_spell(
             unit,
             SpellConfig {
@@ -300,7 +336,16 @@ impl Rogue {
 
     /// Go `registerSliceAndDice`.
     pub(super) fn register_slice_and_dice(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().slice_and_dice.by_id(6774);
+        let rank = if sim.unit(unit).level == 60 {
+            spell_data().slice_and_dice.by_id(6774)
+        } else {
+            spell_data()
+                .slice_and_dice
+                .highest_at_level(sim.unit(unit).level)
+        };
+        if rank.is_nil() {
+            return;
+        }
         let action = spell_action(rank.id);
         let state = Rc::clone(&self.state);
 
@@ -354,7 +399,14 @@ impl Rogue {
 
     /// Go `registerVanishSpell`.
     pub(super) fn register_vanish_spell(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().vanish.by_id(1856);
+        let rank = if sim.unit(unit).level == 60 {
+            spell_data().vanish.by_id(1856)
+        } else {
+            spell_data().vanish.highest_at_level(sim.unit(unit).level)
+        };
+        if rank.is_nil() {
+            return;
+        }
         let timer = sim.new_timer(unit);
         let spell = sim.register_spell(
             unit,
@@ -383,7 +435,14 @@ impl Rogue {
 
     /// Go `registerStealthAura`.
     pub(super) fn register_stealth_aura(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().stealth.by_id(1784);
+        let rank = if sim.unit(unit).level == 60 {
+            spell_data().stealth.by_id(1784)
+        } else {
+            spell_data().stealth.highest_at_level(sim.unit(unit).level)
+        };
+        if rank.is_nil() {
+            return;
+        }
         let noop: crate::prepare::sim::AuraCallback = Rc::new(|_: &mut Sim, _| {});
         // Stealth breaks on damage taken (if not absorbed); not modelled. Master of Subtlety is
         // not registered, so its aura is never there to follow Stealth.
@@ -420,5 +479,27 @@ impl Rogue {
                 ..SpellConfig::default()
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod native_level_rank_tests {
+    use super::spell_data;
+
+    #[test]
+    fn rogue_l20_uses_actual_client_learnable_rank_not_l60_rank() {
+        let ladder = &spell_data().sinister_strike;
+        let rank = ladder.highest_at_level(20);
+        assert!(
+            !rank.is_nil(),
+            "native Sinister Strike must have a learnable L20 rank"
+        );
+        assert!(rank.spell_level > 0 && i32::from(rank.spell_level) <= 20);
+        assert_ne!(
+            rank.id,
+            ladder.highest().id,
+            "L60 rank must not leak into L20"
+        );
+        assert_eq!(ladder.highest_at_level(60).id, ladder.highest().id);
     }
 }

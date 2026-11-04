@@ -2043,11 +2043,11 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    // The only non-60 production actor admitted by this gate is the
-    // source-backed Priest L20 preparation path. Keep the exception exact;
-    // other class/level combinations still fail closed.
-    let priest_l20 = player.class == "ClassPriest" && player.level == 20;
-    if player.level != 60 && !priest_l20 {
+    // Source-backed Priest and Rogue L20 actors can execute against L20 targets.
+    // Other class/level combinations still fail closed.
+    let sourced_l20 = player.level == 20
+        && matches!(player.class.as_str(), "ClassPriest" | "ClassRogue");
+    if player.level != 60 && !sourced_l20 {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2065,7 +2065,7 @@ pub(crate) fn prepared_coverage(
         ));
     }
     let target_level_supported = (60..=63).contains(&prepared.target.level)
-        || (priest_l20 && prepared.target.level == 20);
+        || (sourced_l20 && prepared.target.level == 20);
     if !target_level_supported {
         reasons.push(Refusal::new(
             "level_unsupported",

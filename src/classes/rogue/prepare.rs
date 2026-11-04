@@ -277,7 +277,7 @@ pub(crate) fn new_rogue(
 
     poisons::apply_poisons(sim, unit);
 
-    let crit_per_agi = sim.crit_per_agi_max_level(unit);
+    let crit_per_agi = sim.crit_per_agi(unit);
     let sdm = &mut sim.unit_mut(unit).sdm;
     sdm.add_stat_dependency(Stat::Strength, Stat::AttackPower, 1.0);
     sdm.add_stat_dependency(Stat::Agility, Stat::AttackPower, 1.0);
