@@ -1401,10 +1401,22 @@ mod native_item_options_contract_tests {
         assert_eq!(result.unverified_candidate_count, 0);
         assert!(!result.items.is_empty());
         assert!(result.items.iter().all(|row| row.required_level <= 20));
-        assert!(result.items.iter().any(|row| row.armor_type == "ArmorTypeLeather"));
-        assert!(result.items.iter().any(|row| row.weapon_type == "WeaponTypeDagger"));
-        assert!(!result.items.iter().any(|row| row.ranged_weapon_type == "RangedWeaponTypeWand"));
-        assert!(!result.items.iter().any(|row| row.weapon_type == "WeaponTypeShield"));
+        assert!(result
+            .items
+            .iter()
+            .any(|row| row.armor_type == "ArmorTypeLeather"));
+        assert!(result
+            .items
+            .iter()
+            .any(|row| row.weapon_type == "WeaponTypeDagger"));
+        assert!(!result
+            .items
+            .iter()
+            .any(|row| row.ranged_weapon_type == "RangedWeaponTypeWand"));
+        assert!(!result
+            .items
+            .iter()
+            .any(|row| row.weapon_type == "WeaponTypeShield"));
     }
 
     #[test]
