@@ -131,7 +131,7 @@ mod persistent_next_target_world_lethal_ack_tests {
             iteration: 0, sequence: 1, next_tick_ns: 200,
             last_tick_ns: 100, last_health: Some(25.0),
             previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
-            event_ordinal: 9, pending: Vec::new(),
+            event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
         }));
         assert_eq!(begin_next_target(200),
             Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
@@ -173,7 +173,7 @@ mod world_lethal_terminal_tests {
             iteration: 0, sequence: 1, next_tick_ns: 200,
             last_tick_ns: 100, last_health: Some(10.0),
             previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
-            event_ordinal: 1, pending: Vec::new(),
+            event_ordinal: 1, pending: Vec::new(), iteration_finished: false,
         }));
         assert!(!acknowledged_lethal());
         BRIDGE.with(|state| state.borrow_mut().as_mut().unwrap().last_health = Some(0.0));
@@ -404,6 +404,7 @@ mod persistent_next_target_tests {
             last_tick_ns: 120_000_000, last_health: Some(0.0),
             previous_ack_id: "a".repeat(64),
             source_hash: "a".repeat(64), event_ordinal: 3, pending: Vec::new(),
+            iteration_finished: false,
         }));
         assert_eq!(begin_next_target(120_000_000),
             Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND"));
