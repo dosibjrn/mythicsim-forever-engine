@@ -67,6 +67,8 @@ jobs:
           cargo test --locked terminal_flush_rejects_an_unacknowledged_cleanup_event -- --nocapture
           cargo test --locked cleanup_damage_after_lethal_ack_is_rejected -- --nocapture
           cargo test --locked lethal_world_death_skips_only_target_final_dot_tick -- --nocapture
+      - name: Test native Paladin L20 player-context and CLI contract
+        run: cargo test --locked --test native_player_context -- --nocapture
       - name: Query real Priest, Mage, and Paladin L20 source-backed item options
         shell: bash
         run: |
