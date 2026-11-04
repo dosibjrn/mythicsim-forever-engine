@@ -393,8 +393,8 @@ pub(crate) fn effect_stats(effect: &Message) -> Stats {
     scaling_option(effect).map_or_else(Stats::default, |option| stats_from_map(option, "stats"))
 }
 
-/// One read-only candidate projected from MythicSim's embedded SimItem database
-/// and the pinned client's ItemSparse.RequiredLevel field.
+/// One read-only candidate projected from MythicSim's embedded SimItem database,
+/// pinned ItemSparse.RequiredLevel, and the class equipment profile where supported.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct NativeItemOption {
     pub item_id: i32,
@@ -443,6 +443,108 @@ pub struct NativeItemOptionsResponse {
     pub refusal: Option<NativeItemOptionsRefusal>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct NativeShamanEquipmentProfile {
+    class_id: i32,
+    class_mask: i32,
+    has_relic_slot: bool,
+    skills: Vec<NativeShamanSkill>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct NativeShamanSkill {
+    id: i32,
+    min_level: i32,
+}
+
+fn native_shaman_equipment_profile() -> &'static NativeShamanEquipmentProfile {
+    static PROFILE: std::sync::OnceLock<NativeShamanEquipmentProfile> =
+        std::sync::OnceLock::new();
+    PROFILE.get_or_init(|| {
+        serde_json::from_str(include_str!("../../data/shaman-equipment-profile.json"))
+            .expect("pinned Shaman equipment profile must be valid JSON")
+    })
+}
+
+fn native_shaman_skill_min_level(skill_id: i32) -> Option<i32> {
+    native_shaman_equipment_profile()
+        .skills
+        .iter()
+        .filter(|skill| skill.id == skill_id)
+        .map(|skill| skill.min_level)
+        .min()
+}
+
+fn native_shaman_has_skill(skill_id: i32, level: i32) -> bool {
+    native_shaman_skill_min_level(skill_id).is_some_and(|min_level| min_level <= level)
+}
+
+fn native_shaman_profile_complete(profile: &NativeShamanEquipmentProfile) -> bool {
+    const REQUIRED_SKILL_IDS: [i32; 12] = [44, 54, 118, 136, 160, 172, 173, 413, 414, 415, 433, 473];
+    profile.class_id == 7
+        && profile.class_mask == 64
+        && profile.has_relic_slot
+        && REQUIRED_SKILL_IDS
+            .iter()
+            .all(|skill_id| profile.skills.iter().any(|skill| skill.id == *skill_id))
+}
+
+fn native_shaman_item_skill_id(item: &Item) -> Option<i32> {
+    match item.item_type.as_str() {
+        "ItemTypeWeapon" => match item.weapon_type.as_str() {
+            "WeaponTypeAxe" => Some(if item.hand_type == "HandTypeTwoHand" { 172 } else { 44 }),
+            "WeaponTypeMace" => Some(if item.hand_type == "HandTypeTwoHand" { 160 } else { 54 }),
+            "WeaponTypeDagger" => Some(173),
+            "WeaponTypeFist" => Some(473),
+            "WeaponTypeStaff" => Some(136),
+            "WeaponTypeShield" => Some(433),
+            "WeaponTypeSword" => Some(if item.hand_type == "HandTypeTwoHand" { 55 } else { 43 }),
+            "WeaponTypePolearm" => Some(229),
+            _ => None,
+        },
+        "ItemTypeRanged" => match item.ranged_weapon_type.as_str() {
+            "RangedWeaponTypeBow" => Some(45),
+            "RangedWeaponTypeCrossbow" => Some(226),
+            "RangedWeaponTypeGun" => Some(46),
+            "RangedWeaponTypeThrown" => Some(176),
+            "RangedWeaponTypeWand" => Some(228),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn native_shaman_item_eligible(item: &Item, level: i32) -> bool {
+    let source_slot = native_item_source_slot(item);
+    if matches!(
+        source_slot,
+        Some("head" | "shoulder" | "chest" | "wrist" | "hands" | "waist" | "legs" | "feet")
+    ) {
+        let skill_id = match item.armor_type.as_str() {
+            "ArmorTypeCloth" => Some(415),
+            "ArmorTypeLeather" => Some(414),
+            "ArmorTypeMail" => Some(413),
+            "ArmorTypePlate" => Some(293),
+            _ => None,
+        };
+        return skill_id.is_some_and(|id| native_shaman_has_skill(id, level));
+    }
+
+    if item.item_type == "ItemTypeRanged"
+        && item.ranged_weapon_type == "RangedWeaponTypeTotem"
+    {
+        return native_shaman_equipment_profile().has_relic_slot;
+    }
+
+    if item.item_type == "ItemTypeWeapon" && item.weapon_type == "WeaponTypeOffHand" {
+        return true;
+    }
+
+    native_shaman_item_skill_id(item)
+        .map(|skill_id| native_shaman_has_skill(skill_id, level))
+        .unwrap_or_else(|| !matches!(item.item_type.as_str(), "ItemTypeWeapon" | "ItemTypeRanged"))
+}
+
 fn native_item_source_slot(item: &Item) -> Option<&'static str> {
     Some(match item.item_type.as_str() {
         "ItemTypeHead" => "head",
@@ -480,14 +582,25 @@ fn native_item_source_slot(item: &Item) -> Option<&'static str> {
     })
 }
 
-fn native_item_matches_slot(item: &Item, source_slot: &str, requested_slot: &str) -> bool {
+fn native_item_matches_slot(
+    item: &Item,
+    source_slot: &str,
+    requested_slot: &str,
+    class: &str,
+    level: i32,
+) -> bool {
     match requested_slot {
         "all" => true,
         "ring" | "finger" => source_slot == "finger",
         "weapon" => matches!(source_slot, "main_hand" | "one_hand" | "two_hand"),
         "main_hand" => matches!(source_slot, "main_hand" | "one_hand" | "two_hand"),
         "one_hand" | "two_hand" => source_slot == requested_slot,
-        "offhand" | "off_hand" => source_slot == "off_hand",
+        "offhand" | "off_hand" => {
+            source_slot == "off_hand"
+                || (class == "shaman"
+                    && source_slot == "one_hand"
+                    && native_shaman_has_skill(118, level))
+        }
         "wand" => source_slot == "ranged" && item.ranged_weapon_type == "RangedWeaponTypeWand",
         "ranged" => source_slot == "ranged" && item.ranged_weapon_type != "RangedWeaponTypeWand",
         "thrown" => source_slot == "thrown",
@@ -498,7 +611,12 @@ fn native_item_matches_slot(item: &Item, source_slot: &str, requested_slot: &str
     }
 }
 
-fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bool {
+fn native_item_class_eligible(
+    item: &Item,
+    class: &str,
+    class_proto: &str,
+    level: i32,
+) -> bool {
     if !item.class_allowlist.is_empty()
         && !item
             .class_allowlist
@@ -506,6 +624,10 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
             .any(|allowed| allowed == class_proto)
     {
         return false;
+    }
+
+    if class == "shaman" {
+        return native_shaman_item_eligible(item, level);
     }
 
     let slot = native_item_source_slot(item);
@@ -530,7 +652,7 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
     }
 }
 
-/// Query native embedded items, applying the exact client RequiredLevel field.
+/// Query native embedded items using exact client RequiredLevel and class equipment skill data.
 /// Items absent from the pinned ItemSparse table are not treated as available client gear.
 pub fn native_item_options(
     class: &str,
@@ -554,6 +676,7 @@ fn native_item_options_with_required_levels(
     let normalized_class = match class_input.as_str() {
         "priest" | "classpriest" => Some(("priest", "ClassPriest")),
         "mage" | "classmage" => Some(("mage", "ClassMage")),
+        "shaman" | "classshaman" => Some(("shaman", "ClassShaman")),
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
@@ -567,7 +690,7 @@ fn native_item_options_with_required_levels(
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
-            format!("native item-options currently supports priest and mage, not {class}"),
+            format!("native item-options currently supports priest, mage, and source-profiled shaman, not {class}"),
         ))
     } else if !(1..=60).contains(&level) {
         Some((
@@ -594,7 +717,11 @@ fn native_item_options_with_required_levels(
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string(),
+        source: if matches!(class_input.as_str(), "shaman" | "classshaman") {
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+client:SkillRaceClassInfo+client:SkillLine+client:SkillLineCategory+client:ChrClasses".to_string()
+        } else {
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string()
+        },
         required_level_supported: false,
         unverified_candidate_count: 0,
         items: Vec::new(),
@@ -616,6 +743,13 @@ fn native_item_options_with_required_levels(
 
     response.required_level_supported = true;
     let (class, class_proto) = normalized_class.expect("validated native item class");
+    if class == "shaman" && !native_shaman_profile_complete(native_shaman_equipment_profile()) {
+        response.refusal = Some(NativeItemOptionsRefusal {
+            code: "NATIVE_ITEM_OPTIONS_EQUIPMENT_PROFILE_SOURCE_UNAVAILABLE".to_string(),
+            reason: "the pinned Shaman SkillRaceClassInfo/SkillLine/ChrClasses profile is missing required weapon, armor, shield, dual-wield, or relic-slot facts".to_string(),
+        });
+        return response;
+    }
     let requested_slot = canonical_slot.expect("validated native item slot");
     for key in ITEMS.keys() {
         let Ok(id) = i32::try_from(key) else {
@@ -627,8 +761,8 @@ fn native_item_options_with_required_levels(
         let Some(source_slot) = native_item_source_slot(&item) else {
             continue;
         };
-        if !native_item_matches_slot(&item, source_slot, requested_slot)
-            || !native_item_class_eligible(&item, class, class_proto)
+        if !native_item_matches_slot(&item, source_slot, requested_slot, class, level)
+            || !native_item_class_eligible(&item, class, class_proto, level)
         {
             continue;
         }
