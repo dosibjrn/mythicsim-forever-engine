@@ -25,11 +25,13 @@ DATA = ROOT / "data"
 TOOL = ROOT / "tools" / "rust-data"
 MANIFEST = DATA / "manifest.json"
 
+# Preserve pinned client and native-source files that the Go importer does not emit.
 PRESERVED_CLIENT_DATA = (
     "item-required-levels.jsonl",
     "item-required-levels.manifest.json",
     "shaman-equipment-skills.json",
     "shaman-equipment-skills.manifest.json",
+    "priest-l20-base-stats.json",
 )
 
 # SimDatabase list, output file and the key each row is found by.
