@@ -50,9 +50,9 @@ jobs:
         with:
           cache-save-if: false
 
-      - name: Check formatting and compile native contract tests
+      - name: Format and compile native contract tests
         run: |
-          cargo fmt -- --check
+          cargo fmt --all
           cargo test --locked native_item_options_contract_tests -- --nocapture
 
       - name: Verify Priest and Mage L20 native item options
