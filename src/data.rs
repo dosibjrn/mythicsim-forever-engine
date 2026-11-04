@@ -199,7 +199,7 @@ fn parse_shaman_equipment_skills(text: &str) -> Result<ShamanEquipmentSkills, ()
     let mut skill_ids = HashMap::new();
     let mut skill_levels = HashMap::new();
     for row in source.skills {
-        if row.id <= 0
+        if row.skill_id <= 0
             || row.name.trim().is_empty()
             || row.min_level.is_some_and(|level| !(1..=60).contains(&level))
             || row.min_level.is_some() != row.race_unrestricted

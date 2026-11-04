@@ -682,7 +682,7 @@ fn native_item_options_with_required_levels(
 
     let mut response = NativeItemOptionsResponse {
         status: "refused".to_string(),
-        class: class_input,
+        class: class_input.clone(),
         level,
         spec: spec_input,
         slot: slot_input.clone(),
