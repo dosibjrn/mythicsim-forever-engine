@@ -44,7 +44,7 @@ class ImportShamanEquipmentTests(unittest.TestCase):
         manifest = json.loads((data / "shaman-equipment-skills.manifest.json").read_text(encoding="utf-8"))
         return summary, payload, manifest, json.loads((data / "manifest.json").read_text(encoding="utf-8"))
 
-    def row(self, row_id, skill_id, race_mask, class_mask=64, min_level=1, availability=1, race_mask_high=-1):
+    def row(self, row_id, skill_id, race_mask, class_mask=64, min_level=1, availability=1, race_mask_high=0):
         return {
             "ID": row_id,
             "SkillID": skill_id,
