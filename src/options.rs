@@ -9,7 +9,6 @@
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-use crate::contracts::request::Message;
 use crate::data::{self, ITEMS};
 use crate::prepare::items::{scaling_option, stats_from_map};
 use crate::prepare::spelldata;
