@@ -6790,7 +6790,10 @@ mod tests {
         let now = fight.now;
         let cap = fight.end_of_combat;
         assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        // Native preparation may start during a negative pre-pull clock. A live
+        // world kill timestamp is non-negative even when the native actor's
+        // current clock is still in its pre-pull interval.
+        let early = (now + 1_000_000).max(0);
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));
