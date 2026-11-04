@@ -963,7 +963,7 @@ mod level_contract_tests {
             crit_per_agi,
         );
 
-        let raw = sim.unit(unit).stats.clone();
+        let raw = sim.unit(unit).stats;
         let applied = sim.unit_mut(unit).sdm.sort_and_apply_stat_dependencies(raw);
         assert_eq!(applied[Stat::Health], 367.0);
         assert_eq!(applied[Stat::Mana], 877.0);
