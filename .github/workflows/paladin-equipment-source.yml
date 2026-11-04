@@ -3,7 +3,7 @@ name: Paladin equipment source import
 on:
   push:
     branches:
-      - work/work1-paladin-l20-item-options-20261104
+      - work/work2-paladin-l20-item-options-20261104
     paths:
       - .github/workflows/paladin-equipment-source.yml
       - tools/import_paladin_equipment.py
