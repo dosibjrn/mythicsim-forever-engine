@@ -604,10 +604,11 @@ fn native_paladin_weapon_eligible(
     })
 }
 
-fn native_paladin_item_eligible(
+fn native_skilled_item_eligible(
     item: &Item,
     level: i32,
     skills: &data::PaladinEquipmentSkills,
+    class_proto: &str,
 ) -> bool {
     match item.item_type.as_str() {
         "ItemTypeWeapon" => match item.weapon_type.as_str() {
@@ -625,10 +626,10 @@ fn native_paladin_item_eligible(
                     | "RangedWeaponTypeTotem"
                     | "RangedWeaponTypeSigil"
             ) {
-                // Relics have no weapon skill line. Require an explicit native Paladin allowlist.
+                // Relics have no weapon skill line. Require the exact native class allowlist.
                 item.class_allowlist
                     .iter()
-                    .any(|allowed| allowed == "ClassPaladin")
+                    .any(|allowed| allowed == class_proto)
             } else {
                 native_paladin_weapon_eligible(item, level, skills)
             }
@@ -644,6 +645,14 @@ fn native_paladin_item_eligible(
             _ => false,
         },
     }
+}
+
+fn native_paladin_item_eligible(
+    item: &Item,
+    level: i32,
+    skills: &data::PaladinEquipmentSkills,
+) -> bool {
+    native_skilled_item_eligible(item, level, skills, "ClassPaladin")
 }
 
 fn native_item_class_eligible(
@@ -670,6 +679,10 @@ fn native_item_class_eligible(
     if class == "paladin" {
         return paladin_skills
             .is_some_and(|skills| native_paladin_item_eligible(item, level, skills));
+    }
+    if class == "rogue" {
+        return paladin_skills
+            .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassRogue"));
     }
 
     let slot = native_item_source_slot(item);
@@ -720,6 +733,7 @@ fn native_item_options_with_required_levels(
         "mage" | "classmage" => Some(("mage", "ClassMage")),
         "shaman" | "classshaman" => Some(("shaman", "ClassShaman")),
         "paladin" | "classpaladin" => Some(("paladin", "ClassPaladin")),
+        "rogue" | "classrogue" => Some(("rogue", "ClassRogue")),
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
@@ -733,7 +747,7 @@ fn native_item_options_with_required_levels(
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
-            format!("native item-options currently supports priest, mage, shaman and paladin, not {class}"),
+            format!("native item-options currently supports priest, mage, shaman, paladin and rogue, not {class}"),
         ))
     } else if !(1..=60).contains(&level) {
         Some((
@@ -760,7 +774,7 @@ fn native_item_options_with_required_levels(
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: if matches!(class_input.as_str(), "shaman" | "paladin") {
+        source: if matches!(class_input.as_str(), "shaman" | "paladin" | "rogue") {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo".to_string()
         } else {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string()
@@ -802,8 +816,15 @@ fn native_item_options_with_required_levels(
     } else {
         None
     };
-    let paladin_skills = if class == "paladin" {
-        match data::paladin_equipment_skills() {
+    // Paladin and Rogue use the same source schema, but distinct pinned
+    // SkillRaceClassInfo class-mask projections. Never fall back between them.
+    let paladin_skills = if matches!(class, "paladin" | "rogue") {
+        let source = if class == "rogue" {
+            data::rogue_equipment_skills()
+        } else {
+            data::paladin_equipment_skills()
+        };
+        match source {
             Ok(skills) => Some(skills),
             Err(reason) => {
                 response.refusal = Some(NativeItemOptionsRefusal {
@@ -839,9 +860,11 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin") {
-                // ItemSparse is the complete client-build candidate universe for this path.
-                // A MythicSim-only row absent from that table is not a client item candidate.
+            if matches!(class, "shaman" | "paladin" | "mage" | "rogue") {
+                // These P3 consumers select from the pinned client-build ItemSparse
+                // universe. A MythicSim-only row absent from this source is not
+                // an unresolved RequiredLevel for a playable client item.
+                // Keep Priest on its existing partial/unknown policy.
                 response.excluded_non_client_item_count += 1;
             } else {
                 response.unverified_candidate_count += 1;
@@ -1226,6 +1249,23 @@ mod native_item_options_contract_tests {
     }
 
     #[test]
+    fn mage_l30_excludes_non_client_items_instead_of_unknown_required_levels() {
+        // Mage P3 uses the same pinned client ItemSparse universe as the
+        // other native-backed P3 providers. Do not substitute a guessed level.
+        let response = native_item_options("mage", 30, "unrestricted", "all");
+        assert_eq!(response.status, "ok", "{:?}", response.refusal);
+        assert!(response.required_level_supported);
+        assert!(response.refusal.is_none());
+        assert_eq!(response.unverified_candidate_count, 0);
+        assert!(response.excluded_non_client_item_count > 0);
+        assert!(!response.items.is_empty());
+        assert!(response.items.iter().all(|item| {
+            item.required_level <= 30
+                && item.required_level_origin == "client_ItemSparse.RequiredLevel"
+        }));
+    }
+
+    #[test]
     fn shaman_l20_options_return_native_source_eligible_candidates() {
         let response = native_item_options("shaman", 20, "unrestricted", "all");
         assert_eq!(response.status, "ok", "{:?}", response.refusal);
@@ -1347,6 +1387,36 @@ mod native_item_options_contract_tests {
             ..totem
         };
         assert!(!native_shaman_item_eligible(&unlisted, 20, skills));
+    }
+
+    #[test]
+    fn rogue_l20_options_use_pinned_client_skills_and_required_levels() {
+        let result = native_item_options("rogue", 20, "unrestricted", "all");
+        assert_eq!(result.status, "ok", "{:?}", result.refusal);
+        assert!(result.required_level_supported);
+        assert_eq!(
+            result.source,
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo"
+        );
+        assert_eq!(result.unverified_candidate_count, 0);
+        assert!(!result.items.is_empty());
+        assert!(result.items.iter().all(|row| row.required_level <= 20));
+        assert!(result
+            .items
+            .iter()
+            .any(|row| row.armor_type == "ArmorTypeLeather"));
+        assert!(result
+            .items
+            .iter()
+            .any(|row| row.weapon_type == "WeaponTypeDagger"));
+        assert!(!result
+            .items
+            .iter()
+            .any(|row| row.ranged_weapon_type == "RangedWeaponTypeWand"));
+        assert!(!result
+            .items
+            .iter()
+            .any(|row| row.weapon_type == "WeaponTypeShield"));
     }
 
     #[test]
