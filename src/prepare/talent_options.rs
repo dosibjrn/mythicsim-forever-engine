@@ -87,14 +87,14 @@ mod tests {
                 for (index, talent) in entries.iter().enumerate() {
                     talents += 1;
                     let row = talent["row"].as_i64().unwrap();
-                    assert_eq!(talent["index"], index);
-                    assert_eq!(talent["points_required_in_tree"], row * 5);
-                    assert_eq!(talent["minimum_level"], 10 + row * 5);
+                    assert_eq!(talent["index"].as_u64().unwrap(), index as u64);
+                    assert_eq!(talent["points_required_in_tree"].as_i64().unwrap(), row * 5);
+                    assert_eq!(talent["minimum_level"].as_i64().unwrap(), 10 + row * 5);
                     if let Some(prerequisite) = talent.get("prerequisite") {
                         edges += 1;
                         let field = prerequisite["field_name"].as_str().unwrap();
-                        assert_eq!(Some(&prerequisite["required_rank"].as_u64().unwrap()),
-                                   fields.get(field),
+                        let required_rank = prerequisite["required_rank"].as_u64().unwrap();
+                        assert_eq!(Some(&required_rank), fields.get(field),
                                    "{class}: {} needs {field}", talent["field_name"]);
                     }
                 }
