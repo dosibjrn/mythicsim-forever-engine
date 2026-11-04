@@ -437,8 +437,10 @@ pub struct NativeItemOptionsResponse {
     pub slot: String,
     pub source: String,
     pub required_level_supported: bool,
-    /// Native candidates excluded because the pinned ItemSparse row has no RequiredLevel.
+    /// Legacy candidates excluded because a possible item has no pinned ItemSparse RequiredLevel row.
     pub unverified_candidate_count: usize,
+    /// Shaman-only: MythicSim catalogue rows absent from the complete pinned client ItemSparse table.
+    pub excluded_non_client_item_count: usize,
     pub items: Vec<NativeItemOption>,
     pub refusal: Option<NativeItemOptionsRefusal>,
 }
@@ -693,6 +695,7 @@ fn native_item_options_with_required_levels(
         },
         required_level_supported: false,
         unverified_candidate_count: 0,
+        excluded_non_client_item_count: 0,
         items: Vec::new(),
         refusal: refusal.map(|(code, reason)| NativeItemOptionsRefusal {
             code: code.to_string(),
@@ -743,7 +746,13 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            response.unverified_candidate_count += 1;
+            if class == "shaman" {
+                // ItemSparse is the complete client-build candidate universe for this path.
+                // A MythicSim-only row absent from that table is not a client item candidate.
+                response.excluded_non_client_item_count += 1;
+            } else {
+                response.unverified_candidate_count += 1;
+            }
             continue;
         };
         if required_level > level {
@@ -846,19 +855,15 @@ mod native_item_options_contract_tests {
 
     #[test]
     fn shaman_l20_options_return_native_source_eligible_candidates() {
-        let response = native_item_options_with_required_levels(
-            "shaman",
-            20,
-            "unrestricted",
-            "all",
-            &synthetic_levels(),
-        );
+        let response = native_item_options("shaman", 20, "unrestricted", "all");
         assert_eq!(response.status, "ok", "{:?}", response.refusal);
         assert!(response.required_level_supported);
         assert_eq!(
             response.source,
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo"
         );
+        assert_eq!(response.unverified_candidate_count, 0);
+        assert!(response.excluded_non_client_item_count > 0);
         assert!(!response.items.is_empty());
         assert!(response.items.iter().all(|item| item.required_level <= 20));
         assert!(response.items.iter().all(|candidate| {
