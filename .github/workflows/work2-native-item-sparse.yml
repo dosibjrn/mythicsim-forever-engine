@@ -1,7 +1,13 @@
 name: Work2 native ItemSparse source import
 
 on:
+  push:
+    branches:
+      - work/work2-priest-p3-native-item-options-isolated-20261104
+    paths:
+      - ".github/workflows/work2-native-item-sparse.yml"
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
     paths:
       - ".github/workflows/work2-native-item-sparse.yml"
@@ -11,7 +17,7 @@ permissions:
 
 jobs:
   import-native-required-levels:
-    if: github.event.pull_request.head.ref == 'work/work2-priest-p3-native-item-options-isolated-20261104'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'work/work2-priest-p3-native-item-options-isolated-20261104'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
