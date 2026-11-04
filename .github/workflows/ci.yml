@@ -117,6 +117,6 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Verify native Paladin L20 source context before broad suite
-        run: cargo test --locked --test native_player_context
+      - name: Verify native Priest L20 prepare and combat request
+        run: cargo test --locked --test cli priest_l20_native_actor_prepares_and_casts_rank_one_smite
       - run: cargo test --locked
