@@ -827,7 +827,14 @@ fn native_item_options_with_required_levels(
             continue;
         };
         if !native_item_matches_slot(&item, source_slot, requested_slot)
-            || !native_item_class_eligible(&item, class, class_proto, level, shaman_skills, paladin_skills)
+            || !native_item_class_eligible(
+                &item,
+                class,
+                class_proto,
+                level,
+                shaman_skills,
+                paladin_skills,
+            )
         {
             continue;
         }
@@ -1105,11 +1112,31 @@ mod native_item_options_contract_tests {
             armor_type: armor_type.to_string(),
             ..Item::default()
         };
-        assert!(native_paladin_item_eligible(&armor("ArmorTypeCloth"), 20, skills));
-        assert!(native_paladin_item_eligible(&armor("ArmorTypeLeather"), 20, skills));
-        assert!(native_paladin_item_eligible(&armor("ArmorTypeMail"), 20, skills));
-        assert!(!native_paladin_item_eligible(&armor("ArmorTypePlate"), 20, skills));
-        assert!(native_paladin_item_eligible(&armor("ArmorTypePlate"), 40, skills));
+        assert!(native_paladin_item_eligible(
+            &armor("ArmorTypeCloth"),
+            20,
+            skills
+        ));
+        assert!(native_paladin_item_eligible(
+            &armor("ArmorTypeLeather"),
+            20,
+            skills
+        ));
+        assert!(native_paladin_item_eligible(
+            &armor("ArmorTypeMail"),
+            20,
+            skills
+        ));
+        assert!(!native_paladin_item_eligible(
+            &armor("ArmorTypePlate"),
+            20,
+            skills
+        ));
+        assert!(native_paladin_item_eligible(
+            &armor("ArmorTypePlate"),
+            40,
+            skills
+        ));
 
         let weapon = |weapon_type: &str, hand_type: &str| Item {
             id: 1,
@@ -1260,10 +1287,9 @@ mod native_item_options_contract_tests {
 /// actor. Unsupported classes, races, levels, or a changed native weapon row
 /// fail closed instead of silently returning a proxy.
 pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json::Value {
-    let source: serde_json::Value = serde_json::from_str(include_str!(
-        "../../data/paladin-l20-source-context.json"
-    ))
-    .expect("checked-in Paladin L20 source context must be valid JSON");
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../../data/paladin-l20-source-context.json"))
+            .expect("checked-in Paladin L20 source context must be valid JSON");
 
     let class_key = class.trim().to_ascii_lowercase();
     let default_race = source
@@ -1291,16 +1317,18 @@ pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json:
             "the checked-in source context currently covers Paladin only",
         );
     }
-    if level != source.get("level").and_then(serde_json::Value::as_i64).unwrap_or(20) as i32 {
+    if level
+        != source
+            .get("level")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(20) as i32
+    {
         return refusal(
             "unsupported_player_context",
             "the checked-in source context currently covers Paladin level 20 only",
         );
     }
-    let Some(race_context) = source
-        .get("races")
-        .and_then(|races| races.get(&race_key))
-    else {
+    let Some(race_context) = source.get("races").and_then(|races| races.get(&race_key)) else {
         return refusal(
             "unsupported_player_context",
             "Paladin level 20 source rows are available for Human and Dwarf only",
@@ -1322,25 +1350,37 @@ pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json:
         stat("intellect"),
         stat("spirit"),
     ) else {
-        return refusal("missing_source_fact", "race row is missing one or more primary stats");
+        return refusal(
+            "missing_source_fact",
+            "race row is missing one or more primary stats",
+        );
     };
     let Some(base_health) = source
         .get("base_health")
         .and_then(serde_json::Value::as_i64)
         .map(|value| value as f64)
     else {
-        return refusal("missing_source_fact", "Paladin level-20 base health is missing");
+        return refusal(
+            "missing_source_fact",
+            "Paladin level-20 base health is missing",
+        );
     };
     let Some(base_mana) = source
         .get("base_mana")
         .and_then(serde_json::Value::as_i64)
         .map(|value| value as f64)
     else {
-        return refusal("missing_source_fact", "Paladin level-20 base mana is missing");
+        return refusal(
+            "missing_source_fact",
+            "Paladin level-20 base mana is missing",
+        );
     };
 
     let Some(weapon_spec) = source.get("weapon") else {
-        return refusal("missing_source_fact", "baseline weapon source row is missing");
+        return refusal(
+            "missing_source_fact",
+            "baseline weapon source row is missing",
+        );
     };
     let Some(weapon_id) = weapon_spec
         .get("item_id")
@@ -1353,7 +1393,10 @@ pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json:
         .get("proficiency_spell_id")
         .and_then(serde_json::Value::as_i64)
     else {
-        return refusal("missing_source_fact", "one-handed mace proficiency id is missing");
+        return refusal(
+            "missing_source_fact",
+            "one-handed mace proficiency id is missing",
+        );
     };
     let proficiency_name = weapon_spec
         .get("proficiency_name")
@@ -1373,7 +1416,10 @@ pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json:
     }
 
     let Some(item) = database_item(weapon_id) else {
-        return refusal("missing_source_fact", "native ItemSparse row for baseline weapon is missing");
+        return refusal(
+            "missing_source_fact",
+            "native ItemSparse row for baseline weapon is missing",
+        );
     };
     let Some(required_level) = data::item_required_levels().get(&weapon_id).copied() else {
         return refusal(
@@ -1419,10 +1465,16 @@ pub fn native_player_context(class: &str, race: &str, level: i32) -> serde_json:
         .get("weapon_damage_max")
         .and_then(serde_json::Value::as_f64);
     let Some(row) = item.row.as_ref() else {
-        return refusal("missing_source_fact", "native weapon row has no source payload");
+        return refusal(
+            "missing_source_fact",
+            "native weapon row has no source payload",
+        );
     };
     let Some(scaling) = scaling_option(row) else {
-        return refusal("missing_source_fact", "native weapon has no base scaling option");
+        return refusal(
+            "missing_source_fact",
+            "native weapon has no base scaling option",
+        );
     };
     let damage_min = scaling.f64("weapon_damage_min");
     let damage_max = scaling.f64("weapon_damage_max");
