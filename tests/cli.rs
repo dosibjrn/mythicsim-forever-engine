@@ -33,6 +33,95 @@ fn version_identifies_prototype_and_source_revision() {
 }
 
 #[test]
+fn shaman_l20_item_options_cli_returns_pinned_client_legal_candidates() {
+    let result = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+        .args([
+            "item-options",
+            "--class",
+            "shaman",
+            "--level",
+            "20",
+            "--spec",
+            "unrestricted",
+            "--slot",
+            "all",
+        ])
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let response: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(response["class"], "shaman");
+    assert_eq!(response["level"], 20);
+    assert_eq!(response["status"], "partial_level_unknown");
+    assert_eq!(response["required_level_supported"], true);
+    assert!(response["unverified_candidate_count"].as_u64().unwrap() > 0);
+    assert!(response["source"]
+        .as_str()
+        .unwrap()
+        .contains("client:SkillRaceClassInfo"));
+    let items = response["items"].as_array().unwrap();
+    assert!(!items.is_empty());
+    assert!(items.iter().all(|item| item["required_level"].as_i64().unwrap() <= 20));
+    assert!(items.iter().all(|item| {
+        item["class_allowlist"].as_array().unwrap().is_empty()
+            || item["class_allowlist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|class| class == "ClassShaman")
+    }));
+    assert!(items.iter().any(|item| item["armor_type"] == "ArmorTypeLeather"));
+    assert!(items.iter().any(|item| item["armor_type"] == "ArmorTypeCloth"));
+    assert!(items.iter().all(|item| {
+        item["armor_type"] != "ArmorTypeMail" && item["armor_type"] != "ArmorTypePlate"
+    }));
+    assert!(items.iter().any(|item| {
+        item["weapon_type"] == "WeaponTypeAxe" && item["hand_type"] == "HandTypeTwoHand"
+    }));
+    assert!(items.iter().any(|item| {
+        item["weapon_type"] == "WeaponTypeMace" && item["hand_type"] == "HandTypeTwoHand"
+    }));
+    assert!(items.iter().any(|item| {
+        item["slot"] == "relic" && item["ranged_weapon_type"] == "RangedWeaponTypeTotem"
+    }));
+}
+
+#[test]
+fn shaman_dual_wield_and_relic_slots_are_filtered_by_client_profile() {
+    let run = |slot: &str| {
+        let result = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+            .args([
+                "item-options",
+                "--class",
+                "shaman",
+                "--level",
+                "20",
+                "--spec",
+                "unrestricted",
+                "--slot",
+                slot,
+            ])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap()
+    };
+    let offhand = run("offhand");
+    let offhand_items = offhand["items"].as_array().unwrap();
+    assert!(offhand_items.iter().any(|item| {
+        item["slot"] == "one_hand"
+            && (item["weapon_type"] == "WeaponTypeAxe"
+                || item["weapon_type"] == "WeaponTypeMace")
+    }));
+    let relic = run("relic");
+    let relic_items = relic["items"].as_array().unwrap();
+    assert!(!relic_items.is_empty());
+    assert!(relic_items.iter().all(|item| {
+        item["ranged_weapon_type"] == "RangedWeaponTypeTotem"
+    }));
+}
+
+#[test]
 fn benchmark_reports_only_requested_samples_after_warmup() {
     let input =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/static-frost-60.rust.json");
