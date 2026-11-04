@@ -1,0 +1,38 @@
+name: Work1 pinned Shaman equipment source probe
+
+on:
+  push:
+    branches:
+      - work/work1-shaman-l20-source-probe-20261104
+    paths:
+      - '.github/workflows/work1-shaman-source-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  capture-client-equipment-tables:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download pinned client DB2 tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          build='1.60.1.70425'
+          ua='Mozilla/5.0 (compatible; ForeverSimSourceProbe/1.0)'
+          for table in SkillRaceClassInfo SkillLine SkillLineCategory ChrClasses; do
+            url="https://wago.tools/db2/${table}/csv?build=${build}"
+            curl --fail --location --retry 3 --retry-all-errors --user-agent "${ua}" "${url}" -o "${table}.csv"
+            test -s "${table}.csv"
+            printf '%s ' "${table}"
+            wc -l < "${table}.csv"
+            sha256sum "${table}.csv"
+          done
+      - name: Upload exact source exports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: shaman-equipment-client-source-1.60.1.70425
+          path: '*.csv'
+          if-no-files-found: error
+          retention-days: 1
