@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # No toolchain input: the action installs the version pinned in rust-toolchain.toml.
       - name: Install Rust from rust-toolchain.toml
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -57,9 +59,100 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # No toolchain input: the action installs the version pinned in rust-toolchain.toml.
       - name: Install Rust from rust-toolchain.toml
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo test --locked
+      # The mage golden replay runs in the tests-go-golden-shard jobs.
+      - run: cargo test --locked -- --skip mage::prepared_v2::supported_cases_match_pinned_go_goldens
+
+  # The mage golden replay alone took 416 s of a 4 core run, so it runs in
+  # shards. This job builds its test binary once for all of them.
+  build-go-golden:
+    name: build go golden
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No toolchain input: the action installs the version pinned in rust-toolchain.toml.
+      - name: Install Rust from rust-toolchain.toml
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+      # test -x fails unless cargo names exactly one classes executable.
+      - run: |
+          bin=$(cargo test --locked --no-run --test classes --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "classes" and .profile.test) | .executable')
+          test -x "$bin"
+          cp "$bin" classes-test
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: classes-test
+          path: classes-test
+          if-no-files-found: error
+          # Only the shards of this run read it. Overwrite lets a re-run of
+          # the build replace the artifact instead of failing on its name.
+          overwrite: true
+          retention-days: 1
+
+  # The binary reads its fixtures from the CARGO_MANIFEST_DIR it was built in,
+  # which is the same checkout path in every job, so a shard needs no Rust.
+  tests-go-golden-shard:
+    name: tests go golden shard ${{ matrix.shard }}/${{ strategy.job-total }}
+    needs: build-go-golden
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Scale by extending this list: 1 to n, the count comes from strategy.job-total.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      GOLDEN_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: classes-test
+      # Artifacts drop the executable bit. A filter that matches no test
+      # passes, so the step also checks that the replay ran.
+      - run: |
+          chmod +x classes-test
+          ./classes-test --exact mage::prepared_v2::supported_cases_match_pinned_go_goldens | tee test.log
+          grep -q '^test result: ok. 1 passed' test.log
+
+  # One check that passes only when every shard passed: the one to require in
+  # branch protection, so the rule does not change with the shard count.
+  tests-go-golden:
+    name: tests go golden
+    needs: tests-go-golden-shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: test "$SHARD_RESULT" = success
+        env:
+          SHARD_RESULT: ${{ needs.tests-go-golden-shard.result }}
+      # Free the storage once every shard has passed; after a failure the
+      # artifact stays for a re-run of the failed shards. A fork's pull request
+      # gets a read-only token, so there the step is skipped and the 1 day
+      # retention cleans it up.
+      - name: Delete the classes-test artifact
+        if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?name=classes-test" \
+            --jq '.artifacts[0].id')
+          gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$id"

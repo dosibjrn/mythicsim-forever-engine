@@ -250,7 +250,9 @@ fn the_whelp_skips_a_spit_it_would_not_finish() {
 fn dragons_call_without_its_summoned_guardian_is_refused() {
     let mut value = fixture("production-survival-hunter");
     value["pets"][0]["summoned"] = json!(false);
-    let error = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap_err().to_string();
+    let error = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("is not a simulated summoned pet"), "{error}");
 }
 
@@ -811,7 +813,9 @@ fn a_move_with_a_speed_aura_is_supported() {
 fn volley_holds_the_melee_swing_until_the_channel_ends() {
     let mut value = fixture("production-survival-hunter-2-targets");
     value["sim"]["iterations"] = json!(1);
-    let logs = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap().result["logs"]
+    let logs = simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result["logs"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1575,7 +1579,9 @@ fn a_queued_spell_that_fails_does_not_run_the_rotation_again_in_forever() {
     quiet["sim"]["debug_first_iteration"] = json!(false);
     quiet["sim"]["debug"] = json!(false);
     let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || sender.send(simulate_prepared(&parse(quiet), forever_engine::RngMode::Stochastic).is_ok()));
+    std::thread::spawn(move || {
+        sender.send(simulate_prepared(&parse(quiet), forever_engine::RngMode::Stochastic).is_ok())
+    });
     let ended = receiver.recv_timeout(std::time::Duration::from_secs(10));
     assert_eq!(ended, Ok(true), "the fight did not end");
     let logs = first_fight_log(value);
@@ -1611,8 +1617,12 @@ fn a_rotation_without_a_move_keeps_its_gcd_wait_in_forever() {
     );
     assert!(!forever["player"]["rotation"].to_string().contains("\"move"));
     forever["sim"]["iterations"] = json!(200);
-    let metrics =
-        |value: Value| simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"].clone();
+    let metrics = |value: Value| {
+        simulate_prepared(&parse(value), forever_engine::RngMode::Stochastic)
+            .unwrap()
+            .result["raidMetrics"]
+            .clone()
+    };
     let with_rule = metrics(forever.clone());
     forever["player"]
         .as_object_mut()

@@ -1655,6 +1655,34 @@ fn survival_cooldown_never_fires(prepared: &PreparedV2, spell_id: i32) -> bool {
     survival && !cast
 }
 
+/// Insect Swarm's ranks (5570, 24974 to 24977) and the rank the player knows.
+fn insect_swarm_ids(known: i32) -> Vec<i32> {
+    let mut ids = vec![5570, 24974, 24975, 24976, 24977];
+    if !ids.contains(&known) {
+        ids.push(known);
+    }
+    ids
+}
+
+/// Whether the prepared rotation names any of the spells anywhere: an action, a group, a
+/// prepull action or a condition. Wider than what it casts, so a `false` is safe to act on.
+fn rotation_names_spell(prepared: &PreparedV2, ids: &[i32]) -> bool {
+    fn walk(value: &serde_json::Value, ids: &[i32]) -> bool {
+        match value {
+            serde_json::Value::Object(map) => map.iter().any(|(key, field)| {
+                (key == "spellId"
+                    && field
+                        .as_i64()
+                        .is_some_and(|id| ids.iter().any(|known| i64::from(*known) == id)))
+                    || walk(field, ids)
+            }),
+            serde_json::Value::Array(items) => items.iter().any(|item| walk(item, ids)),
+            _ => false,
+        }
+    }
+    walk(&prepared.player.rotation, ids)
+}
+
 /// What the runtime cannot follow once the target swings at the player: listeners of the
 /// swings it does not run, auras something in scope activates that change the swings, and
 /// defender stats a stat aura changes.
@@ -1739,6 +1767,17 @@ fn tank_limits(
             if never_fires && !named_by_rotation(*spell_id) {
                 named.remove(&format!("player:{aura}"));
                 carried.remove(&format!("player:{aura}"));
+            }
+        }
+        // Insect Swarm's debuff, which lowers the target's chance to hit, only goes up when the
+        // druid casts Insect Swarm: a rotation that never names any rank of it, groups and
+        // conditions included, leaves the target's swings as they are.
+        if let Effect::InsectSwarm { rank, debuff_aura } = effect {
+            if rotation.is_some()
+                && !rotation_names_spell(prepared, &insect_swarm_ids(rank.spell_id))
+            {
+                named.remove(&format!("target:{debuff_aura}"));
+                carried.remove(&format!("target:{debuff_aura}"));
             }
         }
     }

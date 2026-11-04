@@ -10,26 +10,17 @@ use crate::prepare::common_effects::SPELL_BATCH_WINDOW;
 use crate::prepare::consumable_effects::proc_trigger_spells;
 use crate::prepare::dbcenums;
 use crate::prepare::env::Environment;
-use crate::prepare::sim::SECOND;
+use crate::prepare::sim::{Rules, SECOND};
 use crate::prepare::spell::{DefenseType, ProcMask};
 
 use super::export::{action, mask_names, poison_bonus};
 use super::poisons::{poison_proc_mask, IMBUES};
+use super::rework;
 use super::spell_data::spell_data;
 use super::spells::BUILDER;
-use super::util::{has_dagger, proc_mask_for_types, spell_action, Hand};
+use super::spells::SHANK_ENERGY_GAIN;
+use super::util::{has_dagger, mutilate_weapon_share, proc_mask_for_types, spell_action, Hand};
 use super::{masks, Rogue, SLICE_AND_DICE_DURATIONS};
-
-/// talents_assassination.go `mutilateFlatDamage`, keyed on the parent rank.
-fn mutilate_flat_damage(spell_id: i32) -> f64 {
-    match spell_id {
-        1310707 => 23.0,
-        399956 => 33.0,
-        1241582 => 48.0,
-        1241584 => 67.0,
-        _ => 0.0,
-    }
-}
 
 /// A talent proc trigger's export: the spellbook positions it hears, by `matchesSpell`, and the
 /// outcome it needs. Go's handler runs a spell batch window after the roll.
@@ -83,9 +74,12 @@ impl Rogue {
         // ambush.go: from Stealth, or under Cutthroat, with a main hand dagger.
         if self.spells.ambush.is_some() {
             let row = data.ambush.highest();
+            // Cutthroat's aura, or under Forever's rules Ghostly Strike's: either lets the next
+            // Ambush out of Stealth.
             let cutthroat = self
                 .auras
                 .cutthroat
+                .or(self.auras.ghostly_ready)
                 .map(|aura| sim.aura(aura).label.clone())
                 .unwrap_or_default();
             effects.push(json!({
@@ -98,15 +92,16 @@ impl Rogue {
         // rupture.go: the tick and its step a combo point, the attack power share a point, a Go
         // literal, and the multiplier Hemorrhage's debuff gives the rogue's Rupture ticks while
         // it is up, read from the damage taken from caster effect of the client row
-        // (talents_subtlety.go).
+        // (talents_subtlety.go). Under Forever's rules it gives Garrote's ticks the same.
         if self.spells.rupture.is_some() {
             let row = data.rupture.highest();
             let tick = row.periodic_effect();
             let hemorrhage = target_aura_label(&self.auras.hemorrhage).unwrap_or_default();
-            effects.push(json!({
+            let mut rupture = json!({
                 "kind": "rupture", "spell_id": row.id, "tick_damage": tick.average(level),
                 "damage_per_combo_point": f64::from(tick.points_per_resource),
-                "base_tick_count": (row.duration() / tick.period()) as i32,
+                "base_tick_count":
+                    ((row.duration() + self.blood_splatter_rupture(env.rules)) / tick.period()) as i32,
                 "attack_power_shares": [0.0, 0.01, 0.02, 0.03, 0.03, 0.03],
                 "tick_can_crit": row.periodic_can_crit(),
                 "magic": row.defense_type_core() == DefenseType::Magic,
@@ -115,18 +110,23 @@ impl Rogue {
                     + data.hemorrhage.highest()
                         .effect(dbcenums::A_MOD_SPELL_DAMAGE_FROM_CASTER, 0)
                         .percent(),
-            }));
+            });
+            // The notes of 2 November 2026 extend Hemorrhage's debuff to the rogue's Garrote.
+            if env.rules == Rules::Forever {
+                rupture["hemorrhage_garrote"] = json!(true);
+            }
+            effects.push(rupture);
         }
         // talents_assassination.go registerMutilate: two combo points, then the off hand and
         // main hand hits, each harder while a lingering poison is on the target.
         if self.spells.mutilate.is_some() {
             let row = data.mutilate.highest();
             effects.push(json!({
-                "kind": "mutilate", "spell_id": row.id, "flat_damage": mutilate_flat_damage(row.id),
+                "kind": "mutilate", "spell_id": row.id, "flat_damage": rework::mutilate_flat_damage(env.rules, row.id),
                 "poison_bonus": row.effect_n(4).average(level) / 100.0,
                 "combo_points": row.energize_effect().average(level) as i32,
                 "daggers": has_dagger(sim, player, Hand::Main) && has_dagger(sim, player, Hand::Off),
-                "weapon_share": data.mutilate_triggered.effect_at(2).value_at(1) / 100.0,
+                "weapon_share": mutilate_weapon_share(env.rules),
             }));
         }
         // talents_assassination.go registerColdBlood: a crit bonus on the masked spells until
@@ -184,7 +184,7 @@ impl Rogue {
                 env,
                 "Seal Fate Trigger",
                 "combo_point",
-                data.seal_fate.fraction_at(rank),
+                rework::talent_ladder(env.rules, 14186, 3, 5).fraction_at(rank),
                 &trigger,
                 "crit",
                 false,
@@ -263,20 +263,35 @@ impl Rogue {
         }
         // talents_assassination.go registerVenom: a finisher whose aura, on the Slice and Dice
         // ladder without Improved Slice and Dice, raises poison damage and the poison chance.
-        if let (Some(_), Some(aura)) = (self.spells.venom, self.auras.venom) {
+        // Under Forever's rules there is no finisher: Shank restarts the 6 sec aura (30% poison
+        // damage, 20% poison chance), so every duration is the same.
+        if let Some(aura) = self.auras.venom {
             let row = data.venom.highest();
-            let durations: Vec<i64> = SLICE_AND_DICE_DURATIONS.to_vec();
+            let forever = env.rules == Rules::Forever;
+            let durations: Vec<i64> = if forever {
+                vec![rework::VENOM_DURATION; SLICE_AND_DICE_DURATIONS.len()]
+            } else {
+                SLICE_AND_DICE_DURATIONS.to_vec()
+            };
+            let (damage_bonus, chance_bonus) = if forever {
+                (rework::VENOM_DAMAGE_BONUS, rework::VENOM_CHANCE_BONUS)
+            } else {
+                (
+                    row.effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_DAMAGE)
+                        .average(level)
+                        / 100.0,
+                    row.effect(
+                        dbcenums::A_ADD_FLAT_MODIFIER,
+                        dbcenums::SPELLMOD_CHANCE_OF_SUCCESS,
+                    )
+                    .average(level)
+                        / 100.0,
+                )
+            };
             effects.push(json!({
                 "kind": "venom", "spell_id": row.id, "aura": sim.aura(aura).label,
                 "durations_ns": durations,
-                "damage_bonus": row
-                    .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_DAMAGE)
-                    .average(level)
-                    / 100.0,
-                "chance_bonus": row
-                    .effect(dbcenums::A_ADD_FLAT_MODIFIER, dbcenums::SPELLMOD_CHANCE_OF_SUCCESS)
-                    .average(level)
-                    / 100.0,
+                "damage_bonus": damage_bonus, "chance_bonus": chance_bonus,
                 "class_spells": mask_names(masks::POISONS),
             }));
         }
@@ -287,10 +302,19 @@ impl Rogue {
                 .get_aura(player, "Ghostly Strike Buff")
                 .map(|aura| sim.aura(aura).label.clone())
                 .unwrap_or_default();
-            effects.push(json!({
+            let mut ghostly = json!({
                 "kind": "ghostly_strike", "spell_id": sim.spell(spell).action_id.spell_id,
                 "dodge_aura": dodge,
-            }));
+            });
+            // Forever's rules (push 113483): the row states normalized weapon damage, and the
+            // buff of 1329326 lets the next Ambush or Garrote out of Stealth.
+            if env.rules == Rules::Forever {
+                ghostly["normalized"] = json!(true);
+                if let Some(ready) = self.auras.ghostly_ready {
+                    ghostly["ready_aura"] = json!(sim.aura(ready).label);
+                }
+            }
+            effects.push(ghostly);
         }
         // talents_subtlety.go registerHemorrhage: normalized main hand damage and its debuff.
         if let Some(spell) = self.spells.hemorrhage {
@@ -303,13 +327,18 @@ impl Rogue {
         // 3% of attack power, a Go literal, read again at each tick.
         if self.spells.garrote.is_some() {
             let row = data.garrote.highest();
-            effects.push(json!({
+            let mut garrote = json!({
                 "kind": "garrote", "spell_id": row.id,
                 "tick_damage": row.periodic_effect().average(level),
                 "attack_power_share": 0.03, "tick_can_crit": row.periodic_can_crit(),
                 "magic": row.defense_type_core() == DefenseType::Magic,
                 "dirty_deeds": talents.i32("dirty_deeds") > 0,
-            }));
+            });
+            // Ghostly Strike's buff (Forever's rules) lets Garrote out of Stealth.
+            if let Some(ready) = self.auras.ghostly_ready {
+                garrote["ghostly_aura"] = json!(sim.aura(ready).label);
+            }
+            effects.push(garrote);
         }
         // kidney_shot.go: a finisher whose stun lasts a second and a second a combo point, scaled
         // by the target's stun duration multiplier, and raises the rogue's damage on the target by
@@ -336,6 +365,48 @@ impl Rogue {
                 "damage_taken_multiplier": 1.0
                     + data.improved_kidney_shot.value_at(talents.i32("improved_kidney_shot")) / 100.0,
                 "target_tanks_player": env.tanking(),
+            }));
+        }
+        // The notes of 2 November 2026 (Forever's rules): Shank, an off hand strike for 50% weapon
+        // damage that generates Energy (Flash of Steel adds to it), which Boot Knife makes add
+        // two Combo Points and Venom makes restart its aura; and Poised, which takes 10 Energy
+        // (Composure adds 5 or 10) off the first Energy ability of the fight.
+        if let Some(spell) = self.spells.shank {
+            let mut shank = json!({
+                "kind": "shank", "spell_id": sim.spell(spell).action_id.spell_id,
+                "energy_gain":
+                    SHANK_ENERGY_GAIN + rework::flash_of_steel_energy(self.extra_points("flash_of_steel")),
+            });
+            let boot_knife = rework::boot_knife_chance(self.extra_points("boot_knife"));
+            if boot_knife > 0.0 {
+                shank["boot_knife_chance"] = json!(boot_knife);
+                shank["boot_knife_combo_points"] = json!(rework::BOOT_KNIFE_COMBO_POINTS);
+                shank["boot_knife_action"] = action(rework::BOOT_KNIFE_TRIGGERED_SPELL_ID);
+            }
+            effects.push(shank);
+        }
+        if let (Some(_), Some(aura)) = (self.spells.death_mark, self.auras.death_mark) {
+            // Coup de Grace raises the stored share and the cap of Death Mark as it does
+            // Eviscerate's damage (14162's second effect).
+            let coup = 1.0
+                + rework::talent_ladder(env.rules, 14162, 3, 3)
+                    .fraction_at(talents.i32("improved_eviscerate"));
+            effects.push(json!({
+                "kind": "death_mark", "spell_id": rework::DEATH_MARK_SPELL_ID,
+                "aura": sim.aura(aura).label,
+                "stored_per_point": rework::DEATH_MARK_STORED_PER_POINT,
+                "cap_base": rework::DEATH_MARK_CAP_BASE,
+                "cap_per_point": rework::DEATH_MARK_CAP_PER_POINT,
+                "attack_power_per_point": rework::DEATH_MARK_ATTACK_POWER_PER_POINT,
+                "coup_de_grace": coup,
+                "doubled_class_spells": mask_names(masks::GARROTE | masks::RUPTURE),
+            }));
+        }
+        if let Some(aura) = self.auras.poised {
+            effects.push(json!({
+                "kind": "poised", "aura": sim.aura(aura).label,
+                "cost_reduction": self.poised_cost_reduction(),
+                "class_spells": mask_names(masks::ENERGY_ABILITIES),
             }));
         }
         effects.extend(self.expose_armor_effects(env, unrepresented));

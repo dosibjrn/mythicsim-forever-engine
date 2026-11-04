@@ -76,7 +76,9 @@ fn spell(prepared: &Value, spell_id: i64) -> &Value {
 fn simulate(prepared: &Value) -> Value {
     let prepared = serde_json::from_value(prepared.clone()).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
+    simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result
 }
 
 /// What a spell did in every fight together, summed over its targets.
@@ -283,13 +285,23 @@ fn request_if(name: &str, talents: &str, casts: &[(i64, Option<Value>)]) -> Valu
 }
 
 /// The mana the regeneration row (mana per 5, spirit) gave in every fight together.
+/// The mana ticks' gain: the regeneration rows and the rows of the mana totems whose MP5 the
+/// ticks carry, Mana Tide Totem's and Mana Spring Totem's, booked under the totem (README,
+/// Rust-only mechanics). A totem's cast books its cost under the same id, as a negative gain.
 fn regeneration(result: &Value) -> f64 {
+    const MANA_SPRING_TOTEMS: [i64; 4] = [5675, 10495, 10496, 10497];
     result["raidMetrics"]["parties"][0]["players"][0]["resources"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|resource| resource["id"]["otherId"] == "OtherActionManaRegen")
-        .map(|resource| resource["gain"].as_f64().unwrap())
+        .filter(|resource| resource["type"] == "ResourceTypeMana")
+        .filter(|resource| {
+            let gain = resource["gain"].as_f64().unwrap_or(0.0);
+            let spell = resource["id"]["spellId"].as_i64().unwrap_or(0);
+            resource["id"]["otherId"] == "OtherActionManaRegen"
+                || (gain > 0.0 && (spell == MANA_TIDE_TOTEM || MANA_SPRING_TOTEMS.contains(&spell)))
+        })
+        .map(|resource| resource["gain"].as_f64().unwrap_or(0.0))
         .sum()
 }
 

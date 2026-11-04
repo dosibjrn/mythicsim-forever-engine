@@ -167,9 +167,9 @@ impl Paladin {
         if talents.bool("holy_shield") {
             // holy_shield.go, the ranks the rotation names
             let mut ranks: Vec<Value> = Vec::new();
-            data.holy_shield.each(|_, rank| {
+            for rank in hotfix::holy_shield_ranks(sim.rules) {
                 if !rotation_spells.contains(&i64::from(rank.id)) {
-                    return;
+                    continue;
                 }
                 let proc_action = tagged_action(rank.id, 2);
                 let mut proc_spell: i64 = -1;
@@ -184,7 +184,7 @@ impl Paladin {
                     "charges": i32::from(rank.proc_charges),
                     "damage": Self::holy_shield_damage(sim, rank),
                 }));
-            });
+            }
             effects.push(json!({
                 "kind": "holy_shield", "ranks": ranks,
                 // The cast's ExtraCastCondition: a shield to block with, static in scope.

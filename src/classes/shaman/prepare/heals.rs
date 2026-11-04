@@ -17,6 +17,7 @@ use crate::prepare::env::Environment;
 use crate::prepare::heals::{
     apply_heal_talent, register_heal, register_totem_heal, talent_rank, HealShape,
 };
+use crate::prepare::hotfix_113554;
 use crate::prepare::sim::Rules;
 use crate::prepare::sim::{Sim, UnitId};
 use crate::prepare::spelldata::store::must_find;
@@ -27,7 +28,8 @@ use super::Shaman;
 const HEALING_WAVE: &[i32] = &[331, 332, 547, 913, 939, 959, 8005, 10395, 10396, 25357];
 const LESSER_HEALING_WAVE: &[i32] = &[8004, 8008, 8010, 10466, 10467, 10468];
 const CHAIN_HEAL: &[i32] = &[1064, 10622, 10623];
-/// Riptide, a Forever talent: a heal and a heal over time on one player.
+/// Riptide, a Forever talent: a heal and a heal over time on one player (only the heal over time
+/// under the notes of 2 November 2026, Forever's rules).
 const RIPTIDE: &[i32] = &[408521, 1239242, 1239243];
 /// Healing Stream Totem's totems and the heal each one's aura ticks, by rank.
 const HEALING_STREAM: &[(i32, i32)] = &[
@@ -89,10 +91,12 @@ impl Shaman {
         if self.has_talent("riptide") {
             let timer = sim.new_timer(unit);
             for &id in RIPTIDE {
+                // The notes of 2 November 2026 give Riptide a 12 sec cooldown, less mana and no
+                // initial heal under Forever's rules.
                 ranks.push(register_heal(
                     sim,
                     unit,
-                    must_find(id),
+                    hotfix_113554::row(sim.rules, id),
                     masks::HEAL,
                     HealShape::SINGLE,
                     Some(timer),

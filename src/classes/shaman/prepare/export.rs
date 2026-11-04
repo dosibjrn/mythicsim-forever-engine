@@ -20,13 +20,13 @@ use crate::prepare::dbcenums;
 use crate::prepare::env::Environment;
 use crate::prepare::export_items::{dpm_chances, outcome_names};
 use crate::prepare::resolve_proc::{chance, proc_trigger};
-use crate::prepare::sim::{Duration, Sim, SpellId, MILLISECOND, SECOND};
+use crate::prepare::sim::{Duration, Rules, Sim, SpellId, MILLISECOND, SECOND};
 use crate::prepare::spell::{DefenseType, ProcMask, SpellFlag};
 use crate::prepare::spelldata::{must_find, Ladder, Spell as Row};
 use crate::prepare::stats::{Stat, Stats};
 
 use super::spell_data::spell_data;
-use super::spells::{chain_lightning_overload_ranks, lightning_bolt_overload_ranks};
+use super::spells::{chain_lightning_overload_ranks, lightning_bolt_overload_ranks, rules_row};
 use super::{Shaman, CAST_TAG_LIGHTNING_OVERLOAD};
 
 fn nanos(d: Duration) -> i64 {
@@ -35,26 +35,34 @@ fn nanos(d: Duration) -> i64 {
 
 /// `shamanDamageRows`: the rows by spell ID, those whose `ApplyEffects` roll a client damage
 /// effect: every Lightning Bolt and Chain Lightning rank, Lava Burst's, Flame Shock's, Earth
-/// Shock's and Frost Shock's highest rank.
-fn damage_rows() -> &'static HashMap<i32, &'static Row> {
-    static ROWS: OnceLock<HashMap<i32, &'static Row>> = OnceLock::new();
-    ROWS.get_or_init(|| {
+/// Shock's and Frost Shock's highest rank. Under Forever's rules the rows are the notes of 2
+/// November 2026's, and Lava Burst has none.
+fn damage_rows(rules: Rules) -> &'static HashMap<i32, &'static Row> {
+    static GO: OnceLock<HashMap<i32, &'static Row>> = OnceLock::new();
+    static FOREVER: OnceLock<HashMap<i32, &'static Row>> = OnceLock::new();
+    let cell = match rules {
+        Rules::GoReference => &GO,
+        Rules::Forever => &FOREVER,
+    };
+    cell.get_or_init(|| {
         let data = spell_data();
         let mut rows: HashMap<i32, &'static Row> = HashMap::new();
         let each = |rows: &mut HashMap<i32, &'static Row>, ladder: &Ladder| {
             ladder.each(|_, row| {
-                rows.insert(row.id, row);
+                rows.insert(row.id, rules_row(rules, row));
             });
         };
         let highest = |rows: &mut HashMap<i32, &'static Row>, ladder: &Ladder| {
             let row = ladder.highest();
             if !row.is_nil() {
-                rows.insert(row.id, row);
+                rows.insert(row.id, rules_row(rules, row));
             }
         };
         each(&mut rows, &data.lightning_bolt);
         each(&mut rows, &data.chain_lightning);
-        highest(&mut rows, &data.lava_burst);
+        if rules == Rules::GoReference {
+            highest(&mut rows, &data.lava_burst);
+        }
         highest(&mut rows, &data.flame_shock);
         highest(&mut rows, &data.earth_shock);
         highest(&mut rows, &data.frost_shock);
@@ -64,16 +72,27 @@ fn damage_rows() -> &'static HashMap<i32, &'static Row> {
 
 /// `shamanTaggedDamageRows`: Lightning Overload's bolts, one client row per rank of the spell
 /// they follow, by the parent's spell ID.
-fn tagged_damage_rows() -> &'static HashMap<i32, &'static Row> {
-    static ROWS: OnceLock<HashMap<i32, &'static Row>> = OnceLock::new();
-    ROWS.get_or_init(|| {
+fn tagged_damage_rows(rules: Rules) -> &'static HashMap<i32, &'static Row> {
+    static GO: OnceLock<HashMap<i32, &'static Row>> = OnceLock::new();
+    static FOREVER: OnceLock<HashMap<i32, &'static Row>> = OnceLock::new();
+    let cell = match rules {
+        Rules::GoReference => &GO,
+        Rules::Forever => &FOREVER,
+    };
+    cell.get_or_init(|| {
         let data = spell_data();
         let mut rows: HashMap<i32, &'static Row> = HashMap::new();
         data.lightning_bolt.each(|rank, row| {
-            rows.insert(row.id, lightning_bolt_overload_ranks().rank(rank));
+            rows.insert(
+                row.id,
+                rules_row(rules, lightning_bolt_overload_ranks().rank(rank)),
+            );
         });
         data.chain_lightning.each(|rank, row| {
-            rows.insert(row.id, chain_lightning_overload_ranks().rank(rank));
+            rows.insert(
+                row.id,
+                rules_row(rules, chain_lightning_overload_ranks().rank(rank)),
+            );
         });
         rows
     })
@@ -89,9 +108,9 @@ pub(super) fn damage_effect(sim: &Sim, spell: SpellId) -> Option<Value> {
         if action.tag != CAST_TAG_LIGHTNING_OVERLOAD {
             return None;
         }
-        tagged_damage_rows().get(&action.spell_id)?
+        tagged_damage_rows(sim.rules).get(&action.spell_id)?
     } else {
-        damage_rows().get(&action.spell_id)?
+        damage_rows(sim.rules).get(&action.spell_id)?
     };
     let effect = row.damage_effect();
     if effect.is_nil() {
@@ -137,21 +156,21 @@ impl Shaman {
 
         // lightning_bolt.go: the overload rolls on landing, before the bolt deals its damage.
         effects.push(json!({
-            "kind": "lightning_bolt", "overload_chance": self.overload_chance(),
+            "kind": "lightning_bolt", "overload_chance": self.overload_chance(sim.rules),
             "overload_tag": CAST_TAG_LIGHTNING_OVERLOAD,
             "rng_label": "Lightning Bolt Elemental Overload",
         }));
         // chain_lightning.go: a third of the overload chance per hit, and a Go literal bounce
         // reduction.
         effects.push(json!({
-            "kind": "chain_lightning", "overload_chance": self.overload_chance(),
+            "kind": "chain_lightning", "overload_chance": self.overload_chance(sim.rules),
             "overload_tag": CAST_TAG_LIGHTNING_OVERLOAD,
             "rng_label": "Chain Lightning Elemental Overload", "bounce_reduction": 0.7,
             "bounce_bonus": sim.state(self.chain_lightning_bounce_bonus),
         }));
         // shocks.go registerFlameShockSpell: the dot snapshots its tick and rolls the family
         // table's outcome.
-        let flame_shock = data.flame_shock.highest();
+        let flame_shock = rules_row(sim.rules, data.flame_shock.highest());
         let tick = flame_shock.periodic_effect();
         effects.push(json!({
             "kind": "flame_shock", "spell_id": flame_shock.id,
@@ -159,7 +178,8 @@ impl Shaman {
             "tick_can_crit": flame_shock.periodic_can_crit()
                 && flame_shock.defense_type_core() == DefenseType::Magic,
         }));
-        if has("lava_burst") {
+        // The notes of 2 November 2026 remove Lava Burst under Forever's rules.
+        if has("lava_burst") && sim.rules == Rules::GoReference {
             // lava_burst.go: the bonus against a target burning with Flame Shock.
             let row = data.lava_burst.highest();
             effects.push(json!({
@@ -226,7 +246,8 @@ impl Shaman {
             // talents_enhancement.go applyFlurry: a Go literal 500 ms charge cooldown.
             effects.push(json!({
                 "kind": "flurry", "trigger_aura": "Flurry Trigger", "aura": "Flurry",
-                "melee_speed_multiplier": data.flurry.multiplier_at(talent("flurry")),
+                "melee_speed_multiplier": crate::prepare::hotfix_113554::talent(sim.rules, 16256, 5)
+                    .multiplier_at(talent("flurry")),
                 "charge_icd_ns": nanos(500 * MILLISECOND),
                 "max_stacks": i32::from(data.flurry_triggered.highest().proc_charges),
                 // Forever's rank 16256 lacks the bit: a hit from a spell flagged Proc does not
@@ -324,7 +345,7 @@ impl Shaman {
             let row = data.elemental_mastery.highest();
             let chain = data.chain_lightning.highest();
             effects.push(json!({
-                "kind": "elemental_mastery", "spell_id": row.id, "aura": "Elemental Mastery",
+                "kind": "elemental_mastery", "spell_id": row.id, "aura": super::talents::elemental_mastery_label(sim.rules),
                 "cast_time_delta_ns": nanos(super::talents::millis(
                     row.effect(dbcenums::A_ADD_FLAT_MODIFIER, dbcenums::SPELLMOD_CASTING_TIME)
                         .base_points,

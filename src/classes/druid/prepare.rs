@@ -322,6 +322,9 @@ pub(crate) struct Druid {
     /// Go `IntensityEnrageRageBonus`.
     pub(super) intensity_enrage_rage_bonus: f64,
     pub(super) cat_form_aura: Option<AuraId>,
+    /// Poised (the notes of 2 November 2026, Forever's rules): the Cat Form druid's first Energy
+    /// ability is cheaper.
+    pub(super) poised_aura: Option<AuraId>,
     pub(super) bear_form_aura: Option<AuraId>,
     pub(super) moonkin_form_aura: Option<AuraId>,
     pub(super) clearcasting_aura: Option<AuraId>,
@@ -469,6 +472,7 @@ pub(crate) fn new_druid(
         furor_proc_chance: 0.0,
         intensity_enrage_rage_bonus: 0.0,
         cat_form_aura: None,
+        poised_aura: None,
         bear_form_aura: None,
         moonkin_form_aura: None,
         clearcasting_aura: None,

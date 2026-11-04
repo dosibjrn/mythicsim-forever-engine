@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 
 use crate::prepare::dbcenums;
 use crate::prepare::sim::{Duration, MILLISECOND, SECOND};
-use crate::prepare::spelldata::{Effect, Power, Spell};
+use crate::prepare::spelldata::{must_find, Effect, Power, Spell};
 
 /// A talent of push 113554's Paladin tree: its field, its client name and its ranks. The field
 /// is the pinned proto's name where the talent is there; a talent the push adds has upstream
@@ -194,6 +194,11 @@ pub(crate) const CHAMPION_OF_THE_LIGHT: [f64; 5] = [12.0, 24.0, 36.0, 48.0, 60.0
 pub(crate) const CHAMPION_OF_THE_LIGHT_HAMMER_OF_WRATH_MS: [f64; 5] =
     [-200.0, -400.0, -600.0, -800.0, -1000.0];
 
+/// Vengeance's stacks under the notes of 2 November 2026 ("stacking up to 5 times", was 3). No
+/// client row states it yet (Vengeance's trigger, 20050, still says 3), and the value per stack
+/// keeps its 1/2/3% a rank.
+pub(crate) const VENGEANCE_MAX_STACKS: i32 = 5;
+
 /// Oath of Light (1328548), a spell the push adds: wago.tools has no row for it, so it is
 /// upstream wowsims/forever #772's, from the DBCache. An instant 8% base mana cast on the global
 /// cooldown (category 133), 40 yards, 5 minutes, holy. Its three effects state the bonus to Holy
@@ -253,10 +258,47 @@ pub(crate) const ECHO_MAX_STACKS: i32 = 3;
 
 /// Holy Shield's ranks in push 113554: levels 30/40/50 (were 40/50/60), each with the damage
 /// (A_PROC_TRIGGER_DAMAGE) and mana cost of the rank below; Rank 1 is new at 75 damage and 100
-/// mana. As (spell id, damage, cost). Rank 4 (1239570, 221 damage) states no school, cost,
-/// level or shield requirement, and upstream #772 does not register it, so neither does this.
+/// mana. As (spell id, damage, cost). Rank 4 (1239570) is [`holy_shield_rank_4`].
 pub(crate) const HOLY_SHIELD: [(i32, f64, i32); 3] =
     [(20925, 75.0, 100), (20927, 110.0, 150), (20928, 153.0, 195)];
+
+/// Holy Shield rank 4, which build 70755 (live in every region since 3 November 2026) completes
+/// at level 60: 240 mana, 30% block and 221 damage (SpellEffect 1237445, coefficient 0.08), the
+/// numbers the frozen rank 3 row carries. The push before it left the row with its effects only,
+/// without a school, cost, level or shield requirement, so the frozen store has no row for it.
+/// The row is rank 3's with rank 4's ids (wowsims/forever #834's store, `Holy Shield` 1239570).
+pub(crate) const HOLY_SHIELD_RANK_4: i32 = 1_239_570;
+
+/// The Holy Shield rank 4 row.
+pub(crate) fn holy_shield_rank_4() -> &'static Spell {
+    static ROW: OnceLock<Spell> = OnceLock::new();
+    ROW.get_or_init(|| {
+        let mut row = must_find(20928).clone();
+        row.id = HOLY_SHIELD_RANK_4;
+        row.rank = "Rank 4".to_string();
+        for (effect, id) in row
+            .effects
+            .iter_mut()
+            .zip([1_237_444, 1_237_445, 1_339_257])
+        {
+            effect.id = id;
+            effect.spell_id = HOLY_SHIELD_RANK_4;
+        }
+        row
+    })
+}
+
+/// A Holy Shield rank's place in the spells it replaces: under Forever's rules a level 60 paladin
+/// has the four ranks, under the reference three.
+pub(crate) fn holy_shield_ranks(rules: crate::prepare::sim::Rules) -> Vec<&'static Spell> {
+    use super::spell_data::spell_data;
+    let mut ranks = Vec::new();
+    spell_data().holy_shield.each(|_, rank| ranks.push(rank));
+    if rules == crate::prepare::sim::Rules::Forever {
+        ranks.push(holy_shield_rank_4());
+    }
+    ranks
+}
 
 /// `time.Duration(value) * time.Millisecond` for a curve value in milliseconds.
 pub(crate) fn millis(value: f64) -> Duration {

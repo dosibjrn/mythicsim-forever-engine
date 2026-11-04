@@ -21,6 +21,7 @@ fight. Ordinary Rust tests use frozen data and need no Go checkout.
 | [sweep.py](sweep.py) | Generate seeded randomized variants of one request for a compatibility sweep | Python |
 | [copy_targets.py](copy_targets.py) | Write requests against 2 to 5 copies of the boss from requests against one, as the application's Advanced targets setting does, optionally only the tank builds | Python |
 | [preset_matrix.py](preset_matrix.py) | Cross every class's upstream UI preset rotations, talents and gear sets into requests over the production requests | Python |
+| [dev_notes_check.py](dev_notes_check.py) | Check the numbers Forever's rules take from the development notes of 2 November 2026 against a live client spell store (wowsims/forever's `spell_store_inputs.json`), as live, still old or differing | Python |
 | [upstream.py](upstream.py) | Audit the [upstream ledger](../UPSTREAM.md#ledger), optionally against a community clone | Python; Git for the range check |
 | [oracle-v2/main.go](oracle-v2/main.go) | Export a reset Go simulation as [prepared v2](../docs/prepared-v2.md) and run the full Go engine | Built by prepared_v2.py in isolated scratch |
 | [matched-go/](matched-go/) | Go implementation of the same narrow Rust kernel for fair timing | Go |

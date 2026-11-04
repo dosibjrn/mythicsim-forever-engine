@@ -20,10 +20,12 @@ pub(crate) fn apply_item_effects(env: &mut Environment) -> Result<(), Refusal> {
     for item in items.iter() {
         let usable = item.class_allowlist.is_empty() || item.class_allowlist.contains(&class);
         // Under Forever's rules an item the reference has no effect for may still carry a
-        // chance on hit (forever_items.rs `CHANCE_ON_HIT_ITEMS`).
+        // chance on hit (forever_items.rs `CHANCE_ON_HIT_ITEMS`) or a class effect
+        // (`classes::forever_item_effect`).
         let has_effect = tables.item_effect_ids.contains(&item.id)
             || (env.sim.rules == super::sim::Rules::Forever
-                && super::forever_items::has_chance_on_hit_item(item.id));
+                && (super::forever_items::has_chance_on_hit_item(item.id)
+                    || crate::classes::forever_item_effect(item.id)));
         if has_effect && !seen_items.contains(&item.id) && usable {
             seen_items.push(item.id);
             if !super::items_registry::apply_item_effect(env, item.id)? {

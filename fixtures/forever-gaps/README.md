@@ -76,3 +76,8 @@ checks the gate passes and runs it.
 | `protection-paladin-quel-serrar` | Quel'Serrar on a Protection Paladin tank, whose Sanctuary's Defense and Armor change the target's swings (1 November 2026; its talents are in push 113554's tree already) |
 | `demonology-warlock-black-book` | The Black Book on a Demonology Warlock with the Imp out, whose use had no exported effect (1 November 2026) |
 | `enhancement-shaman-fifteen-stat-aura-bits` | an Orc Enhancement Shaman with Jom Gabbar, whose stat auras take 15 bits, past the reference's 14 (1 November 2026) |
+| `feral-bear-druid-insect-swarm-unused` | a Feral Bear Druid with Insect Swarm talented whose rotation never casts it, so its hit debuff never changes the target's swings (2 November 2026) |
+| `feral-druid-swap-shadowcraft-armor` | a Feral Druid in Shadowcraft Armor (5) swapping weapons, whose energize rolls a procs-per-minute manager the swap rebuilds (2 November 2026) |
+| `dps-warrior-execute-phase-unset` | a Warrior's Recklessness on an execute phase check with no threshold, which builds no value (2 November 2026) |
+| `demonology-warlock-target-health-percent` | a Demonology Warlock reading its target's health percent, which builds no value since a target has no health bar (2 November 2026) |
+| `retribution-paladin-swap-without-crowd-pummeler` | a Retribution Paladin's own Manual Crowd Pummeler rotation run with the Pummeler taken off, whose execute phase and swing time checks preparation did not fold (4 November 2026; its talents are in push 113554's tree already) |

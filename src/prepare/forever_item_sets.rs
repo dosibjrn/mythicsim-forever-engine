@@ -472,9 +472,17 @@ set_stats!(shadowcraft_armor_3, set_attack_power(30.0));
 /// Chance on melee attack to restore energy, moved down from 6 pieces and cut 35 to 20.
 fn shadowcraft_armor_5(env: &mut Environment, aura: AuraId) {
     let unit = env.player;
+    // Go NewLegacyPPMManager, which an item swap rebuilds for the weapons in the hands, as
+    // Lightforge Armor's.
     let dpm = Rc::new(
         env.sim
-            .new_ppm_manager(unit, 1.0, ProcMask::MELEE_WHITE_HIT),
+            .new_ppm_manager(unit, 1.0, ProcMask::MELEE_WHITE_HIT)
+            .rebuilt_by_swap(
+                &env.sim,
+                unit,
+                super::item_swap::ManagerChance::Ppm(1.0),
+                super::item_swap::ManagerMask::Static(ProcMask::MELEE_WHITE_HIT),
+            ),
     );
     env.sim.attach_proc_trigger(
         aura,

@@ -3,7 +3,7 @@ name: Label pull requests
 # pull_request_target gives fork PRs a token that can write labels. It runs
 # this file from the base branch, and nothing here checks out PR code.
 on:
-  pull_request_target:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
     types: [opened, synchronize, reopened]
 
 permissions: {}

@@ -209,6 +209,7 @@ fn prepared_with(items: &[(usize, i64)]) -> Value {
     for (slot, id) in items {
         equipment[*slot] = serde_json::json!({ "id": id });
     }
+    crate::rogue_113483::forever_request(&mut value);
     forever_engine::prepare_json(&serde_json::to_vec(&value).unwrap(), "weapon-skill")
         .unwrap_or_else(|err| panic!("{items:?} is not prepared: {err}"))
 }

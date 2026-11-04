@@ -797,8 +797,9 @@ fn idol_of_the_dream_extends_rip_by_two_seconds() {
             .expect("Rip's dot");
         let flat = dot["base_duration_flat_ns"].as_i64().unwrap_or(0);
         let period = dot["base_tick_length_ns"].clone();
-        let dps = simulate_prepared(&parse(prepared), forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"]["parties"][0]
-            ["players"][0]["dps"]["avg"]
+        let dps = simulate_prepared(&parse(prepared), forever_engine::RngMode::Stochastic)
+            .unwrap()
+            .result["raidMetrics"]["parties"][0]["players"][0]["dps"]["avg"]
             .as_f64()
             .unwrap();
         (flat, period, dps)

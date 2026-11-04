@@ -9,5 +9,6 @@ pub(crate) mod flurry;
 pub(crate) mod improved_hamstring;
 pub(crate) mod last_stand;
 pub(crate) mod rage_on_avoid;
+pub(crate) mod reckless_swings;
 pub(crate) mod unbridled_wrath;
 pub(crate) mod weaponmaster;

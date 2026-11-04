@@ -269,7 +269,10 @@ impl MageAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<MageAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<MageAgent>, String> {
         let auras = class_auras(prepared);
         let gems: Vec<i32> = prepared
             .effects
@@ -280,16 +283,22 @@ impl MageAgent {
             })
             .unwrap_or_default();
         let spell = |exported: &ExportedSpell| MageAgent::spell(exported, &gems);
-        let mut fight = Fight::new(prepared, rng_mode, MageAgent::default(), spell, |unit, label| {
-            (unit == "player")
-                .then(|| {
-                    auras
-                        .iter()
-                        .find(|(name, _)| name == label)
-                        .map(|(_, kind)| *kind)
-                })
-                .flatten()
-        })?;
+        let mut fight = Fight::new(
+            prepared,
+            rng_mode,
+            MageAgent::default(),
+            spell,
+            |unit, label| {
+                (unit == "player")
+                    .then(|| {
+                        auras
+                            .iter()
+                            .find(|(name, _)| name == label)
+                            .map(|(_, kind)| *kind)
+                    })
+                    .flatten()
+            },
+        )?;
         for effect in &prepared.effects {
             match effect {
                 Effect::WintersChill {
@@ -331,10 +340,16 @@ impl MageAgent {
                     aura,
                     trigger_aura,
                     proc_chance,
+                    missiles,
                     ..
                 } => {
-                    let bound =
-                        arcane_concentration::bind(&fight, aura, trigger_aura, *proc_chance)?;
+                    let bound = arcane_concentration::bind(
+                        &fight,
+                        aura,
+                        trigger_aura,
+                        *proc_chance,
+                        *missiles,
+                    )?;
                     fight.agent.arcane_concentration = Some(Rc::new(bound));
                 }
                 Effect::MissileBarrage {
@@ -991,6 +1006,19 @@ impl Agent for MageAgent {
                 fight.set_stacks(aura, max);
             }
             _ => {}
+        }
+    }
+
+    /// Go `OnApplyEffects`, before the cast's effects: Forever's rules spend Clearcasting here.
+    fn on_apply_effects(
+        fight: &mut Fight<Self>,
+        _aura: AuraRef,
+        kind: MageAura,
+        spell: SpellId,
+        _target: Side,
+    ) {
+        if kind == MageAura::Clearcasting {
+            Self::arcane_concentration(fight).on_apply_effects(fight, spell);
         }
     }
 

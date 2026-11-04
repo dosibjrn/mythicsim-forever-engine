@@ -219,7 +219,10 @@ impl Warlock {
         let data = spell_data();
         let fire_row = data.shadow_and_flame_triggered.by_id(426311);
         let shadow_row = data.shadow_and_flame_triggered.by_id(1293816);
-        let multiplier = 1.0 + data.shadow_and_flame.effect_at(3).fraction_at(points);
+        let multiplier = 1.0
+            + crate::prepare::hotfix_113554::talent(sim.rules, 426316, 5)
+                .effect_at(3)
+                .fraction_at(points);
 
         let shadow_aura = sim.register_aura(
             unit,

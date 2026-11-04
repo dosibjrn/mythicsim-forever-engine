@@ -22,13 +22,27 @@ const FOREVER_ENUM_VALUES: [(&str, &str, i32); 2] = [
 /// mechanics), each added unless the message already has a field of that name or number. They
 /// number from 1000, clear of anything the reference or an upstream merge will add: the
 /// reference refuses them as unknown fields, so a request that sets one is a Rust-only request.
-/// Each is a `bool` of the message: (message, proto name, JSON name, number).
-const FOREVER_BOOL_FIELDS: [(&str, &str, &str, u32); 1] = [(
-    "proto.ConsumesSpec",
-    "oil_of_immolation",
-    "oilOfImmolation",
-    1000,
-)];
+/// Each is a scalar of the message: (message, proto name, JSON name, number, kind).
+///
+/// `PartyBuffs.dark_inspiration` is a Shadow Priest's Dark Inspiration in the party, its talent
+/// rank 0 to 5 (wowsims/forever's `PartyBuffs.dark_inspiration`, numbered 15 there, which this
+/// schema's Grace of Air Totem already holds).
+const FOREVER_FIELDS: [(&str, &str, &str, u32, FieldKind); 2] = [
+    (
+        "proto.ConsumesSpec",
+        "oil_of_immolation",
+        "oilOfImmolation",
+        1000,
+        FieldKind::Bool,
+    ),
+    (
+        "proto.PartyBuffs",
+        "dark_inspiration",
+        "darkInspiration",
+        1001,
+        FieldKind::Int32,
+    ),
+];
 
 /// A field's protobuf kind, by Go's `protoreflect.Kind` name.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -185,7 +199,7 @@ fn schema() -> &'static Schema {
                 });
             }
         }
-        for (message, name, json_name, number) in FOREVER_BOOL_FIELDS {
+        for (message, name, json_name, number, kind) in FOREVER_FIELDS {
             let fields = &mut raw
                 .messages
                 .get_mut(message)
@@ -199,7 +213,7 @@ fn schema() -> &'static Schema {
                     name: name.to_string(),
                     json_name: json_name.to_string(),
                     number,
-                    kind: FieldKind::Bool,
+                    kind,
                     repeated: false,
                     packed: false,
                     optional: false,

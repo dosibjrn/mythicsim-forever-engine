@@ -1141,6 +1141,12 @@ pub(crate) fn export_state(
         if super::overheal::is_healer(&player_message) {
             prepared["player"]["burst_window"] = super::burst_hps::export();
         }
+        // The party's mana totems are reported under their own names rather than as plain
+        // regeneration (README, Rust-only mechanics); the reference reports regeneration only.
+        let mp5_sources = super::mp5_sources::export(env, &stat_auras);
+        if !mp5_sources.is_empty() {
+            prepared["player"]["mp5_sources"] = json!(mp5_sources);
+        }
     }
     if let Some(reads) = &env.rotation_reads {
         prepared["player"]["rotation_reads"] = json!(reads);

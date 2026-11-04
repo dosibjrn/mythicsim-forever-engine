@@ -1,5 +1,6 @@
 //! Go sim/core/buffs/meta_test.go and the driver behaviour preparation can observe.
 
+use super::dark_inspiration::{bid_own_dark_inspiration, DARK_INSPIRATION};
 use super::drivers::attach_innervate_regen;
 use super::generated::{BATTLE_SHOUT, GRACE_OF_AIR_TOTEM, INNERVATES, SUNDER_ARMOR, THORNS};
 use super::paladin::{
@@ -368,5 +369,123 @@ fn every_buff_and_debuff_field_is_read_by_a_table_or_a_driver() {
             number += 1;
         }
         assert!(number > 1, "{message} has fields");
+    }
+}
+
+/// wowsims/forever meta_test.go "DarkInspiration": each rank is its share of the row's 15%
+/// Spirit, rounded half away from zero, and an untaken talent reads the whole row. A priest's own
+/// copy, priced by the talent's ladder, is worth the same at each rank.
+#[test]
+fn dark_inspiration_is_its_ranks_share_of_the_rows_spirit() {
+    for (rank, percent) in [
+        (0, 15.0),
+        (1, 3.0),
+        (2, 6.0),
+        (3, 9.0),
+        (4, 12.0),
+        (5, 15.0),
+    ] {
+        let want = 1.0 + percent / 100.0;
+        assert!(
+            (DARK_INSPIRATION.value(rank) - want).abs() < 1e-9,
+            "rank {rank}: {} for {want}",
+            DARK_INSPIRATION.value(rank)
+        );
+    }
+    let talent = Ladder::talent(1326159, 5);
+    for rank in 1..=5 {
+        assert!((talent.multiplier_at(rank) - DARK_INSPIRATION.value(rank)).abs() < 1e-9);
+    }
+}
+
+/// wowsims/forever buffs_generated_test.go TestGeneratedDarkInspirationTakesTheTalentsRank: the
+/// party's copy at each rank raises 1000 Spirit to floor(1000 * its value) for the whole fight.
+#[test]
+fn the_partys_dark_inspiration_takes_the_talents_rank() {
+    for (rank, want) in [
+        (1, 1030.0),
+        (2, 1060.0),
+        (3, 1090.0),
+        (4, 1120.0),
+        (5, 1150.0),
+    ] {
+        let (mut sim, unit) = sim_with_unit();
+        sim.unit_mut(unit).stats[Stat::Spirit] = 1000.0;
+        // `permanent`, as `apply_party_dark_inspiration` applies it.
+        let aura = DARK_INSPIRATION.aura(&mut sim, unit, false, rank, 0.0);
+        let aura = sim.make_permanent(aura);
+        assert_eq!(sim.aura(aura).label, "Dark Inspiration (External)");
+        assert_eq!(sim.aura(aura).duration, NEVER_EXPIRES);
+        finalize(&mut sim, unit);
+        sim.activate(aura);
+        assert_eq!(sim.stat(unit, Stat::Spirit), want, "rank {rank}");
+        assert_eq!(want, (1000.0 * DARK_INSPIRATION.value(rank)).floor());
+    }
+}
+
+/// wowsims/forever TestGeneratedDarkInspirationAndAPriestsCopyDoNotStack: the party's copy and a
+/// priest's own bid in one Spirit category, so the priest has the stronger amount alone. The
+/// party's copy stays up throughout: a stronger own copy holds the Spirit while it is up and the
+/// party's holds it again once it ends, and an equal or weaker one never takes it.
+#[test]
+fn the_partys_dark_inspiration_and_a_priests_own_do_not_stack() {
+    for (name, party_rank, own_rank) in [
+        ("stronger priest", 3, 5),
+        ("equal bids", 5, 5),
+        ("weaker priest", 5, 3),
+    ] {
+        let (mut sim, unit) = sim_with_unit();
+        sim.unit_mut(unit).stats[Stat::Spirit] = 1000.0;
+        let party = DARK_INSPIRATION.aura(&mut sim, unit, false, party_rank, 0.0);
+        // The priest's aura is the buff row's own spell, so only yielding keeps an equal bid off.
+        let own = sim.register_aura(
+            unit,
+            AuraConfig {
+                action_id: Some(ActionId::spell(1326168)),
+                ..aura("Dark Inspiration", 0)
+            },
+        );
+        let talent = Ladder::talent(1326159, 5);
+        bid_own_dark_inspiration(&mut sim, unit, own, talent.multiplier_at(own_rank));
+        finalize(&mut sim, unit);
+        sim.activate(party);
+        let spirit_at = |rank: i32| (1000.0 * DARK_INSPIRATION.value(rank)).floor();
+        let holder = |sim: &Sim| {
+            let effect = sim.aura(party).exclusive_effects[0];
+            sim.category_active_aura(sim.effects[effect.0].category)
+        };
+        assert_eq!(
+            sim.aura(party).exclusive_effects.len(),
+            1,
+            "{name}: Spirit's bid alone"
+        );
+        assert_eq!(
+            sim.stat(unit, Stat::Spirit),
+            spirit_at(party_rank),
+            "{name} alone"
+        );
+        assert_eq!(holder(&sim), Some(party), "{name} alone");
+
+        sim.activate(own);
+        let stronger = if own_rank > party_rank { own } else { party };
+        assert_eq!(
+            sim.stat(unit, Stat::Spirit),
+            spirit_at(own_rank.max(party_rank)),
+            "{name} under the priest's copy"
+        );
+        assert_eq!(
+            holder(&sim),
+            Some(stronger),
+            "{name} under the priest's copy"
+        );
+        assert!(sim.aura(party).active, "{name}: the party's copy stays up");
+
+        sim.deactivate(own);
+        assert_eq!(
+            sim.stat(unit, Stat::Spirit),
+            spirit_at(party_rank),
+            "{name} after"
+        );
+        assert_eq!(holder(&sim), Some(party), "{name} after");
     }
 }

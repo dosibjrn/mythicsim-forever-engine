@@ -31,7 +31,13 @@ pub(crate) const VENOM: i64 = 1 << 26;
 pub(crate) const RIPOSTE: i64 = 1 << 27;
 pub(crate) const KIDNEY_SHOT: i64 = 1 << 28;
 
-const LAST: i64 = 1 << 29;
+/// Shank, new in the notes of 2 November 2026 (Forever's rules only). Go's block ends at
+/// Kidney Shot, so the bit is the one Go's `RogueSpellLast` would take.
+pub(crate) const SHANK: i64 = 1 << 29;
+/// Death Mark, new in the rework of push 113483 (Forever's rules only), the bit after Shank's.
+pub(crate) const DEATH_MARK: i64 = 1 << 30;
+
+const LAST: i64 = 1 << 30;
 /// Go `RogueSpellsAll = RogueSpellLast<<1 - 1`.
 pub(crate) const ALL: i64 = (LAST << 1) - 1;
 
@@ -39,7 +45,24 @@ pub(crate) const POISONS: i64 = WOUND_POISON | DEADLY_POISON | INSTANT_POISON;
 pub(crate) const LETHALITY: i64 =
     SINISTER_STRIKE | GOUGE | BACKSTAB | GHOSTLY_STRIKE | MUTILATE | MUTILATE_HIT | HEMORRHAGE;
 pub(crate) const FINISHER: i64 =
-    EVISCERATE | SLICE_AND_DICE | RUPTURE | EXPOSE_ARMOR | VENOM | KIDNEY_SHOT;
+    EVISCERATE | SLICE_AND_DICE | RUPTURE | EXPOSE_ARMOR | VENOM | KIDNEY_SHOT | DEATH_MARK;
+/// Every ability that costs Energy, the ones Poised's discount can fall on.
+pub(crate) const ENERGY_ABILITIES: i64 = AMBUSH
+    | BACKSTAB
+    | EVISCERATE
+    | DEATH_MARK
+    | EXPOSE_ARMOR
+    | GARROTE
+    | GHOSTLY_STRIKE
+    | HEMORRHAGE
+    | KIDNEY_SHOT
+    | MUTILATE
+    | RIPOSTE
+    | RUPTURE
+    | SHANK
+    | SINISTER_STRIKE
+    | SLICE_AND_DICE
+    | VENOM;
 /// Quietus names only these three in its tooltip.
 pub(crate) const QUIETUS: i64 = SINISTER_STRIKE | GHOSTLY_STRIKE | HEMORRHAGE;
 /// Cold Blood's class mask (14177): Mutilate's two hits, not the parent cast.

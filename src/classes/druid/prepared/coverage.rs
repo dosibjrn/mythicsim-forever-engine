@@ -47,6 +47,7 @@ const EFFECTS: &[&str] = &[
     "natures_bounty",
     "natures_grace",
     "omen_of_clarity",
+    "poised",
     "primal_bite",
     "prowl",
     "rake",
@@ -116,6 +117,7 @@ fn claims(effect: &Effect) -> Vec<(&'static str, &str)> {
         | Effect::Enrage { aura, .. }
         | Effect::Barkskin { aura, .. }
         | Effect::DruidThorns { aura, .. }
+        | Effect::Poised { aura, .. }
         | Effect::FrenziedRegeneration { aura, .. } => vec![("player", aura)],
         Effect::NaturalReaction { trigger_aura, .. } => vec![("player", trigger_aura)],
         Effect::NaturesBounty { aura, .. } | Effect::UnendingLifeRefund { aura, .. } => {

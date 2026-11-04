@@ -73,9 +73,15 @@ impl<A: Agent> Fight<A> {
     /// Moves the part of a casting mana tick the active casting regeneration auras added from the
     /// tick's metrics to theirs. As with Go's spirit regeneration attribution, ordinary
     /// regeneration fills the mana bar first; only the room left is the auras' actual gain.
-    pub(crate) fn credit_casting_regen(&mut self, regen: f64, actual: f64, metrics: usize) {
+    /// Returns the gain and actual gain moved.
+    pub(crate) fn credit_casting_regen(
+        &mut self,
+        regen: f64,
+        actual: f64,
+        metrics: usize,
+    ) -> (f64, f64) {
         if self.player.casting_regen_sources.is_empty() || self.player.force_full_spirit_regen {
-            return;
+            return (0.0, 0.0);
         }
         let per_rate = self.player.powers.spirit_regen_per_second
             * self.player.spirit_regen_multiplier
@@ -88,7 +94,7 @@ impl<A: Agent> Fight<A> {
             .map(|source| (per_rate * source.regen).max(0.0))
             .sum();
         if total <= 0.0 {
-            return;
+            return (0.0, 0.0);
         }
         let bonus = total.min(regen);
         let bonus_actual = bonus.min((actual - (regen - bonus)).max(0.0));
@@ -103,5 +109,6 @@ impl<A: Agent> Fight<A> {
             resource.gain += bonus * share;
             resource.actual_gain += bonus_actual * share;
         }
+        (bonus, bonus_actual)
     }
 }

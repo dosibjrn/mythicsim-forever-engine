@@ -606,7 +606,7 @@ impl Warrior {
 
     /// Go `registerSlam`.
     pub(super) fn register_slam(&self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().slam.highest();
+        let rank = crate::prepare::hotfix_113554::row(sim.rules, spell_data().slam.highest().id);
         let cd = new_cooldown(sim, unit, cooldown_of(rank));
         sim.register_spell(
             unit,

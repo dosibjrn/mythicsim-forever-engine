@@ -8,16 +8,18 @@ use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums;
 use crate::prepare::env::Environment;
 use crate::prepare::sim::Cooldown;
-use crate::prepare::sim::{AuraConfig, EventCallbacks, Sim, UnitId, MILLISECOND};
+use crate::prepare::sim::{AuraConfig, EventCallbacks, Rules, Sim, UnitId, MILLISECOND};
 use crate::prepare::spell::{Cast, CastConfig, ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::Stat;
 
 use super::super::masks;
+use super::super::rework;
 use super::super::spell_data::spell_data;
 use super::super::spells::{BUILDER, FINISHER};
 use super::super::util::{
-    energy_cost, ignore_haste_cast, longest_cooldown, spell_action, tagged_action,
+    energy_cost, ignore_haste_cast, longest_cooldown, mutilate_weapon_share, spell_action,
+    tagged_action,
 };
 use super::super::{Rogue, SLICE_AND_DICE_DURATIONS};
 
@@ -178,7 +180,7 @@ impl Rogue {
             SpellModConfig {
                 kind: SpellModType::CritMultiplierFlat,
                 class_mask: masks::LETHALITY,
-                float_value: spell_data().lethality.fraction_at(rank),
+                float_value: rework::talent_ladder(sim.rules, 14128, 2, 5).fraction_at(rank),
                 ..SpellModConfig::default()
             },
         );
@@ -281,7 +283,7 @@ impl Rogue {
                 action_id: spell_action(spell_data().seal_fate.highest().id),
                 // Forever puts the real per-rank chance on the effect; the row's ProcChance
                 // reads a flat 100%.
-                proc_chance: spell_data().seal_fate.fraction_at(rank),
+                proc_chance: rework::talent_ladder(sim.rules, 14186, 3, 5).fraction_at(rank),
                 callback: CallbackMask::ON_SPELL_HIT_DEALT,
                 outcome: HitOutcome::CRIT,
                 spell_flags: BUILDER,
@@ -292,26 +294,34 @@ impl Rogue {
     }
 
     /// Venom is a finisher that raises poison damage and application chance for a combo point
-    /// scaled duration, on the same 9-21 second ladder as Slice and Dice.
+    /// scaled duration, on the same 9-21 second ladder as Slice and Dice. Under Forever's rules
+    /// the finisher is gone (the notes of 2 November 2026): the talent (1329328) makes Shank
+    /// cast the aura of 1310703, 30% poison damage and 20% poison chance for 6 sec, so only the
+    /// aura is registered.
     fn register_venom(&mut self, sim: &mut Sim, unit: UnitId) {
         if !self.talents.bool("venom") {
             return;
         }
+        let forever = sim.rules == Rules::Forever;
         let rank = spell_data().venom.highest();
         let action = spell_action(rank.id);
         let state = Rc::clone(&self.state);
 
-        let damage_bonus = rank
-            .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_DAMAGE)
-            .average(CHARACTER_LEVEL)
-            / 100.0;
-        let chance_bonus = rank
-            .effect(
-                dbcenums::A_ADD_FLAT_MODIFIER,
-                dbcenums::SPELLMOD_CHANCE_OF_SUCCESS,
+        let (damage_bonus, chance_bonus) = if forever {
+            (rework::VENOM_DAMAGE_BONUS, rework::VENOM_CHANCE_BONUS)
+        } else {
+            (
+                rank.effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_DAMAGE)
+                    .average(CHARACTER_LEVEL)
+                    / 100.0,
+                rank.effect(
+                    dbcenums::A_ADD_FLAT_MODIFIER,
+                    dbcenums::SPELLMOD_CHANCE_OF_SUCCESS,
+                )
+                .average(CHARACTER_LEVEL)
+                    / 100.0,
             )
-            .average(CHARACTER_LEVEL)
-            / 100.0;
+        };
 
         let gain_state = Rc::clone(&state);
         let aura = sim.register_aura(
@@ -320,7 +330,11 @@ impl Rogue {
                 label: "Venom".to_string(),
                 action_id: Some(action.clone()),
                 // Overridden on cast; a non-zero default keeps an APL prepull from crashing.
-                duration: SLICE_AND_DICE_DURATIONS[5],
+                duration: if forever {
+                    rework::VENOM_DURATION
+                } else {
+                    SLICE_AND_DICE_DURATIONS[5]
+                },
                 on_gain: Some(Rc::new(move |_: &mut Sim, _| {
                     gain_state
                         .additive_poison_bonus_chance
@@ -344,6 +358,9 @@ impl Rogue {
             },
         );
         self.auras.venom = Some(aura);
+        if forever {
+            return;
+        }
 
         let spell = sim.register_spell(
             unit,
@@ -386,9 +403,9 @@ impl Rogue {
                     proc_mask,
                     flags: SpellFlag::MELEE_METRICS | BUILDER,
                     class_spell_mask: masks::MUTILATE_HIT,
-                    // Every hit rank states the same 75% weapon share.
-                    damage_multiplier: spell_data().mutilate_triggered.effect_at(2).value_at(1)
-                        / 100.0,
+                    // Every hit rank states the same weapon share: 75%, or 90% under Forever's
+                    // rules since the notes of 2 November 2026.
+                    damage_multiplier: mutilate_weapon_share(sim.rules),
                     damage_multiplier_additive: 1.0,
                     threat_multiplier: 1.0,
                     ..SpellConfig::default()

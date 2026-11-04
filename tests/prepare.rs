@@ -8,6 +8,12 @@ use std::{fs, path::Path};
 
 #[path = "support/paladin_113554.rs"]
 mod paladin_113554;
+#[path = "support/rogue_113483.rs"]
+mod rogue_113483;
+#[path = "support/shaman_layout.rs"]
+mod shaman_layout;
+#[path = "support/warrior_trees_20261104.rs"]
+mod warrior_trees_20261104;
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -198,6 +204,9 @@ fn the_ui_default_fields_prepare_as_without_them() {
         let mut request: Value = serde_json::from_slice(&request_bytes(case)).unwrap();
         // A paladin's talents read in push 113554's tree, which Forever's rules prepare.
         paladin_113554::forever_request(&mut request);
+        rogue_113483::forever_request(&mut request);
+        // A warrior's talents read in the client's order, which Forever's rules prepare.
+        warrior_trees_20261104::forever_request(&mut request);
         if id == "frost-reference" {
             // The fixture's talents in client 1.60.1.70707's order, which Forever's rules read:
             // Arcane Focus's points on Improved Channeling, which takes its square.
@@ -259,6 +268,8 @@ fn the_swap_weapons_stone_needs_an_item_swap() {
     let cases = manifest().cases;
     let case = cases.iter().find(|case| case.id == id).unwrap();
     let mut request: Value = serde_json::from_slice(&request_bytes(case)).unwrap();
+    // The Shaman's talents in the launch client's order, which Forever's rules read.
+    shaman_layout::forever_request(&mut request);
     request["raid"]["parties"][0]["players"][0]["consumables"]["mhImbueId"] = 18262.into();
     let stone = forever_engine::prepare_json(&serde_json::to_vec(&request).unwrap(), id)
         .unwrap_or_else(|err| panic!("{id} with a stone: {err}"));
@@ -355,6 +366,7 @@ fn party_damage_shields_are_inert_without_a_tank() {
     let cases = manifest().cases;
     let case = cases.iter().find(|case| case.id == id).unwrap();
     let mut request: Value = serde_json::from_slice(&request_bytes(case)).unwrap();
+    rogue_113483::forever_request(&mut request);
     request["raid"]["parties"][0]["buffs"]["retributionAura"] = true.into();
     request["raid"]["buffs"]["thorns"] = true.into();
     let prepared = forever_engine::prepare_json(&serde_json::to_vec(&request).unwrap(), id)

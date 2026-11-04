@@ -50,6 +50,7 @@ use super::{
         improved_hamstring::{self, ImprovedHamstring},
         last_stand::LastStand,
         rage_on_avoid::{self, AvoidRage},
+        reckless_swings::{self, RecklessSwings},
         unbridled_wrath::{self, UnbridledWrath},
         weaponmaster::{self, WeaponmasterSword},
     },
@@ -61,6 +62,8 @@ pub(crate) enum WarriorSpell {
     Bloodthirst,
     Whirlwind,
     WhirlwindOffHand,
+    /// talents_fury.go (Forever's rules): the cast that starts Reckless Swings' charges.
+    RecklessSwings,
     Execute,
     Hamstring,
     Pummel,
@@ -128,6 +131,8 @@ pub(crate) enum WarriorSpell {
 pub(crate) enum WarriorAura {
     DeepWoundsTrigger,
     UnbridledWrath,
+    /// Reckless Swings' trigger, which grants its Rage a batch window after a landed white swing.
+    RecklessSwingsTrigger,
     FlurryTrigger,
     Flurry,
     OverpowerTrigger,
@@ -189,6 +194,7 @@ pub(crate) struct WarriorAgent {
     deep_wounds: Option<DeepWounds>,
     unbridled_wrath: Option<UnbridledWrath>,
     flurry: Option<Flurry>,
+    reckless_swings: Option<RecklessSwings>,
     anger_management: Option<AngerManagement>,
     overpower_window: Option<AuraRef>,
     queue: Queue,
@@ -294,6 +300,7 @@ impl WarriorAgent {
             "bloodthirst" if has("bloodthirst") => Some(WarriorSpell::Bloodthirst),
             "whirlwind" if has("whirlwind") => Some(WarriorSpell::Whirlwind),
             "whirlwind_off_hand" if has("whirlwind") => Some(WarriorSpell::WhirlwindOffHand),
+            "reckless_swings" if has("reckless_swings") => Some(WarriorSpell::RecklessSwings),
             "execute" if has("execute") => Some(WarriorSpell::Execute),
             "hamstring" if has("hamstring") => Some(WarriorSpell::Hamstring),
             "pummel" if has("pummel") => Some(WarriorSpell::Pummel),
@@ -407,6 +414,9 @@ impl WarriorAgent {
                 Effect::UnbridledWrath { trigger_aura, .. } => {
                     auras.push((trigger_aura.clone(), WarriorAura::UnbridledWrath))
                 }
+                Effect::RecklessSwings { trigger_aura, .. } => {
+                    auras.push((trigger_aura.clone(), WarriorAura::RecklessSwingsTrigger))
+                }
                 Effect::WarriorFlurry {
                     trigger_aura, aura, ..
                 } => {
@@ -453,15 +463,24 @@ impl WarriorAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<WarriorAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<WarriorAgent>, String> {
         let auras = Self::auras(prepared);
         let spell = |exported: &ExportedSpell| WarriorAgent::spell(prepared, exported);
-        let mut fight = Fight::new(prepared, rng_mode, WarriorAgent::default(), spell, |unit, label| {
-            auras
-                .iter()
-                .find(|(side, name, _)| *side == unit && name == label)
-                .map(|(_, _, kind)| *kind)
-        })?;
+        let mut fight = Fight::new(
+            prepared,
+            rng_mode,
+            WarriorAgent::default(),
+            spell,
+            |unit, label| {
+                auras
+                    .iter()
+                    .find(|(side, name, _)| *side == unit && name == label)
+                    .map(|(_, _, kind)| *kind)
+            },
+        )?;
         fight.agent.main_hand_mask = prepared
             .player
             .spells
@@ -883,6 +902,7 @@ impl WarriorAgent {
                     spell_id,
                     off_hand,
                     max_targets,
+                    closest_bonus,
                 } => {
                     let off_hand = if *off_hand && prepared.melee.dual_wielding {
                         Some(find(&fight, *spell_id, 2)?)
@@ -892,6 +912,7 @@ impl WarriorAgent {
                     fight.agent.whirlwind = Some(Whirlwind {
                         off_hand,
                         max_targets: *max_targets as usize,
+                        closest_bonus: *closest_bonus,
                     });
                 }
                 Effect::Execute {
@@ -1071,6 +1092,27 @@ impl WarriorAgent {
                         trigger: fight.player_aura(trigger_aura)?,
                         proc_chance: *proc_chance,
                         rage: *rage,
+                        metrics,
+                    });
+                }
+                Effect::RecklessSwings {
+                    spell_id,
+                    aura,
+                    trigger_aura,
+                    rage,
+                    charges,
+                    health_cost,
+                    ..
+                } => {
+                    // The proc's own spell id (1329554) is not exported; its Rage goes under the
+                    // cast's, as the row's tooltip states it.
+                    let metrics = rage_metrics(&mut fight, *spell_id);
+                    fight.agent.reckless_swings = Some(RecklessSwings {
+                        aura: fight.player_aura(aura)?,
+                        trigger: fight.player_aura(trigger_aura)?,
+                        rage: *rage,
+                        charges: *charges,
+                        health_cost: *health_cost,
                         metrics,
                     });
                 }
@@ -1297,6 +1339,13 @@ impl Agent for WarriorAgent {
             WarriorSpell::WhirlwindOffHand => {
                 let params = fight.agent.whirlwind.expect("Whirlwind is bound");
                 whirlwind::apply_off_hand(fight, spell, target, params);
+            }
+            WarriorSpell::RecklessSwings => {
+                let params = fight
+                    .agent
+                    .reckless_swings
+                    .expect("Reckless Swings is bound");
+                reckless_swings::apply(fight, params);
             }
             WarriorSpell::Execute => {
                 let params = fight.agent.execute.expect("Execute is bound");
@@ -1935,6 +1984,10 @@ impl Agent for WarriorAgent {
                 let params = fight.agent.unbridled_wrath.expect("bound");
                 unbridled_wrath::on_hit(fight, params, spell, result);
             }
+            WarriorAura::RecklessSwingsTrigger => {
+                let params = fight.agent.reckless_swings.expect("bound");
+                reckless_swings::on_hit(fight, params, spell, result);
+            }
             WarriorAura::FlurryTrigger => {
                 let params = fight.agent.flurry.expect("Flurry is bound");
                 flurry::on_hit(fight, params, spell, result);
@@ -1984,6 +2037,10 @@ impl Agent for WarriorAgent {
             WarriorAura::UnbridledWrath => {
                 let params = fight.agent.unbridled_wrath.expect("bound");
                 unbridled_wrath::grant(fight, params);
+            }
+            WarriorAura::RecklessSwingsTrigger => {
+                let params = fight.agent.reckless_swings.expect("bound");
+                reckless_swings::grant(fight, params);
             }
             WarriorAura::BloodthrillTrigger => {
                 let params = fight.agent.bloodthrill.expect("bound");

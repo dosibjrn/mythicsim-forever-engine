@@ -13,10 +13,12 @@ mod spell_data;
 pub(crate) const RUN_SPELLS: [i32; 6] = [100, 6178, 11578, 20252, 20616, 20617];
 mod spells;
 mod stances;
+mod talent_ranks;
 mod talents;
+pub(crate) mod trees_20261104;
 
 use crate::contracts::request::Message;
-use crate::prepare::agent::{fill_talents, ClassSpellName, PrepAgent};
+use crate::prepare::agent::{ClassSpellName, PrepAgent};
 use crate::prepare::attack::{AutoAttackOptions, Weapon};
 use crate::prepare::character::constants::DODGE_RATING_PER_DODGE_PERCENT;
 use crate::prepare::env::Environment;
@@ -24,12 +26,10 @@ use crate::prepare::rage::RageBarOptions;
 use crate::prepare::sim::{Sim, StateSlot, UnitId};
 use crate::prepare::spell::ProcMask;
 use crate::prepare::stats::Stat;
+use crate::prepare::talent_layout;
 use crate::prepare::Refusal;
 
 use crate::prepare::common_effects::DIAMOND_FLASK_ITEM;
-
-/// Go warrior.TalentTreeSizes.
-const TALENT_TREE_SIZES: [usize; 3] = [17, 17, 18];
 
 /// The exporter's `warriorClassSpells`: every class mask bit by a stable name.
 static CLASS_SPELLS: &[ClassSpellName] = &[
@@ -209,6 +209,10 @@ static CLASS_SPELLS: &[ClassSpellName] = &[
         mask: masks::SPEARING_STRIKE,
         name: "spearing_strike",
     },
+    ClassSpellName {
+        mask: masks::RECKLESS_SWINGS,
+        name: "reckless_swings",
+    },
 ];
 
 /// Go `WarriorInputs`, from the spec's class options.
@@ -227,6 +231,9 @@ pub(crate) struct Inputs {
 #[derive(Clone)]
 pub(crate) struct Warrior {
     talents: Message,
+    /// The points in the talents the pinned proto has no field for (Forever's Reckless Swings and
+    /// Improved Whirlwind).
+    extras: talent_layout::Extras,
     inputs: Inputs,
     /// Go `Spec == proto.Spec_SpecDpsWarrior`.
     dps_spec: bool,
@@ -240,13 +247,23 @@ pub(crate) struct Warrior {
 
 impl Warrior {
     fn talent(&self, name: &str) -> i32 {
+        if NEW_TALENTS.contains(&name) {
+            return self.extras.get(name).copied().unwrap_or(0);
+        }
         self.talents.i32(name)
     }
 
     fn has_talent(&self, name: &str) -> bool {
+        if NEW_TALENTS.contains(&name) {
+            return self.extras.get(name).is_some_and(|rank| *rank > 0);
+        }
         self.talents.bool(name)
     }
 }
+
+/// The talents the pinned proto has no field for, which Forever's Fury layout reads into the
+/// extras (never present under the reference's layout).
+const NEW_TALENTS: [&str; 2] = ["reckless_swings", "improved_whirlwind"];
 
 /// Go `Character.WeaponFromMainHand`.
 fn weapon_from_main_hand(sim: &Sim, unit: UnitId) -> Weapon {
@@ -300,10 +317,13 @@ pub(crate) fn new_warrior(
         stance_snapshot: class_options.bool("stance_snapshot"),
         has_bs_t2: class_options.bool("has_bs_t2"),
     };
-    let talents = fill_talents(
+    // A talent above its ranks is refused here: the rank ladders panic on it, which a string made
+    // for another tree layout (a community build from before a client tree change) reaches.
+    let (talents, extras) = talent_layout::fill(
         "proto.WarriorTalents",
+        "warrior",
         player.str("talents_string"),
-        TALENT_TREE_SIZES,
+        &talent_ranks::trees(sim.rules),
     )
     .map_err(|err| Refusal::new("talents", err))?;
     sim.enable_rage_bar(
@@ -363,6 +383,7 @@ pub(crate) fn new_warrior(
         thunder_clap_effect_bonus: sim.new_state_slot(0.0),
         post_finalize: std::cell::RefCell::default(),
         talents,
+        extras,
         inputs,
         dps_spec,
     }))

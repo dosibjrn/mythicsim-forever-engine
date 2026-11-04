@@ -38,7 +38,8 @@ fn effect_kinds(prepared: &Value) -> Vec<String> {
 fn dps(mut prepared: Value) -> f64 {
     prepared["sim"]["iterations"] = json!(ITERATIONS);
     let prepared: PreparedV2 = serde_json::from_value(prepared).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["raidMetrics"]["parties"][0]["players"][0]["dps"]["avg"]
         .as_f64()
         .unwrap()

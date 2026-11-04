@@ -2262,9 +2262,10 @@ fn parse_value(value: &Json) -> Result<Value, Vec<String>> {
             match (name, unit) {
                 ("unitIsMoving", unit) => Ok(Value::UnitIsMoving(unit)),
                 (_, UnitRef::Player) => Ok(Value::CurrentHealth),
-                // A unit Go finds nothing for gives no value.
-                (_, UnitRef::Nobody) => Ok(Value::Unbuilt("currentHealth")),
-                _ => Err(vec!["currentHealth of a target is unsupported".to_string()]),
+                // A unit Go finds nothing for gives no value, and so does a target: Go enables
+                // a health bar only on the raid's characters and pets (`newValueCurrentHealth`
+                // returns nil for a unit without one).
+                _ => Ok(Value::Unbuilt("currentHealth")),
             }
         }
         "energyTimeToTarget" => {
@@ -2346,10 +2347,20 @@ fn parse_value(value: &Json) -> Result<Value, Vec<String>> {
                 },
             }
         }
-        // Without a source unit, the player itself.
+        // Without a source unit, the player itself. Go `newValueCurrentHealthPercent` builds
+        // no value for a unit without a health bar, which a target never has, nor for one it
+        // finds nothing for.
         "currentHealthPercent" => {
-            only(&[])?;
-            Ok(Value::CurrentHealthPercent)
+            only(&["sourceUnit"])?;
+            match parse_value_unit_ref(config.get("sourceUnit"), UnitRef::Player) {
+                Ok(UnitRef::Player) => Ok(Value::CurrentHealthPercent),
+                Ok(_) => Ok(Value::Unbuilt("currentHealthPercent")),
+                Err(()) => Err(vec![unsupported_unit(
+                    name,
+                    "sourceUnit",
+                    config.get("sourceUnit"),
+                )]),
+            }
         }
         "remainingTime" => {
             only(&[])?;
@@ -2394,6 +2405,15 @@ fn parse_value(value: &Json) -> Result<Value, Vec<String>> {
         }
         "isExecutePhase" => {
             only(&["threshold"])?;
+            // Go `newValueIsExecutePhase` builds no value for the unset threshold (Unknown),
+            // so the value drops out of its parent.
+            let unset = match config.get("threshold") {
+                None => true,
+                Some(threshold) => threshold == "Unknown" || threshold == 0,
+            };
+            if unset {
+                return Ok(Value::Unbuilt("isExecutePhase"));
+            }
             match config.get("threshold").and_then(Json::as_str) {
                 Some("E20") => Ok(Value::IsExecutePhase(20)),
                 Some("E25") => Ok(Value::IsExecutePhase(25)),
@@ -4602,6 +4622,44 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// Go `newValueIsExecutePhase` without a threshold and the health values of a unit without a
+    /// health bar (any target) give no value; the player's own health percent still builds.
+    #[test]
+    fn unset_execute_phases_and_target_health_give_no_value() {
+        let parse = |json: serde_json::Value| parse_value(&json).unwrap();
+        for threshold in [
+            serde_json::json!({}),
+            serde_json::json!({"threshold": "Unknown"}),
+            serde_json::json!({"threshold": 0}),
+        ] {
+            assert_eq!(
+                parse(serde_json::json!({ "isExecutePhase": threshold })),
+                Value::Unbuilt("isExecutePhase")
+            );
+        }
+        assert_eq!(
+            parse(serde_json::json!({"isExecutePhase": {"threshold": "E20"}})),
+            Value::IsExecutePhase(20)
+        );
+        let target = serde_json::json!({"sourceUnit": {"type": "CurrentTarget"}});
+        assert_eq!(
+            parse(serde_json::json!({ "currentHealthPercent": target })),
+            Value::Unbuilt("currentHealthPercent")
+        );
+        assert_eq!(
+            parse(serde_json::json!({ "currentHealth": target })),
+            Value::Unbuilt("currentHealth")
+        );
+        assert_eq!(
+            parse(serde_json::json!({"currentHealthPercent": {}})),
+            Value::CurrentHealthPercent
+        );
+        assert_eq!(
+            parse(serde_json::json!({"currentHealthPercent": {"sourceUnit": {"type": "Self"}}})),
+            Value::CurrentHealthPercent
+        );
     }
 
     /// Go `newValueCurrentMana` on a pet of the player, the first without an index: the mana of

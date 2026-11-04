@@ -33,13 +33,16 @@ fn request(targets: usize, edit: impl FnOnce(&mut Value)) -> Value {
 }
 
 fn prepare(request: &Value) -> Value {
-    prepare_json(&serde_json::to_vec(request).unwrap(), "oil-of-immolation").unwrap()
+    let mut request = request.clone();
+    crate::rogue_113483::forever_request(&mut request);
+    prepare_json(&serde_json::to_vec(&request).unwrap(), "oil-of-immolation").unwrap()
 }
 
 fn simulate(request: &Value) -> (Value, Value) {
     let prepared = prepare(request);
     let typed: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
-    let report = forever_engine::simulate_prepared(&typed, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&typed, forever_engine::RngMode::Stochastic).unwrap();
     (prepared, report.result)
 }
 
@@ -220,6 +223,8 @@ fn the_oil_leaves_the_potion_alone() {
         if oil {
             consumables["oilOfImmolation"] = json!(true);
         }
+        // The fixture's talents are the old tree's; Forever's rules read the client's order.
+        crate::warrior_trees_20261104::forever_request(&mut request);
         request
     };
     let casts = |result: &Value| -> f64 {

@@ -7,6 +7,9 @@
 use forever_engine::{
     check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared, Rules,
 };
+#[path = "support/rogue_113483.rs"]
+mod rogue_113483;
+
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, fs, path::Path};
 
@@ -82,6 +85,10 @@ fn wearing(item: i64, rows: &BTreeMap<i64, Value>) -> Value {
 }
 
 fn prepared(request: &Value, rules: Rules) -> Result<Value, String> {
+    let mut request = request.clone();
+    if rules == Rules::Forever {
+        rogue_113483::forever_request(&mut request);
+    }
     prepare_json_with(request.to_string().as_bytes(), "rust", rules).map_err(|e| e.to_string())
 }
 
@@ -126,7 +133,9 @@ fn run(request: &Value) -> (Value, Value) {
     let value = prepared(request, Rules::Forever).unwrap();
     let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
+    let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result;
     (
         value,
         result["raidMetrics"]["parties"][0]["players"][0].clone(),

@@ -8,7 +8,7 @@ use crate::prepare::aura_helpers::{CallbackMask, HitOutcome, ProcTrigger, Pseudo
 use crate::prepare::character::constants::SPELL_CRIT_RATING_PER_CRIT_PERCENT;
 use crate::prepare::env::Environment;
 use crate::prepare::item_sets::ItemSet;
-use crate::prepare::sim::{AuraConfig, AuraId, Sim, UnitId, MILLISECOND};
+use crate::prepare::sim::{AuraConfig, AuraId, Rules, Sim, UnitId, MILLISECOND};
 use crate::prepare::spell::ProcMask;
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::stats::{Stat, Stats};
@@ -18,7 +18,8 @@ use super::{masks, Druid};
 /// The idols the druid package registers whose effect needs nothing of a druid (Go
 /// `core.NewItemEffect` over `agent.GetCharacter()`): Idol of the Moon (23197), Idol of Ferocity
 /// (22397), Idol of Brutality (23198), Howling Idol (272427) and Idol of the Dream (220606). A character of another class wears them as well, and
-/// their spell mods find spells by class mask alone. Answers whether the item is one of them.
+/// their spell mods find spells by class mask alone. Under Forever's rules the flat shapeshift
+/// cost items join them (`shapeshift_cost_spell`). Answers whether the item is one of them.
 pub(crate) fn apply_agentless_idol_effect(sim: &mut Sim, unit: UnitId, item: i32) -> bool {
     match item {
         23197 => {
@@ -102,8 +103,55 @@ pub(crate) fn apply_agentless_idol_effect(sim: &mut Sim, unit: UnitId, item: i32
             );
             true
         }
-        _ => false,
+        _ => apply_shapeshift_cost_item(sim, unit, item),
     }
+}
+
+/// The spell of a Forever druid item that lowers the mana cost of shapeshifting by a flat amount:
+/// the Feral PvP grips, Shapeshift Cost Reduction (459594, "Reduces the mana cost of your
+/// shapeshifts by 150"), and Idol of Shifting Tides, Clever Shapeshifter (1270470, "Reduces the
+/// mana cost of shapeshifting spells by 40"). The item to spell links are the client's
+/// ItemXItemEffect rows (wago.tools wowf, 4 November 2026). Go's pinned engine registers neither,
+/// so only Forever's rules apply them.
+pub(crate) fn shapeshift_cost_spell(item: i32) -> Option<i32> {
+    match item {
+        // Blood Guard's and Knight-Lieutenant's Dragonhide Grips, General's and Marshal's
+        // Dragonhide Grips.
+        227180 | 227183 | 231688 | 231694 => Some(459594),
+        // Idol of Shifting Tides.
+        263411 => Some(1270470),
+        _ => None,
+    }
+}
+
+/// A flat shapeshift cost item under Forever's rules (`shapeshift_cost_spell`). Both spells are an
+/// `A_ADD_FLAT_MODIFIER` of `SPELLMOD_COST` on the shapeshift class mask Natural Shapeshifter
+/// reads (word 0 bits 29 to 31, the idol also word 1 bit 16), which covers Cat, Bear and Moonkin
+/// Form and Shifting Power, whose tooltip says its cost "is reduced by effects that reduce the
+/// cost of Shapeshifting". A flat cost modifier comes off the base cost before the percentage
+/// ones (`finalize_spell`), as the client applies spell mods: with Natural Shapeshifter 3/3 the
+/// grips save 150 x 0.7 = 105 mana a shift.
+fn apply_shapeshift_cost_item(sim: &mut Sim, unit: UnitId, item: i32) -> bool {
+    if sim.rules != Rules::Forever {
+        return false;
+    }
+    let Some(spell) = shapeshift_cost_spell(item) else {
+        return false;
+    };
+    let row = crate::prepare::spelldata::store::must_find(spell);
+    sim.add_static_mod(
+        unit,
+        SpellModConfig {
+            class_mask: masks::CAT_FORM
+                | masks::BEAR_FORM
+                | masks::MOONKIN_FORM
+                | masks::SHIFTING_POWER,
+            kind: SpellModType::PowerCostFlat,
+            int_value: row.effect_n(1).base_value() as i32,
+            ..SpellModConfig::default()
+        },
+    );
+    true
 }
 
 impl Druid {

@@ -153,8 +153,14 @@ impl Mage {
                 on_expire: Some(Rc::new(move |sim: &mut Sim, _| {
                     sim.unit_mut(unit).pseudo_stats.spell_cost_percent_modifier += 100;
                 })),
+                // Forever's rules spend the Clearcasting before the cast's effects apply, where
+                // Missile Barrage is still up (wowsims/forever #831 moved it from
+                // `OnCastComplete` to `OnApplyEffects`: the handlers of a cast run in the order
+                // their auras were last activated, so a check in `OnCastComplete` finds Missile
+                // Barrage already spent whenever it was gained before the Clearcasting).
                 events: EventCallbacks {
-                    on_cast_complete: true,
+                    on_cast_complete: sim.rules != Rules::Forever,
+                    on_apply_effects: sim.rules == Rules::Forever,
                     ..EventCallbacks::default()
                 },
                 ..AuraConfig::default()

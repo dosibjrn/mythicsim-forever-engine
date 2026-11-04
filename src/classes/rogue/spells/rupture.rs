@@ -20,6 +20,8 @@ pub(crate) struct Rupture {
     pub(crate) tick_outcome: Outcome,
     pub(crate) hemorrhage: Option<AuraRef>,
     pub(crate) hemorrhage_multiplier: f64,
+    /// Whether the debuff raises Garrote's ticks too.
+    pub(crate) hemorrhage_garrote: bool,
 }
 
 /// Go `Dot.SnapshotPhysical` and `SnapshotAttackPowerShare`: what the bleed stored.
@@ -71,7 +73,10 @@ impl Rupture {
     ) -> Option<f64> {
         let debuff = self.hemorrhage?;
         fight.aura(fight.aura_on(debuff, target)).active.then(|| {
-            if fight.spells[spell].class_spell.as_deref() == Some("rupture") {
+            let class_spell = fight.spells[spell].class_spell.as_deref();
+            if class_spell == Some("rupture")
+                || (self.hemorrhage_garrote && class_spell == Some("garrote"))
+            {
                 self.hemorrhage_multiplier
             } else {
                 1.0

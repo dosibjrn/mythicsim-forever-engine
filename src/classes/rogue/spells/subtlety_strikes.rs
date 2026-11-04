@@ -13,15 +13,23 @@ use super::{
     stealth::Stealth,
 };
 
-/// Ghostly Strike's effect; Stealth has already broken.
+/// Ghostly Strike's effect; Stealth has already broken. Under Forever's rules the damage is
+/// normalized (as Hemorrhage's) and the hit puts up the aura that lets the next Ambush or
+/// Garrote out of Stealth.
 pub(crate) fn ghostly_strike<A: Agent>(
     fight: &mut Fight<A>,
     spell: SpellId,
     target: Side,
     dodge: Option<AuraRef>,
+    ready: Option<AuraRef>,
+    normalized: bool,
 ) {
     let attack_power = fight.melee_attack_power();
-    let damage = fight.mh_weapon_damage(attack_power);
+    let damage = if normalized {
+        fight.mh_normalized_weapon_damage(attack_power)
+    } else {
+        fight.mh_weapon_damage(attack_power)
+    };
     let result = fight.calc_physical_damage(
         spell,
         target,
@@ -30,6 +38,9 @@ pub(crate) fn ghostly_strike<A: Agent>(
     );
     fight.deal_damage(spell, result, false);
     if let Some(aura) = dodge {
+        fight.activate_aura(aura);
+    }
+    if let Some(aura) = ready {
         fight.activate_aura(aura);
     }
     land_or_refund(fight, spell, result.landed());
@@ -76,12 +87,18 @@ pub(crate) struct Garrote {
     pub(crate) attack_power_share: f64,
     pub(crate) tick_outcome: Outcome,
     pub(crate) dirty_deeds: bool,
+    /// Forever's rules: Ghostly Strike's aura, which lets Garrote out of Stealth and which a
+    /// cast spends.
+    pub(crate) ghostly: Option<AuraRef>,
 }
 
 impl Garrote {
-    /// Go `ExtraCastCondition`: from Stealth, behind the target unless Dirty Deeds.
+    /// Go `ExtraCastCondition`: from Stealth (or under Ghostly Strike's aura), behind the target
+    /// unless Dirty Deeds.
     pub(crate) fn can_cast<A: Agent>(&self, fight: &Fight<A>, stealth: Option<Stealth>) -> bool {
-        if !stealth.is_some_and(|stealth| stealth.active(fight)) {
+        let hidden = stealth.is_some_and(|stealth| stealth.active(fight))
+            || self.ghostly.is_some_and(|aura| fight.aura(aura).active);
+        if !hidden {
             return false;
         }
         self.dirty_deeds || !fight.config.melee.in_front_of_target
@@ -95,6 +112,9 @@ impl Garrote {
         spell: SpellId,
         target: Side,
     ) -> Option<Snapshot> {
+        if let Some(aura) = self.ghostly {
+            fight.deactivate_aura(aura);
+        }
         let result = fight.calc_physical_outcome(
             spell,
             target,

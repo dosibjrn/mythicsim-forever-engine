@@ -8,12 +8,15 @@ use crate::prepare::character::constants::{
 };
 use crate::prepare::character::{cooldown_type, MajorCooldown};
 use crate::prepare::dbcenums;
-use crate::prepare::sim::{AuraConfig, Cooldown, EventCallbacks, Sim, UnitId, NEVER_EXPIRES};
+use crate::prepare::sim::{
+    AuraConfig, Cooldown, EventCallbacks, Rules, Sim, UnitId, NEVER_EXPIRES, SECOND,
+};
 use crate::prepare::spell::{Cast, CastConfig, ProcMask, SpellConfig, SpellFlag};
 use crate::prepare::spell_mod::{SpellModConfig, SpellModType};
 use crate::prepare::spelldata::Spell as Row;
 
 use super::super::masks;
+use super::super::rework;
 use super::super::spell_data::spell_data;
 use super::super::spells::BUILDER;
 use super::super::util::{
@@ -60,6 +63,65 @@ impl Rogue {
         // Tier 7
         self.register_premeditation(sim, unit);
         self.register_thousand_cuts(sim, unit);
+        self.register_death_mark(sim, unit);
+    }
+
+    /// Death Mark (the rework of push 113483, Forever's rules only): a finishing move for 25
+    /// Energy and a Combo Point or more, 10 sec cooldown and 20 yd range, that marks the target
+    /// for 6 sec. The fight stores a share of the damage the rogue deals to it and releases it
+    /// when the mark ends. A level 60 rogue knows rank 4; the lower ranks press it.
+    fn register_death_mark(&mut self, sim: &mut Sim, unit: UnitId) {
+        if sim.rules != Rules::Forever || self.extra_points("death_mark") == 0 {
+            return;
+        }
+        let action = spell_action(rework::DEATH_MARK_SPELL_ID);
+        let aura = sim.register_aura(
+            unit,
+            AuraConfig {
+                label: "Death Mark".to_string(),
+                action_id: Some(action.clone()),
+                duration: rework::DEATH_MARK_DURATION,
+                events: EventCallbacks {
+                    on_spell_hit_dealt: true,
+                    on_periodic_damage_dealt: true,
+                    ..EventCallbacks::default()
+                },
+                ..AuraConfig::default()
+            },
+        );
+        self.auras.death_mark = Some(aura);
+        let timer = sim.new_timer(unit);
+        let spell = sim.register_spell(
+            unit,
+            SpellConfig {
+                action_id: action,
+                spell_school: crate::prepare::spell::school::PHYSICAL,
+                flags: super::super::spells::FINISHER | SpellFlag::APL,
+                metric_splits: 6,
+                class_spell_mask: masks::DEATH_MARK,
+                max_range: rework::DEATH_MARK_RANGE,
+                cost: crate::prepare::spell::CostOptions {
+                    energy_cost: rework::DEATH_MARK_ENERGY_COST,
+                    energy_refund: 0.0,
+                    ..crate::prepare::spell::CostOptions::default()
+                },
+                cast: CastConfig {
+                    cd: Cooldown {
+                        timer: Some(timer),
+                        duration: rework::DEATH_MARK_COOLDOWN,
+                    },
+                    ..ignore_haste_cast(SECOND)
+                },
+                has_extra_cast_condition: true,
+                related_self_buff: Some(aura),
+                ..SpellConfig::default()
+            },
+        );
+        sim.spell_mut(spell).rank_aliases = rework::DEATH_MARK_LOWER_RANKS
+            .iter()
+            .map(|id| spell_action(*id))
+            .collect();
+        self.spells.death_mark = Some(spell);
     }
 
     fn register_opportunity(&self, sim: &mut Sim, unit: UnitId) {
@@ -76,8 +138,7 @@ impl Rogue {
                     | masks::MUTILATE_HIT
                     | masks::AMBUSH
                     | masks::GARROTE,
-                float_value: spell_data()
-                    .opportunity
+                float_value: rework::talent_ladder(sim.rules, 14057, 5, 2)
                     .effect(dbcenums::A_ADD_PCT_MODIFIER, dbcenums::SPELLMOD_DAMAGE)
                     .fraction_at(rank),
                 ..SpellModConfig::default()
@@ -136,6 +197,21 @@ impl Rogue {
                 .average(CHARACTER_LEVEL)
                 * DODGE_RATING_PER_DODGE_PERCENT,
         );
+
+        // The notes of 2 November 2026 (Forever's rules, 1329326): the next Ambush or Garrote
+        // within 7 sec needs no Stealth, which is what Cutthroat gave Ambush.
+        if sim.rules == Rules::Forever {
+            let ready = sim.register_aura(
+                unit,
+                AuraConfig {
+                    label: "Ghostly Strike Ready".to_string(),
+                    action_id: Some(spell_action(rework::GHOSTLY_STRIKE_READY_SPELL_ID)),
+                    duration: 7 * SECOND,
+                    ..AuraConfig::default()
+                },
+            );
+            self.auras.ghostly_ready = Some(ready);
+        }
 
         let timer = sim.new_timer(unit);
         let spell = sim.get_or_register_spell(

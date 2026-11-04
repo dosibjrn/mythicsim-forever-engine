@@ -569,6 +569,19 @@ fn fold(env: &Environment, value: &Message) -> Folds {
         | "current_time"
         | "current_time_percent"
         | "number_targets" => one(Fold::Dyn(Ty::Other)),
+        // Go `newValueAutoSwingTime`, `newValueAutoTimeToNext` and `newValueAutoTimeSinceLast`
+        // build a duration whatever the swing type.
+        "auto_swing_time" | "auto_time_to_next" | "auto_time_since_last" => {
+            one(Fold::Dyn(Ty::Other))
+        }
+        // Go `newValueIsExecutePhase`: nil for an unknown threshold.
+        "is_execute_phase" => {
+            if config.enum_name("threshold") == "Unknown" {
+                one(Fold::Nil)
+            } else {
+                one(Fold::Dyn(Ty::Bool))
+            }
+        }
         // Nil for a unit without mana.
         "current_mana_percent" => match source_unit(env, config.message("source_unit")) {
             Ok(Some(unit)) if env.sim.unit(unit).mana_bar.enabled => one(Fold::Dyn(Ty::Other)),

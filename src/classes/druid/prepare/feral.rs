@@ -15,7 +15,7 @@ use crate::prepare::dbcenums::{
 use crate::prepare::hotfix_113554;
 use crate::prepare::major_cooldown::COOLDOWN_PRIORITY_DEFAULT;
 use crate::prepare::sim::{
-    AuraConfig, Cooldown, EventCallbacks, Sim, MILLISECOND, NEVER_EXPIRES, SECOND,
+    AuraConfig, Cooldown, EventCallbacks, Rules, Sim, MILLISECOND, NEVER_EXPIRES, SECOND,
 };
 use crate::prepare::spell::{
     school, Cast, CastConfig, CostOptions, DotConfig, ProcMask, SpellConfig, SpellFlag,
@@ -33,6 +33,56 @@ const RAKE_RANKS: [i32; 4] = [1822, 1823, 1824, 9904];
 const RIP_RANKS: [i32; 6] = [1079, 9492, 9493, 9752, 9894, 9896];
 const BITE_RANKS: [i32; 5] = [22568, 22827, 22828, 22829, 31018];
 const PROWL_RANKS: [i32; 3] = [5215, 6783, 9913];
+
+/// Poised's aura, the row of hotfix push 113578 that holds the discount: one charge of -10 Energy
+/// on Claw, Rake, Shred, Ravage, Pounce, Rip, Ferocious Bite and Cower. The passive that grants
+/// it, learned at level 32 ("While at maximum Energy, and out of combat"), is 1328829. Both are
+/// in Wowhead's Forever data and wowsims/forever #836; they replace the provisional id 1399003
+/// the notes of 2 November 2026 needed before the client had a row.
+pub(crate) const POISED_SPELL_ID: i32 = 1_328_827;
+/// The Energy Poised takes off the next Energy ability.
+pub(crate) const POISED_COST_REDUCTION: i32 = 10;
+
+/// The weapon damage percent of Shred, Claw and Ravage under these rules. Blizzard's development
+/// notes of 2 November 2026 set them to 200%, 140% and 435% (the rows state 155%, 110% and
+/// 350%, which the Go reference keeps); wowsims/forever #823 takes the same numbers.
+fn weapon_multiplier(rules: Rules, ladder: &Ladder, forever: f64) -> f64 {
+    match rules {
+        Rules::Forever => forever,
+        Rules::GoReference => ladder
+            .effect_at(2)
+            .fraction_at(ladder.highest().rank_number()),
+    }
+}
+
+/// The notes of 2 November 2026 raise Rip's, Rake's and Ferocious Bite's base damage and attack
+/// power scaling by "about 25%". The live rows state the new base damage (`hotfix_113554`); no
+/// row or tooltip states the attack power shares, which are server side literals (Rip 1% a combo
+/// point up to four, Rake 5%, Ferocious Bite 3% a combo point), so they keep the notes' 25%.
+/// 1 for the Go reference.
+pub(super) fn attack_power_share_scale(rules: Rules) -> f64 {
+    match rules {
+        Rules::Forever => 1.25,
+        Rules::GoReference => 1.0,
+    }
+}
+
+/// The row of a cat spell's highest rank under `rules`: the live row under Forever's rules.
+pub(super) fn cat_rank(rules: Rules, ranks: &[i32]) -> &'static Spell {
+    hotfix_113554::row(rules, *ranks.last().expect("ranks"))
+}
+
+/// Rend and Tear's damage multiplier at a rank: 2% a rank in the client rows, 3% a rank under
+/// the development notes of 2 November 2026 (Forever's rules). Wowhead's Forever tooltip of the
+/// talent spell reads "by 20%" on 4 November, which is the row's own base points (20 in the frozen
+/// data as well, next to a per rank curve of 2 to 10), not a rank value: Genesis, Naturalist and
+/// Predatory Strikes read their row bases the same way, so it is not taken as 4% a rank.
+pub(super) fn rend_and_tear_multiplier(rules: Rules, rank: i32) -> f64 {
+    match rules {
+        Rules::Forever => 1.0 + 0.03 * f64::from(rank),
+        Rules::GoReference => Ladder::talent(1223246, 5).effect_at(1).multiplier_at(rank),
+    }
+}
 
 fn energy_cost(rank: &Spell) -> CostOptions {
     CostOptions {
@@ -85,6 +135,7 @@ impl Druid {
         self.register_shred_spell(sim);
         self.register_claw_spell(sim);
         self.register_prowl_spell(sim);
+        self.register_poised_aura(sim);
         self.register_ravage_spell(sim);
         self.register_shifting_power_spell(sim);
         // A cat that leaves its form to refresh Moonfire.
@@ -94,7 +145,7 @@ impl Druid {
     fn register_claw_spell(&mut self, sim: &mut Sim) {
         let ladder = Ladder::ranked(&CLAW_RANKS);
         let rank = ladder.highest();
-        let weapon_multiplier = ladder.effect_at(2).fraction_at(rank.rank_number());
+        let weapon_multiplier = weapon_multiplier(sim.rules, &ladder, 1.40);
         let mut config = melee_special(rank, masks::CLAW, SpellFlag::NONE);
         config.damage_multiplier = weapon_multiplier;
         self.claw = Some(self.register_spell(sim, CAT, config));
@@ -103,7 +154,7 @@ impl Druid {
     fn register_shred_spell(&mut self, sim: &mut Sim) {
         let ladder = Ladder::ranked(&SHRED_RANKS);
         let rank = ladder.highest();
-        let weapon_multiplier = ladder.effect_at(2).fraction_at(rank.rank_number());
+        let weapon_multiplier = weapon_multiplier(sim.rules, &ladder, 2.00);
         let mut config = melee_special(rank, masks::SHRED, SpellFlag::NONE);
         config.damage_multiplier = weapon_multiplier;
         self.shred = Some(self.register_spell(sim, CAT, config));
@@ -112,14 +163,14 @@ impl Druid {
     fn register_ravage_spell(&mut self, sim: &mut Sim) {
         let ladder = Ladder::ranked(&RAVAGE_RANKS);
         let rank = ladder.highest();
-        let weapon_multiplier = ladder.effect_at(2).fraction_at(rank.rank_number());
+        let weapon_multiplier = weapon_multiplier(sim.rules, &ladder, 4.35);
         let mut config = melee_special(rank, masks::RAVAGE, SpellFlag::CANNOT_BE_DODGED);
         config.damage_multiplier = weapon_multiplier;
         self.ravage = Some(self.register_spell(sim, CAT, config));
     }
 
     fn register_rake_spell(&mut self, sim: &mut Sim) {
-        let rank = Ladder::ranked(&RAKE_RANKS).highest();
+        let rank = cat_rank(sim.rules, &RAKE_RANKS);
         let tick = rank.periodic_effect();
         let mut config = melee_special(rank, masks::RAKE, SpellFlag::IGNORE_RESISTS);
         config.damage_multiplier = 1.0;
@@ -137,7 +188,7 @@ impl Druid {
     }
 
     fn register_rip_spell(&mut self, sim: &mut Sim) {
-        let rank = Ladder::ranked(&RIP_RANKS).highest();
+        let rank = cat_rank(sim.rules, &RIP_RANKS);
         let tick = rank.periodic_effect();
         let mut config = melee_special(rank, masks::RIP, SpellFlag::NONE);
         config.damage_multiplier = 1.0;
@@ -154,10 +205,50 @@ impl Druid {
     }
 
     fn register_ferocious_bite_spell(&mut self, sim: &mut Sim) {
-        let rank = Ladder::ranked(&BITE_RANKS).highest();
+        let rank = cat_rank(sim.rules, &BITE_RANKS);
         let mut config = melee_special(rank, masks::FEROCIOUS_BITE, SpellFlag::NONE);
         config.damage_multiplier = 1.0;
         self.ferocious_bite = Some(self.register_spell(sim, CAT, config));
+    }
+
+    /// Poised (notes of 2 November 2026, Forever's rules only): learned at level 32. Out of combat
+    /// at maximum Energy the druid in Cat Form gains Poised, which takes 10 Energy off the next
+    /// Energy ability. Only the opener sees it, so the fight activates it at its start in Cat
+    /// Form and the first Energy ability spends it, as the Rogue's does.
+    fn register_poised_aura(&mut self, sim: &mut Sim) {
+        if sim.rules != Rules::Forever {
+            return;
+        }
+        let unit = self.unit;
+        let cost_mod = sim.add_dynamic_mod(
+            unit,
+            SpellModConfig {
+                kind: SpellModType::PowerCostFlat,
+                class_mask: masks::ENERGY_ABILITIES,
+                int_value: -POISED_COST_REDUCTION,
+                ..SpellModConfig::default()
+            },
+        );
+        let aura = sim.register_aura(
+            unit,
+            AuraConfig {
+                label: "Poised".to_string(),
+                action_id: Some(ActionId::spell(POISED_SPELL_ID)),
+                duration: NEVER_EXPIRES,
+                on_gain: Some(Rc::new(move |sim: &mut Sim, _| {
+                    sim.activate_spell_mod(cost_mod);
+                })),
+                on_expire: Some(Rc::new(move |sim: &mut Sim, _| {
+                    sim.deactivate_spell_mod(cost_mod);
+                })),
+                events: EventCallbacks {
+                    on_apply_effects: true,
+                    ..EventCallbacks::default()
+                },
+                ..AuraConfig::default()
+            },
+        );
+        self.poised_aura = Some(aura);
     }
 
     fn register_prowl_spell(&mut self, sim: &mut Sim) {
@@ -522,7 +613,8 @@ impl Druid {
         );
     }
 
-    /// Rend and Tear, new in Forever: +2% a rank to melee abilities against a bleeding target.
+    /// Rend and Tear, new in Forever: +2% a rank to melee abilities against a bleeding target
+    /// (3% under Forever's rules since the notes of 2 November 2026; the export carries it).
     fn apply_rend_and_tear(&mut self, sim: &mut Sim) {
         if self.tal.rend_and_tear == 0 {
             return;
@@ -616,5 +708,42 @@ impl Druid {
                 timings: Vec::new(),
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rend and Tear stays 3/6/9/12/15% a rank under Forever's rules (the notes) and 2/4/6/8/10%
+    /// in the reference. The live tooltip's "20%" is the row's own base points, which the frozen
+    /// data holds too, so it is not read as 4% a rank.
+    #[test]
+    fn rend_and_tear_keeps_the_notes_ranks() {
+        for rank in 1..=5 {
+            let forever = rend_and_tear_multiplier(Rules::Forever, rank);
+            assert!((forever - (1.0 + 0.03 * f64::from(rank))).abs() < 1e-12);
+            let reference = rend_and_tear_multiplier(Rules::GoReference, rank);
+            assert!((reference - (1.0 + 0.02 * f64::from(rank))).abs() < 1e-12);
+        }
+        assert_eq!(Ladder::talent(1223246, 5).effect_at(1).value_at(5), 10.0);
+        assert_eq!(
+            crate::prepare::spelldata::must_find(1223246)
+                .effect_n(1)
+                .base_points,
+            20.0
+        );
+    }
+
+    /// The Go reference keeps the frozen rows and shares; Forever's rules read the live rows, and
+    /// only the attack power shares keep the notes' 25%.
+    #[test]
+    fn cat_rows_follow_the_rules() {
+        let live = cat_rank(Rules::Forever, &RIP_RANKS).periodic_effect();
+        assert_eq!(live.average(60), 19.0);
+        let frozen = cat_rank(Rules::GoReference, &RIP_RANKS).periodic_effect();
+        assert_eq!(frozen.average(60), 15.0);
+        assert_eq!(attack_power_share_scale(Rules::Forever), 1.25);
+        assert_eq!(attack_power_share_scale(Rules::GoReference), 1.0);
     }
 }

@@ -329,16 +329,31 @@ impl Paladin {
             return;
         }
         let two_hand = self.main_hand_is_two_hand(sim, unit);
+        let bonus = spell_data()
+            .two_handed_weapon_specialization
+            .fraction_at(points);
         apply_weapon_specialization(
             sim,
             unit,
-            spell_data()
-                .two_handed_weapon_specialization
-                .fraction_at(points),
+            bonus,
             two_hand,
             "HandTypeTwoHand",
+            school::PHYSICAL,
+            ProcMask::default(),
         );
         if sim.rules == Rules::Forever {
+            // The notes of 2 November 2026: "both Holy and Physical damage", so Holy damage
+            // follows the main hand too (no row states it yet; the damage curve is 2/4/6% as
+            // before). Not a heal: a Holy heal is not damage.
+            apply_weapon_specialization(
+                sim,
+                unit,
+                bonus,
+                two_hand,
+                "HandTypeTwoHand",
+                school::HOLY,
+                ProcMask(!ProcMask::SPELL_HEALING.0),
+            );
             // Push 113554's effect 1367246: A_MOD_THREAT on every school, -7/-14/-20%, while
             // the two-hander the talent requires is in the main hand. A threat mod on every
             // spell that takes mods, which follows the main hand through an item swap as the
@@ -357,7 +372,7 @@ impl Paladin {
     }
 
     /// Vengeance: increases your Physical and Holy damage dealt after landing a non-periodic
-    /// critical strike. Stacks up to 3 times.
+    /// critical strike. Stacks up to 3 times, 5 under the notes of 2 November 2026.
     fn apply_vengeance(&mut self, sim: &mut Sim, unit: UnitId) {
         let points = self.talents.i32("vengeance");
         if points == 0 {
@@ -365,6 +380,10 @@ impl Paladin {
         }
         let rank = spell_data().vengeance_triggered.highest();
         let per_stack = spell_data().vengeance.fraction_at(points);
+        let max_stacks = match sim.rules {
+            Rules::Forever => hotfix::VENGEANCE_MAX_STACKS,
+            Rules::GoReference => i32::from(rank.max_stack),
+        };
 
         // 20050 is damage done (A79), which never raises a heal.
         let damage_mod = sim.add_dynamic_mod(
@@ -385,7 +404,7 @@ impl Paladin {
                 label: format!("Vengeance{label}"),
                 action_id: Some(spell_action(rank.id)),
                 duration: rank.duration(),
-                max_stacks: i32::from(rank.max_stack),
+                max_stacks,
                 on_gain: Some(Rc::new(move |sim: &mut Sim, _| {
                     sim.activate_spell_mod(damage_mod)
                 })),

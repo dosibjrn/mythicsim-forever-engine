@@ -56,6 +56,10 @@ pub(crate) const ARCANE_SPELLS: i64 = MOONFIRE | MOONFIRE_DOT | STARFIRE;
 pub(crate) const NATURE_SPELLS: i64 = WRATH | HURRICANE | INSECT_SWARM;
 pub(crate) const DAMAGING_SPELLS: i64 = ARCANE_SPELLS | NATURE_SPELLS;
 
+/// Every Cat Form ability that costs Energy, the ones Poised's discount can fall on (the notes of
+/// 2 November 2026, Forever's rules). Pounce and the Cat Form Mangle are not in Forever.
+pub(crate) const ENERGY_ABILITIES: i64 = CLAW | FEROCIOUS_BITE | RAKE | RAVAGE | RIP | SHRED;
+
 /// omen_of_clarity.go `clearcastingSpells`.
 pub(crate) const CLEARCASTING_SPELLS: i64 = CLAW
     | ENTANGLING_ROOTS

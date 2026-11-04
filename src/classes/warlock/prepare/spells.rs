@@ -428,7 +428,7 @@ impl Warlock {
         if !self.talents.bool("wrack") {
             return;
         }
-        let rank = spell_data().wrack.highest();
+        let rank = crate::prepare::hotfix_113554::row(sim.rules, spell_data().wrack.highest().id);
         let tick = rank.periodic_effect();
         let spell = sim.register_spell(
             unit,

@@ -49,6 +49,9 @@ pub const DISARM: i64 = 1 << 41;
 pub const TAUNT: i64 = 1 << 42;
 pub const VICTORY_RUSH: i64 = 1 << 43;
 pub const SPEARING_STRIKE: i64 = 1 << 44;
+/// Reckless Swings, new in the notes of 2 November 2026 (Forever's rules only). Go's block ends
+/// at Spearing Strike, so the bit is the one Go's next entry would take.
+pub const RECKLESS_SWINGS: i64 = 1 << 45;
 
 pub const DIRECT_DAMAGE_SPELLS: i64 = SWEEPING_STRIKES_HIT
     | SWEEPING_STRIKES_NORMALIZED_HIT

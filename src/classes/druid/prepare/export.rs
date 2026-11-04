@@ -25,10 +25,10 @@ use crate::prepare::spell::{DefenseType, SpellFlag, GCD_DEFAULT};
 use crate::prepare::spelldata::{Ladder, Spell as Row};
 
 use super::forms::{
-    bear_weapon, cat_weapon, form_names, spell_position, weapon_from_main_hand,
-    ANIMAL_SPIRIT_REGEN_SUPPRESSION, BEAR_FORM_THREAT_MULTIPLIER, CAT_FORM_THREAT_MULTIPLIER,
+    bear_form_threat_multiplier, bear_weapon, cat_weapon, form_names, spell_position,
+    weapon_from_main_hand, ANIMAL_SPIRIT_REGEN_SUPPRESSION, CAT_FORM_THREAT_MULTIPLIER,
 };
-use super::{masks, Druid};
+use super::{masks, Druid, CLASS_SPELLS};
 
 /// buffs/drivers.go `innervateSpiritRegenMultiplier` and `innervateRegenTag`.
 const INNERVATE_SPIRIT_REGEN_MULTIPLIER: f64 = 5.0;
@@ -452,7 +452,8 @@ impl Druid {
         if let Some(rip) = self.rip {
             // rip.go: the tick base and points per combo point; the attack power share is a Go
             // literal.
-            let rank = Ladder::ranked(&RIP_RANKS).highest();
+            let rank = super::feral::cat_rank(sim.rules, &RIP_RANKS);
+            let share_scale = super::feral::attack_power_share_scale(sim.rules);
             // spell_result.go TargetDamageMultiplier: a bleed tick also takes the target's
             // periodic physical multiplier.
             if sim
@@ -468,7 +469,8 @@ impl Druid {
                 "kind": "rip", "spell": spell_position(sim, unit, rip),
                 "tick_base": tick.average(CHARACTER_LEVEL),
                 "tick_per_combo_point": f64::from(tick.points_per_resource),
-                "attack_power_share_per_combo_point": 0.01,
+                // The notes' 25% on the share under Forever's rules (no row states it).
+                "attack_power_share_per_combo_point": 0.01 * share_scale,
                 "attack_power_share_max_points": 4.0,
                 "tick_can_crit": rank.periodic_can_crit(),
                 "tick_magic": rank.defense_type_core() == DefenseType::Magic,
@@ -478,28 +480,30 @@ impl Druid {
         }
         if let Some(rake) = self.rake {
             // rake.go: a flat hit and a flat bleed tick, neither scaling with attack power.
-            let rank = Ladder::ranked(&RAKE_RANKS).highest();
+            let rank = super::feral::cat_rank(sim.rules, &RAKE_RANKS);
+            let share_scale = super::feral::attack_power_share_scale(sim.rules);
             effects.push(json!({
                 "kind": "rake", "spell": spell_position(sim, unit, rake),
                 "flat_damage": rank.damage_effect().average(CHARACTER_LEVEL),
                 "tick_base": rank.periodic_effect().average(CHARACTER_LEVEL),
                 // rake.go: 5% of attack power on the hit and on every tick, a Go literal fitted
                 // to beta logs (community #769).
-                "attack_power_share": 0.05,
+                "attack_power_share": 0.05 * share_scale,
                 "tick_can_crit": rank.periodic_can_crit(),
                 "tick_magic": rank.defense_type_core() == DefenseType::Magic,
                 "short_name": "Rake",
             }));
         }
         if let Some(bite) = self.ferocious_bite {
-            // ferocious_bite.go: client values, and 3% attack power a point, a Go literal.
-            let ladder = Ladder::ranked(&BITE_RANKS);
-            let rank = ladder.highest();
+            // ferocious_bite.go: client values (the live row under Forever's rules), and 3% attack
+            // power a point, a Go literal that keeps the notes' 25% under Forever's rules.
+            let rank = super::feral::cat_rank(sim.rules, &BITE_RANKS);
+            let share_scale = super::feral::attack_power_share_scale(sim.rules);
             let mut effect = json!({
                 "kind": "ferocious_bite", "spell": spell_position(sim, unit, bite),
-                "damage_per_energy": ladder.effect_at(2).fraction_at(rank.rank_number()),
+                "damage_per_energy": rank.effect_n(2).percent(),
                 "damage_per_combo_point": f64::from(rank.damage_effect().points_per_resource),
-                "attack_power_per_combo_point": 0.03,
+                "attack_power_per_combo_point": 0.03 * share_scale,
             });
             // Predatory Discipline (1328613, hotfix push 113531): "Ferocious Bite no longer
             // converts extra Energy into damage, but still deals extra damage based on excess
@@ -508,6 +512,19 @@ impl Druid {
                 effect["keeps_energy"] = json!(true);
             }
             effects.push(effect);
+        }
+        if let Some(aura) = self.poised_aura {
+            // The notes of 2 November 2026 (Forever's rules): Poised takes 10 Energy off the first
+            // Energy ability of a fight that starts in Cat Form.
+            effects.push(json!({
+                "kind": "poised", "aura": sim.aura(aura).label,
+                "cost_reduction": super::feral::POISED_COST_REDUCTION,
+                "class_spells": CLASS_SPELLS
+                    .iter()
+                    .filter(|entry| masks::ENERGY_ABILITIES & entry.mask != 0)
+                    .map(|entry| entry.name)
+                    .collect::<Vec<_>>(),
+            }));
         }
         if let Some(shifting_power) = self.shifting_power {
             // shifting_power.go
@@ -587,7 +604,7 @@ impl Druid {
                 .collect();
             effects.push(json!({
                 "kind": "rend_and_tear",
-                "multiplier": Ladder::talent(1223246, 5).effect_at(1).multiplier_at(self.tal.rend_and_tear),
+                "multiplier": super::feral::rend_and_tear_multiplier(sim.rules, self.tal.rend_and_tear),
                 "spells": special, "bleed_spells": bleeds,
             }));
         }
@@ -615,8 +632,8 @@ impl Druid {
                 "spell": spell_position(sim, unit, bear_form),
                 "health_bonus": self.bear_form_health_bonus(env, notes),
                 "initial_threat_multiplier":
-                    self.form_start_threat(sim, unit, "Bear Form", BEAR_FORM_THREAT_MULTIPLIER),
-                "threat_multiplier": BEAR_FORM_THREAT_MULTIPLIER,
+                    self.form_start_threat(sim, unit, "Bear Form", bear_form_threat_multiplier(sim.rules)),
+                "threat_multiplier": bear_form_threat_multiplier(sim.rules),
                 "initial_spirit_regen_multiplier": initial.spirit_regen_multiplier,
                 "spirit_regen_multiplier": ANIMAL_SPIRIT_REGEN_SUPPRESSION,
                 "furor_proc_chance": self.furor_proc_chance,

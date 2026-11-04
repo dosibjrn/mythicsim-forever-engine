@@ -19,6 +19,7 @@ use super::shouts::SHOUT_EXPIRATION_THRESHOLD;
 use super::spell_data::spell_data;
 use super::spells::SUNDER_THREAT_PER_ATTACK_POWER;
 use super::stances::STANCE_EFFECT_CATEGORY;
+use super::trees_20261104 as trees;
 use super::Warrior;
 
 /// The stance names Rust reads, in sim/warrior/stances.go's order.
@@ -143,8 +144,7 @@ impl Warrior {
 
         // stances.go: the stance the warrior starts in and each stance's cast and aura.
         let max_retained_rage = data.tactical_mastery.value_at(1)
-            + data
-                .improved_tactical_mastery
+            + trees::improved_tactical_mastery(sim.rules)
                 .value_at(talent("improved_tactical_mastery"));
         let mut stances = Vec::new();
         for (row, stance) in [
@@ -171,9 +171,17 @@ impl Warrior {
         }
         // whirlwind.go: a warrior with an off hand weapon strikes with it too.
         let whirlwind = data.whirlwind.highest();
-        effects.push(json!({"kind": "whirlwind", "spell_id": whirlwind.id,
+        let mut whirlwind_effect = json!({"kind": "whirlwind", "spell_id": whirlwind.id,
             "off_hand": sim.oh_weapon(unit).is_some(),
-            "max_targets": i32::from(whirlwind.max_targets)}));
+            "max_targets": i32::from(whirlwind.max_targets)});
+        // Improved Whirlwind's dummy: the share more damage the first target of a strike takes.
+        if talent("improved_whirlwind") > 0 {
+            whirlwind_effect["closest_bonus"] = json!(trees::forever()
+                .improved_whirlwind
+                .effect_at(2)
+                .fraction_at(talent("improved_whirlwind")));
+        }
+        effects.push(whirlwind_effect);
         // execute.go: the dummy effect's base and ten times its chain amplitude per extra rage.
         let execute = data.execute.highest();
         effects.push(json!({"kind": "execute", "spell_id": execute.id,
@@ -372,13 +380,26 @@ impl Warrior {
             let buff = data.flurry_triggered.highest();
             let mut flurry = json!({"kind": "warrior_flurry", "trigger_aura": "Flurry - Trigger",
                 "aura": "Flurry",
-                "melee_speed_multiplier": data.flurry.multiplier_at(talent("flurry")),
+                "melee_speed_multiplier": trees::flurry(sim.rules).multiplier_at(talent("flurry")),
                 "charges": i32::from(buff.proc_charges)});
             // Forever's logs: misses, dodges and parries spend a charge too (flurry.rs).
             if sim.rules == Rules::Forever {
                 flurry["every_swing_spends"] = json!(true);
             }
             effects.push(flurry);
+        }
+        // talents_fury.go registerRecklessSwings (Forever's rules, the notes of 2 November 2026):
+        // the cast's health cost is a share of base health, as Bloodrage's is.
+        if self.has_talent("reckless_swings") {
+            let forever = trees::forever();
+            let row = forever.reckless_swings;
+            effects.push(json!({"kind": "reckless_swings", "spell_id": row.id,
+                "aura": "Reckless Swings", "trigger_aura": "Reckless Swings - Trigger",
+                "rage": forever.reckless_swings_proc.energize_effect().tenths(),
+                "charges": i32::from(row.proc_charges),
+                "health_cost": sim.character(unit).base_stats[Stat::Health]
+                    * f64::from(row.power(dbcenums::POWER_HEALTH).cost_pct) / 100.0,
+                "delay_ns": SPELL_BATCH_WINDOW}));
         }
         if self.has_talent("anger_management") {
             let row = data.anger_management.highest();
@@ -403,7 +424,8 @@ impl Warrior {
         }
         if talent("defiance") > 0 && sim.unit(unit).pseudo_stats.can_block {
             defiance.push(json!({"aura": "Defensive Stance", "stat": "threat",
-                "multiplier": data.defiance.effect(dbcenums::A_MOD_THREAT, 127)
+                "multiplier": crate::prepare::hotfix_113554::talent(sim.rules, 12792, 3)
+                    .effect(dbcenums::A_MOD_THREAT, 127)
                     .multiplier_at(talent("defiance"))}));
         }
         let mut pseudo_stat_auras = vec![
@@ -411,8 +433,8 @@ impl Warrior {
                 "multiplier": data.battle_stance_passive.effect(dbcenums::A_MOD_THREAT, 127)
                     .multiplier_at(1)}),
             json!({"aura": "Defensive Stance", "stat": "threat",
-                "multiplier": data.defensive_stance_passive.effect(dbcenums::A_MOD_THREAT, 127)
-                    .multiplier_at(1)}),
+                "multiplier": 1.0 + crate::prepare::hotfix_113554::row(sim.rules, data.defensive_stance_passive.highest().id)
+                    .effect(dbcenums::A_MOD_THREAT, 127).base_points / 100.0}),
             json!({"aura": "Defensive Stance", "stat": "damage_taken",
                 "multiplier": data.defensive_stance_passive
                     .effect(dbcenums::A_MOD_DAMAGE_PERCENT_TAKEN, 127).multiplier_at(1)}),
@@ -461,7 +483,7 @@ impl Warrior {
                 "base_damage": row.damage_effect().average(level)}));
         }
         if self.has_talent("spearing_strike") {
-            let row = data.spearing_strike.highest();
+            let row = trees::spearing_strike(sim.rules);
             let mob_type = sim.unit(target).mob_type.as_str();
             let mob_multiplier = if mob_type == "MobTypeGiant" || mob_type == "MobTypeDragonkin" {
                 1.0 + row.effects[2].base_points
@@ -552,7 +574,7 @@ impl Warrior {
         if talent("bloodthrill") > 0 {
             effects.push(
                 json!({"kind": "bloodthrill", "trigger_aura": "Bloodthrill - Trigger",
-                "proc_chance": data.bloodthrill.fraction_at(talent("bloodthrill")),
+                "proc_chance": trees::bloodthrill(sim.rules).fraction_at(talent("bloodthrill")),
                 // Client 70425: the proc opens the 5 sec Overpower window (1282733).
                 "window_ns": data.bloodthrill_triggered.by_id(1282733).duration(),
                 "delay_ns": SPELL_BATCH_WINDOW}),

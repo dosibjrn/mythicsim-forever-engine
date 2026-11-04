@@ -90,6 +90,14 @@ impl Ladder {
         Ladder::keep(talent_ranks(must_find(spell_id), curve, max_ranks))
     }
 
+    /// A ladder of a trait-tree talent over a row the caller states, with the curve the caller
+    /// states: a talent the client moved onto another row (Raging Blows' spell id became Improved
+    /// Whirlwind) after the frozen data. The ranks are the curve rows' length. Not cached.
+    pub(crate) fn talent_over_row(row: &Spell, curve: &[Vec<f64>]) -> Ladder {
+        let max_ranks = curve.first().map_or(0, |row| row.len() as i32);
+        Ladder::keep(talent_ranks(row, curve, max_ranks))
+    }
+
     /// A ladder over rank copies, kept for the process.
     fn keep(copies: Vec<Spell>) -> Ladder {
         Ladder {
