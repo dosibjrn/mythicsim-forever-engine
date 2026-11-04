@@ -1,0 +1,104 @@
+name: Paladin equipment source import
+
+on:
+  push:
+    branches:
+      - work/work1-paladin-l20-item-options-20261104
+    paths:
+      - .github/workflows/paladin-equipment-source.yml
+      - tools/import_paladin_equipment.py
+      - tools/import_paladin_equipment_test.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paladin-equipment-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download DB2 exports for the pinned client build
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$(python3 -c 'import json; print(json.load(open("data/manifest.json", encoding="utf-8"))["client_build"])')"
+          for table in SkillLine SkillRaceClassInfo; do
+            url="https://wago.tools/db2/${table}/csv?build=${build}"
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+              --user-agent "MythicSim source importer" "$url" -o "/tmp/${table}.csv"
+            test -s "/tmp/${table}.csv"
+            printf '%s CSV SHA-256: ' "$table"
+            sha256sum "/tmp/${table}.csv"
+          done
+
+      - name: Test deterministic source projection
+        run: python3 -m unittest discover -s tools -p 'import_paladin_equipment_test.py'
+
+      - name: Generate and inspect Paladin equipment eligibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/import_paladin_equipment.py /tmp/SkillLine.csv /tmp/SkillRaceClassInfo.csv
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+          skill_names = {
+              int(row["ID"]): row["DisplayName_lang"]
+              for row in csv.DictReader(Path("/tmp/SkillLine.csv").open(encoding="utf-8-sig", newline=""))
+          }
+          print("PALADIN_SOURCE_ROWS: skill, availability, min-level, race-mask-low, race-mask-high")
+          for row in csv.DictReader(Path("/tmp/SkillRaceClassInfo.csv").open(encoding="utf-8-sig", newline="")):
+              if int(row["ClassMask"] or 0) & 2:
+                  print(
+                      skill_names.get(int(row["SkillID"]), f'UNKNOWN:{row["SkillID"]}'),
+                      row["Availability"], row["MinLevel"], row["RaceMasks_0"], row["RaceMasks_1"],
+                      sep="\t",
+                  )
+          data = json.loads(Path("data/paladin-equipment-skills.json").read_text())
+          print("PINNED_CLIENT_BUILD", data["client_build"])
+          print("RACE_POLICY", data["race_policy"])
+          print("SKILL_LINE_ID_COUNT", len(data["skill_line_ids"]))
+          print("PALADIN_CLASS_WIDE_SKILLS")
+          for skill in data["skills"]:
+              print(
+                  skill["skill_id"], skill["name"], skill["min_level"],
+                  skill["race_unrestricted"], skill["availability_values"],
+                  skill["race_restricted_rows"], sep="\t",
+              )
+          PY
+          cat data/paladin-equipment-skills.manifest.json
+
+
+      - name: Commit generated pinned-client projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/manifest.json data/paladin-equipment-skills.json data/paladin-equipment-skills.manifest.json
+          if git diff --cached --quiet; then
+            echo "Pinned Paladin equipment projection is already current."
+          else
+            git commit -m "data: import pinned Paladin equipment skills"
+            git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          fi
+
+      - name: Upload pinned source tables and normalized projection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: paladin-equipment-source-${{ github.sha }}
+          path: |
+            /tmp/SkillLine.csv
+            /tmp/SkillRaceClassInfo.csv
+            data/manifest.json
+            data/paladin-equipment-skills.json
+            data/paladin-equipment-skills.manifest.json
+          if-no-files-found: error
+          retention-days: 30
