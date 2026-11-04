@@ -270,7 +270,14 @@ impl<A: Agent> Fight<A> {
         if let SpellBehavior::Class(behavior) = self.spells[self.dots[dot].spell].behavior {
             A::on_dot_expire(self, dot, behavior);
         }
-        if self.dots[dot].tick_next_at == self.now {
+        // A committed lethal world ACK ends target damage. Cleanup still expires
+        // auras, but a tick due at that same clock cannot hit the dead target.
+        let world_target_is_lethal = matches!(self.dots[dot].side, Side::Target)
+            && super::world_bridge::enabled()
+            && super::world_bridge::lethal_ack_received();
+        if self.dots[dot].tick_next_at == self.now
+            && should_process_expiry_tick(self.dots[dot].side, world_target_is_lethal)
+        {
             self.dots[dot].remaining_ticks -= 1;
             self.tick_once(dot);
         }
@@ -378,6 +385,10 @@ impl<A: Agent> Fight<A> {
     }
 }
 
+fn should_process_expiry_tick(side: Side, world_target_is_lethal: bool) -> bool {
+    !matches!(side, Side::Target) || !world_target_is_lethal
+}
+
 /// Go `Duration.Round(time.Millisecond)`: to the nearest millisecond, halves away from zero.
 fn round_to_millisecond(duration: i64) -> i64 {
     let unit = crate::core::time::NS_PER_MILLISECOND;
@@ -398,7 +409,14 @@ fn round_to_millisecond(duration: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::round_to_millisecond;
+    use super::{round_to_millisecond, should_process_expiry_tick, Side};
+
+    #[test]
+    fn lethal_world_death_skips_only_target_final_dot_tick() {
+        assert!(!should_process_expiry_tick(Side::Target, true));
+        assert!(should_process_expiry_tick(Side::Target, false));
+        assert!(should_process_expiry_tick(Side::Player, true));
+    }
 
     #[test]
     fn rounds_like_go_duration_round() {
