@@ -2,6 +2,7 @@
 //! the new talent trees, which only Forever's rules prepare. The Go reference keeps the frozen
 //! data (client 1.60.1.70425) and its numbers.
 
+use forever_engine::RngMode;
 use forever_engine::{
     check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared, Rules,
 };
@@ -181,7 +182,7 @@ fn garrote_ticks_take_the_hemorrhage_debuff_in_a_fight() {
     let damage = |value: &Value, spell_id: i64| -> f64 {
         let prepared: PreparedV2 = serde_json::from_value(value.clone()).unwrap();
         check_prepared(&prepared).unwrap();
-        let result = simulate_prepared(&prepared).unwrap().result;
+        let result = simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result;
         let player = &result["raidMetrics"]["parties"][0]["players"][0];
         player["actions"]
             .as_array()
@@ -426,7 +427,7 @@ fn first_fight_log(request: &Value, rules: Rules) -> String {
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    let report = simulate_prepared(&prepared).unwrap();
+    let report = simulate_prepared(&prepared, RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
