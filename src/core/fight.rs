@@ -5695,7 +5695,7 @@ impl<A: Agent> Fight<A> {
             let logged = self.config.debug || (iteration == 0 && self.config.debug_first_iteration);
             self.log = logged.then(Vec::new);
             if world_bridge::enabled() {
-                world_bridge::begin_iteration(iteration as u32);
+                world_bridge::begin_iteration(iteration);
             }
             self.run_once();
             if let Some(lines) = self.log.take() {
