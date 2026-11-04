@@ -132,6 +132,12 @@ def write_data(raw):
     extras = {"curves": spells["curves"], "hand_triggers": spells["hand_triggers"]}
     emit("spell-extras.json", json.dumps(extras, sort_keys=True, separators=(",", ":")) + "\n")
     emit("go-tables.json", json.dumps(load(raw / "go-tables.json"), indent=1, sort_keys=True) + "\n")
+    # Preserve the native client ItemSparse projection across reference-data reimports.
+    # Its source is the pinned client's DB2 table, not the Forever database.
+    for name in ("item-required-levels.jsonl", "item-required-levels.manifest.json"):
+        path = DATA / name
+        if path.exists():
+            files[name] = file_digest(path)
     manifest = {
         "schema_version": 1,
         "engine_revision": PIN,
@@ -153,6 +159,17 @@ def check():
         errors.append(f"data client build {manifest.get('client_build')} is not {CLIENT_BUILD}")
     if manifest.get("tool_sha256") != tool_digest():
         errors.append("tools/rust-data changed since the data was imported")
+    source_manifest_path = DATA / "item-required-levels.manifest.json"
+    if source_manifest_path.exists():
+        source_manifest = load(source_manifest_path)
+        source = source_manifest.get("source", {})
+        if source.get("client_build") != CLIENT_BUILD:
+            errors.append("native ItemSparse source build differs from the pinned client build")
+        if source.get("table") != "ItemSparse" or source.get("field") != "RequiredLevel":
+            errors.append("native item-level source is not ItemSparse.RequiredLevel")
+        levels_path = DATA / "item-required-levels.jsonl"
+        if not levels_path.exists() or not levels_path.read_text(encoding="utf-8").strip():
+            errors.append("native ItemSparse.RequiredLevel projection is empty")
     for name, digest in manifest["files"].items():
         path = DATA / name
         if not path.exists():

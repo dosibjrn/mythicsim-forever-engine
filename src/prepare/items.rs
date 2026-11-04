@@ -4,9 +4,6 @@
 use crate::contracts::request::{Message, Value};
 use crate::data::{self, ENCHANTS, ITEMS, RANDOM_SUFFIXES};
 
-use std::collections::HashMap;
-use std::sync::OnceLock;
-
 use super::stats::{Stat, Stats};
 use super::Refusal;
 
@@ -396,27 +393,22 @@ pub(crate) fn effect_stats(effect: &Message) -> Stats {
     scaling_option(effect).map_or_else(Stats::default, |option| stats_from_map(option, "stats"))
 }
 
-/// One read-only candidate projected from MythicSim's embedded SimItem database.
+/// One read-only candidate projected from MythicSim's embedded SimItem database
+/// and the pinned client's ItemSparse.RequiredLevel field.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct NativeItemOption {
     pub item_id: i32,
     pub name: String,
-    /// The embedded database's base scaling-option item level, not required level.
     pub item_level: Option<i32>,
-    /// Source-observed character required level; never inferred from item level.
-    pub required_level: Option<i32>,
-    /// Provenance for the required-level value (or source-confirmed absence).
+    pub required_level: i32,
     pub required_level_origin: String,
-    /// Native equipment slot, e.g. chest, finger, one_hand, off_hand or ranged.
     pub slot: String,
     pub item_type: String,
     pub armor_type: String,
     pub weapon_type: String,
     pub hand_type: String,
     pub ranged_weapon_type: String,
-    /// Base-scaling item stats, keyed by MythicSim stat name.
     pub stats: std::collections::BTreeMap<String, f64>,
-    /// Raw proto pseudo-stat vector, kept separate from ordinary stats.
     pub pseudo_stats: Vec<f64>,
     pub weapon_damage_min: Option<f64>,
     pub weapon_damage_max: Option<f64>,
@@ -435,11 +427,7 @@ pub struct NativeItemOptionsRefusal {
     pub reason: String,
 }
 
-/// Result of the native read-only item-options query.
-///
-/// The native item proto lacks a required-level field. This query joins the
-/// embedded SimItem rows to the source-observed item availability data. Inferred
-/// rows are excluded; returned candidates are never assigned an ilvl-derived level.
+/// Result of a read-only native item-options query.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct NativeItemOptionsResponse {
     pub status: String,
@@ -448,74 +436,9 @@ pub struct NativeItemOptionsResponse {
     pub spec: String,
     pub slot: String,
     pub source: String,
-    /// True only when every class/slot candidate had source-backed level evidence.
     pub required_level_supported: bool,
-    /// Candidate rows excluded because their required level was not source-confirmed.
-    pub unknown_required_level_item_count: usize,
     pub items: Vec<NativeItemOption>,
     pub refusal: Option<NativeItemOptionsRefusal>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SourceRequiredLevel {
-    required_level: Option<i32>,
-    origin: &'static str,
-}
-
-fn parse_source_required_levels(source: &str) -> HashMap<i32, SourceRequiredLevel> {
-    let mut levels = HashMap::new();
-    for (line_index, line) in source.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let mut fields = line.split('\t');
-        let item_id = fields
-            .next()
-            .and_then(|value| value.parse::<i32>().ok())
-            .unwrap_or_else(|| {
-                panic!(
-                    "item availability line {} has an invalid item id",
-                    line_index + 1
-                )
-            });
-        let raw_level = fields.next().unwrap_or("");
-        let origin_code = fields.next().unwrap_or("");
-        let evidence = match origin_code {
-            "0" => Some(SourceRequiredLevel {
-                required_level: Some(raw_level.parse::<i32>().unwrap_or_else(|_| {
-                    panic!(
-                        "item availability line {} has an invalid observed required level",
-                        line_index + 1
-                    )
-                })),
-                origin: "observed",
-            }),
-            "3" => Some(SourceRequiredLevel {
-                required_level: None,
-                origin: "source_confirmed_no_requirement",
-            }),
-            // Median/interpolated values are not legality evidence.
-            "1" | "2" => None,
-            other => panic!(
-                "item availability line {} has unknown origin code {other}",
-                line_index + 1
-            ),
-        };
-        if let Some(evidence) = evidence {
-            assert!(
-                levels.insert(item_id, evidence).is_none(),
-                "item availability contains duplicate item id {item_id}"
-            );
-        }
-    }
-    levels
-}
-
-fn source_required_levels() -> &'static HashMap<i32, SourceRequiredLevel> {
-    static LEVELS: OnceLock<HashMap<i32, SourceRequiredLevel>> = OnceLock::new();
-    LEVELS.get_or_init(|| {
-        parse_source_required_levels(include_str!("../../data/item_availability.tsv"))
-    })
 }
 
 fn native_item_source_slot(item: &Item) -> Option<&'static str> {
@@ -565,6 +488,7 @@ fn native_item_matches_slot(item: &Item, source_slot: &str, requested_slot: &str
         "offhand" | "off_hand" => source_slot == "off_hand",
         "wand" => source_slot == "ranged" && item.ranged_weapon_type == "RangedWeaponTypeWand",
         "ranged" => source_slot == "ranged" && item.ranged_weapon_type != "RangedWeaponTypeWand",
+        "thrown" => source_slot == "thrown",
         "trinket" | "relic" => source_slot == requested_slot,
         "head" | "neck" | "shoulder" | "back" | "chest" | "wrist" | "hands" | "waist" | "legs"
         | "feet" | "shirt" | "tabard" => source_slot == requested_slot,
@@ -603,17 +527,29 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
     }
 }
 
-/// Enumerate the native embedded item choices for the supported L20 P3 caster slice.
-///
-/// This is a read-only projection over MythicSim's embedded item rows plus the
-/// source-observed required-level table. Inferred availability-floor rows are
-/// ignored. Priest and Mage have fixed cloth/weapon proficiencies for this slice;
-/// candidates without source-backed required levels are excluded and counted.
+/// Query native embedded items, applying the exact client RequiredLevel field.
+/// Items absent from the pinned ItemSparse table are not treated as available client gear.
 pub fn native_item_options(
     class: &str,
     level: i32,
     spec: &str,
     slot: &str,
+) -> NativeItemOptionsResponse {
+    native_item_options_with_required_levels(
+        class,
+        level,
+        spec,
+        slot,
+        data::item_required_levels(),
+    )
+}
+
+fn native_item_options_with_required_levels(
+    class: &str,
+    level: i32,
+    spec: &str,
+    slot: &str,
+    required_levels: &std::collections::HashMap<i32, i32>,
 ) -> NativeItemOptionsResponse {
     let class_input = class.trim().to_ascii_lowercase();
     let spec_input = spec.trim().to_ascii_lowercase();
@@ -627,9 +563,10 @@ pub fn native_item_options(
         "all" | "head" | "neck" | "shoulder" | "back" | "chest" | "wrist" | "hands" | "waist"
         | "legs" | "feet" | "shirt" | "tabard" | "relic" | "ring" | "finger" | "trinket"
         | "weapon" | "main_hand" | "one_hand" | "two_hand" | "offhand" | "off_hand" | "ranged"
-        | "wand" => Some(slot_input.as_str()),
+        | "thrown" | "wand" => Some(slot_input.as_str()),
         _ => None,
     };
+
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
@@ -646,9 +583,10 @@ pub fn native_item_options(
             format!("native item-options currently supports the unrestricted profile, not {spec}"),
         ))
     } else if canonical_slot.is_none() {
-        Some(("NATIVE_ITEM_OPTIONS_UNSUPPORTED_SLOT", format!(
-            "unsupported item slot {slot}"
-        )))
+        Some((
+            "NATIVE_ITEM_OPTIONS_UNSUPPORTED_SLOT",
+            format!("unsupported item slot {slot}"),
+        ))
     } else {
         None
     };
@@ -659,9 +597,8 @@ pub fn native_item_options(
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: "mythicsim:data/items.jsonl+data/item_availability.tsv".to_string(),
+        source: "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string(),
         required_level_supported: false,
-        unknown_required_level_item_count: 0,
         items: Vec::new(),
         refusal: refusal.map(|(code, reason)| NativeItemOptionsRefusal {
             code: code.to_string(),
@@ -671,7 +608,15 @@ pub fn native_item_options(
     if response.refusal.is_some() {
         return response;
     }
+    if required_levels.is_empty() {
+        response.refusal = Some(NativeItemOptionsRefusal {
+            code: "NATIVE_ITEM_OPTIONS_REQUIRED_LEVEL_SOURCE_UNAVAILABLE".to_string(),
+            reason: "the pinned native ItemSparse.RequiredLevel projection is empty; import the exact client-build ItemSparse table".to_string(),
+        });
+        return response;
+    }
 
+    response.required_level_supported = true;
     let (class, class_proto) = normalized_class.expect("validated native item class");
     let requested_slot = canonical_slot.expect("validated native item slot");
     for key in ITEMS.keys() {
@@ -689,22 +634,18 @@ pub fn native_item_options(
         {
             continue;
         }
+        let Some(required_level) = required_levels.get(&item.id).copied() else {
+            continue;
+        };
+        if required_level > level {
+            continue;
+        }
         let Some(row) = item.row.as_deref() else {
             continue;
         };
         let Some(scaling) = scaling_option(row) else {
             continue;
         };
-        let Some(required_level_source) = source_required_levels().get(&item.id).copied() else {
-            response.unknown_required_level_item_count += 1;
-            continue;
-        };
-        if required_level_source
-            .required_level
-            .is_some_and(|required_level| required_level > level)
-        {
-            continue;
-        }
         let source_stats = stats_from_map(scaling, "stats");
         let mut stats = std::collections::BTreeMap::new();
         for stat in Stat::ALL {
@@ -717,8 +658,8 @@ pub fn native_item_options(
             item_id: item.id,
             name: item.name,
             item_level: scaling.has("ilvl").then(|| scaling.i32("ilvl")),
-            required_level: required_level_source.required_level,
-            required_level_origin: required_level_source.origin.to_string(),
+            required_level,
+            required_level_origin: "client_ItemSparse.RequiredLevel".to_string(),
             slot: source_slot.to_string(),
             item_type: item.item_type,
             armor_type: item.armor_type,
@@ -748,10 +689,7 @@ pub fn native_item_options(
             .cmp(&a.item_level.unwrap_or(-1))
             .then_with(|| a.item_id.cmp(&b.item_id))
     });
-    response.required_level_supported = response.unknown_required_level_item_count == 0;
-    response.status = if !response.required_level_supported {
-        "partial_level_unknown".to_string()
-    } else if response.items.is_empty() {
+    response.status = if response.items.is_empty() {
         "empty".to_string()
     } else {
         "ok".to_string()
@@ -761,58 +699,27 @@ pub fn native_item_options(
 
 #[cfg(test)]
 mod native_item_options_contract_tests {
-    use super::{
-        native_item_options, parse_source_required_levels, SourceRequiredLevel,
-    };
+    use super::{native_item_options, native_item_options_with_required_levels, ITEMS};
+    use std::collections::HashMap;
 
-    #[test]
-    fn only_source_observed_or_confirmed_absence_rows_are_legality_evidence() {
-        let levels = parse_source_required_levels(
-            "10\t20\t0\t\n11\t15\t1\t\n12\t0\t3\t\n",
-        );
-        assert_eq!(
-            levels.get(&10),
-            Some(&SourceRequiredLevel {
-                required_level: Some(20),
-                origin: "observed",
-            })
-        );
-        assert!(!levels.contains_key(&11), "inferred median is not legality evidence");
-        assert_eq!(
-            levels.get(&12),
-            Some(&SourceRequiredLevel {
-                required_level: None,
-                origin: "source_confirmed_no_requirement",
-            })
-        );
+    fn synthetic_levels() -> HashMap<i32, i32> {
+        ITEMS
+            .keys()
+            .filter_map(|key| i32::try_from(key).ok().map(|id| (id, 1)))
+            .collect()
     }
 
     #[test]
-    fn priest_and_mage_options_return_only_source_level_legal_candidates() {
+    fn priest_and_mage_options_return_source_level_legal_candidates() {
+        let levels = synthetic_levels();
         for class in ["priest", "mage"] {
-            let response = native_item_options(class, 20, "unrestricted", "chest");
+            let response =
+                native_item_options_with_required_levels(class, 20, "unrestricted", "chest", &levels);
+            assert_eq!(response.status, "ok");
+            assert!(response.required_level_supported);
             assert!(response.refusal.is_none());
             assert!(!response.items.is_empty());
-            assert_eq!(
-                response.required_level_supported,
-                response.unknown_required_level_item_count == 0
-            );
-            assert_eq!(
-                response.status,
-                if response.unknown_required_level_item_count == 0 {
-                    "ok"
-                } else {
-                    "partial_level_unknown"
-                }
-            );
-            assert!(response.items.iter().all(|item| {
-                item.required_level
-                    .map_or(true, |required_level| required_level <= 20)
-                    && matches!(
-                        item.required_level_origin.as_str(),
-                        "observed" | "source_confirmed_no_requirement"
-                    )
-            }));
+            assert!(response.items.iter().all(|item| item.required_level <= 20));
             assert!(response.items.windows(2).all(|pair| {
                 pair[0].item_level.unwrap_or(-1) > pair[1].item_level.unwrap_or(-1)
                     || (pair[0].item_level == pair[1].item_level
@@ -822,15 +729,52 @@ mod native_item_options_contract_tests {
     }
 
     #[test]
+    fn candidates_above_the_character_required_level_are_excluded() {
+        let mut levels = synthetic_levels();
+        let baseline =
+            native_item_options_with_required_levels("priest", 20, "unrestricted", "chest", &levels);
+        assert!(!baseline.items.is_empty());
+        let excluded_id = baseline.items[0].item_id;
+        levels.insert(excluded_id, 21);
+        let filtered =
+            native_item_options_with_required_levels("priest", 20, "unrestricted", "chest", &levels);
+        assert!(!filtered.items.iter().any(|item| item.item_id == excluded_id));
+        assert_eq!(filtered.items.len() + 1, baseline.items.len());
+    }
+
+    #[test]
+    fn missing_required_level_source_refuses_closed() {
+        let response = native_item_options_with_required_levels(
+            "priest",
+            20,
+            "unrestricted",
+            "chest",
+            &HashMap::new(),
+        );
+        assert_eq!(response.status, "refused");
+        assert!(!response.required_level_supported);
+        assert_eq!(
+            response.refusal.unwrap().code,
+            "NATIVE_ITEM_OPTIONS_REQUIRED_LEVEL_SOURCE_UNAVAILABLE"
+        );
+    }
+
+    #[test]
     fn unsupported_queries_refuse_explicitly_without_inventing_options() {
         let bad_class = native_item_options("warrior", 20, "unrestricted", "chest");
         assert_eq!(bad_class.status, "refused");
         assert!(bad_class.items.is_empty());
-        assert_eq!(bad_class.refusal.unwrap().code, "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS");
+        assert_eq!(
+            bad_class.refusal.unwrap().code,
+            "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS"
+        );
 
         let bad_level = native_item_options("priest", 61, "unrestricted", "chest");
         assert_eq!(bad_level.status, "refused");
         assert!(bad_level.items.is_empty());
-        assert_eq!(bad_level.refusal.unwrap().code, "NATIVE_ITEM_OPTIONS_INVALID_LEVEL");
+        assert_eq!(
+            bad_level.refusal.unwrap().code,
+            "NATIVE_ITEM_OPTIONS_INVALID_LEVEL"
+        );
     }
 }

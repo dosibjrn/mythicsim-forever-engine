@@ -116,6 +116,46 @@ pub(crate) fn proto_row(
     })
 }
 
+
+/// Required character levels projected from the pinned client's ItemSparse DB2 table.
+const ITEM_REQUIRED_LEVELS: &str = include_str!("../data/item-required-levels.jsonl");
+
+#[derive(serde::Deserialize)]
+struct ItemRequiredLevelRow {
+    id: i32,
+    required_level: i32,
+}
+
+fn parse_item_required_levels(text: &str) -> HashMap<i32, i32> {
+    let mut levels = HashMap::new();
+    for (line_number, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row: ItemRequiredLevelRow = serde_json::from_str(line)
+            .unwrap_or_else(|error| panic!("data/item-required-levels.jsonl:{}: {error}", line_number + 1));
+        assert!(
+            row.required_level >= 0,
+            "data/item-required-levels.jsonl:{}: negative RequiredLevel for item {}",
+            line_number + 1,
+            row.id
+        );
+        assert!(
+            levels.insert(row.id, row.required_level).is_none(),
+            "data/item-required-levels.jsonl:{}: duplicate item ID {}",
+            line_number + 1,
+            row.id
+        );
+    }
+    levels
+}
+
+/// The native ItemSparse RequiredLevel field, keyed by item ID.
+pub(crate) fn item_required_levels() -> &'static HashMap<i32, i32> {
+    static LEVELS: OnceLock<HashMap<i32, i32>> = OnceLock::new();
+    LEVELS.get_or_init(|| parse_item_required_levels(ITEM_REQUIRED_LEVELS))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +168,30 @@ mod tests {
         let enchant = proto_row(&ENCHANTS, "proto.SimEnchant", 15).expect("Light Armor Kit");
         assert_eq!(enchant.str("name"), "Light Armor Kit");
         assert!(ITEMS.keys().count() > 10_000);
+    }
+
+    #[test]
+    fn parses_native_item_required_levels_without_inferring_from_item_level() {
+        let levels = parse_item_required_levels(concat!(
+            r#"{"id":25,"required_level":1}"#,
+            "\n",
+            r#"{"id":647,"required_level":52}"#,
+            "\n",
+        ));
+        assert_eq!(levels.get(&25), Some(&1));
+        assert_eq!(levels.get(&647), Some(&52));
+        assert_eq!(parse_item_required_levels("\n").len(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate item ID")]
+    fn rejects_duplicate_native_item_required_levels() {
+        parse_item_required_levels(concat!(
+            r#"{"id":25,"required_level":1}"#,
+            "\n",
+            r#"{"id":25,"required_level":2}"#,
+            "\n",
+        ));
     }
 
     #[test]
