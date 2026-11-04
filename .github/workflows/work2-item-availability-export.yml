@@ -7,7 +7,7 @@ on:
       - ".github/workflows/work2-item-availability-export.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   export-item-availability:
@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Checkout the current Forever source snapshot with LFS
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -121,14 +121,58 @@ jobs:
               "items": rows,
           }
           out = pathlib.Path("item-availability-export.json")
-          out.write_text(json.dumps(output, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+          out.write_text(json.dumps(output, sort_keys=True, separators=(",", ":")) + "\\n", encoding="utf-8")
+
+          origin_codes = {
+              "observed": 0,
+              "inferred_median": 1,
+              "inferred_interpolated": 2,
+              "source_confirmed_no_requirement": 3,
+          }
+          tsv_path = pathlib.Path("data/item_availability.tsv")
+          with tsv_path.open("w", encoding="utf-8", newline="") as handle:
+              for row in rows:
+                  code = origin_codes.get(row["required_level_origin"])
+                  if code is None:
+                      raise SystemExit(f"unknown required-level origin: {row['required_level_origin']}")
+                  acquisition_level = row["acquisition_min_level"]
+                  handle.write(
+                      f"{row['item_id']}\\t{row['required_level']}\\t{code}\\t"
+                      f"{'' if acquisition_level is None else acquisition_level}\\n"
+                  )
+
+          metadata = {
+              "schema_version": 1,
+              "source": {
+                  "repository": "dosibjrn/forever-sim",
+                  "ref": "main",
+                  "commit": forever_sha,
+                  "database_path": "data/forever/catalogue/items_2026-09-29.sqlite",
+                  "database_sha256": hashlib.sha256(db_bytes).hexdigest(),
+                  "catalogue_hash": manifest.get("catalogue_hash"),
+                  "availability_floor_model": manifest.get("availability_floor_model"),
+                  "source_type": "wowhead_listview",
+                  "source_name": "Forever Items",
+                  "source_url_template": "https://www.wowhead.com/forever/item={item_id}",
+              },
+              "native_item_source": output["native_item_source"],
+              "availability_item_count": len(rows),
+              "acquisition_min_level_supported": bool(has_acquisition and acquisition),
+              "required_level_origin_codes": {str(value): key for key, value in origin_codes.items()},
+          }
+          metadata_path = pathlib.Path("data/item_availability_manifest.json")
+          metadata_path.write_text(
+              json.dumps(metadata, sort_keys=True, separators=(",", ":")) + "\\n",
+              encoding="utf-8",
+          )
           print(json.dumps({
               "native_item_count": len(native_ids),
               "availability_item_count": len(rows),
               "acquisition_rows": len(acquisition),
               "forever_main": forever_sha,
               "catalogue_hash": manifest.get("catalogue_hash"),
-              "output_bytes": out.stat().st_size,
+              "tsv_bytes": tsv_path.stat().st_size,
+              "manifest_bytes": metadata_path.stat().st_size,
           }, sort_keys=True))
           PY
 
@@ -136,6 +180,21 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: work2-native-item-availability
-          path: item-availability-export.json
+          path: |
+            item-availability-export.json
+            data/item_availability.tsv
+            data/item_availability_manifest.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Commit the source-backed native availability snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/item_availability.tsv data/item_availability_manifest.json
+          git commit -m "data(native): add source-backed item availability"
+          git push origin "HEAD:refs/heads/${GITHUB_HEAD_REF}"
