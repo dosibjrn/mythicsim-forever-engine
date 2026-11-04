@@ -39,7 +39,10 @@ jobs:
           assert all(item["required_level"] <= 20 for item in result["items"]), result
           print("SHAMAN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
           PY
-      - run: cargo fmt -- --check
+      - name: Check formatting of changed Rust modules
+        run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs
+      - name: Run Shaman native item-options regression tests
+        run: cargo test --locked shaman_
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps --document-private-items
         env:
@@ -59,6 +62,9 @@ jobs:
       - run: python3 tools/inventory.py check
       - run: python3 tools/prepared_v2.py check
       - run: python3 tools/upstream.py check
+      # Keep the repository-wide baseline visible, but run it last so existing
+      # formatting debt cannot skip the production, data, and regression checks.
+      - run: cargo fmt -- --check
 
   # The test suite is most of the run, so it gets its own job and the
   # other checks report while it is still going.
