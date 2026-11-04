@@ -5797,14 +5797,19 @@ impl<A: Agent> Fight<A> {
         let mut previous_mana_regen_events = 0_i32;
 
         for index in 0..target_count {
+            let mut native_recovery_ticks = 0;
+            let mut native_recovery_elapsed_ns = 0;
             if index != 0 {
-                // No free actor reset. This intentionally retains the current
-                // no-downtime diagnostic clock until real paid travel/recovery
-                // is coupled through the same native/world timeline.
-                let next_at = self
-                    .now
-                    .checked_add(1_000_000)
+                // Pay for rest on the same native clock and actor, without
+                // resetting resources, cooldowns, auras or the event queue.
+                // Only native scheduled passive regeneration is processed
+                // while the previous 2D target is dead.
+                let killed_at = self.now;
+                let next_at = killed_at
+                    .checked_add(12 * crate::core::time::NS_PER_SECOND)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
+                native_recovery_elapsed_ns = next_at - killed_at;
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
@@ -5848,6 +5853,8 @@ impl<A: Agent> Fight<A> {
                     (mana_regen_gain - previous_mana_regen_gain).max(0.0),
                 "native_combat_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
+                "native_passive_recovery_ns": native_recovery_elapsed_ns,
+                "native_passive_recovery_ticks": native_recovery_ticks,
                 "source_action_counts": world_bridge::take_source_action_counts(),
             }));
             previous_damage = total_damage;
@@ -5906,10 +5913,36 @@ impl<A: Agent> Fight<A> {
         Ok(report)
     }
 
+    /// Advance a retained native actor through a paid, target-free rest interval.
+    /// Consume the existing native scheduled mana/health regeneration actions,
+    /// not an invented mana refill. Keep combat events and their handles queued
+    /// for the following pull; never execute attacks on a defeated world target.
+    fn recover_native_world_actor_until(&mut self, until_ns: i64)
+        -> Result<usize, &'static str>
+    {
+        if until_ns < self.now {
+            return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
+        }
+        let mut ticks = 0;
+        while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
+            until_ns,
+            |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }),
+        ) {
+            if at > self.now {
+                self.advance_to(at);
+            }
+            if self.handle_still_valid(handle, &action) {
+                self.run_action(handle, action);
+                ticks += 1;
+            }
+        }
+        self.advance_to(until_ns);
+        Ok(ticks)
+    }
+
     /// Begin a second distinct world target on the SAME native actor.
     /// No iteration reset, resource reset, cooldown reset, aura reset or queue clear.
-    /// Until paid downtime is implemented in the native session, accept only
-    /// an immediate next pull; skipping scheduled recovery events is illegal.
+    /// A native-only window still starts at the preceding exact window end.
     /// Native-only duration windows continue at the old exact end timestamp.
     /// A live world may kill its target earlier, but only the separate
     /// world_bridge::begin_next_target() validates the actual lethal ACK.
@@ -5918,7 +5951,9 @@ impl<A: Agent> Fight<A> {
             && at_ns >= 0
             && next_end_ns > at_ns
             && (if live_world {
-                at_ns <= self.end_of_combat
+                // The paid passive recovery helper already advanced the
+                // retained actor to its next pull's timestamp.
+                at_ns <= self.end_of_combat || (at_ns == self.now)
             } else {
                 at_ns == self.end_of_combat
             })
@@ -6794,6 +6829,31 @@ mod tests {
         assert!(!fight.accepts_next_target_clock(now - 1, cap + 1, true));
         assert!(!fight.accepts_next_target_clock(early, early, true));
         // This test does not fake a lethal source event or certify a hybrid mob.
+    }
+
+    #[test]
+    fn native_world_recovery_pays_scheduled_mana_without_resetting_actor() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+        let before = fight.now;
+        fight.player.mana = 0.0;
+        let end = before + 12 * crate::core::time::NS_PER_SECOND;
+        let ticks = fight.recover_native_world_actor_until(end).unwrap();
+        assert!(ticks > 0, "scheduled native mana ticks were not replayed");
+        assert!(fight.player.mana > 0.0, "native mana regeneration did not apply");
+        assert_eq!(fight.now, end);
+        assert!(fight.accepts_next_target_clock(end, end + 1_000_000_000, true));
     }
 
     #[test]
