@@ -3,6 +3,7 @@
 //! Warrior talent strings that put more points in a talent than it has ranks, which are refused
 //! with the reason in place of panicking.
 
+use forever_engine::RngMode;
 use forever_engine::{
     check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared,
     PrepareError, Rules,
@@ -75,7 +76,7 @@ fn spell(prepared: &Value, spell_id: i64) -> &Value {
 fn simulate(prepared: &Value) -> Value {
     let prepared: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
     check_prepared(&prepared).unwrap();
-    simulate_prepared(&prepared).unwrap().result
+    simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result
 }
 
 /// The log of the first fight of a prepared request.
@@ -85,7 +86,7 @@ fn first_fight_log(request: &Value, rules: Rules) -> String {
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    let report = simulate_prepared(&prepared).unwrap();
+    let report = simulate_prepared(&prepared, RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
