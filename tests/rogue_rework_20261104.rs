@@ -3,6 +3,7 @@
 //! Flash of Steel, Boot Knife, Venom on Shank, Blood Splatter, and the changed rank counts. Only
 //! Forever's rules prepare them; the Go reference keeps the frozen data and its goldens.
 
+use forever_engine::RngMode;
 use forever_engine::{
     check_prepared, contracts::prepared_v2::PreparedV2, prepare_json_with, simulate_prepared,
     PrepareError, Rules,
@@ -133,7 +134,7 @@ fn first_fight_log(request: &Value, rules: Rules) -> String {
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    let report = simulate_prepared(&prepared).unwrap();
+    let report = simulate_prepared(&prepared, RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -603,7 +604,7 @@ fn death_mark_releases_stored_damage_after_six_seconds() {
     };
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
     check_prepared(&prepared).unwrap();
-    let result = simulate_prepared(&prepared).unwrap().result;
+    let result = simulate_prepared(&prepared, RngMode::Stochastic).unwrap().result;
     let player = &result["raidMetrics"]["parties"][0]["players"][0];
     let damage_of = |spell_id: Option<i64>| -> f64 {
         player["actions"]
