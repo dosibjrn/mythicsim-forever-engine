@@ -190,7 +190,8 @@ fn parse_shaman_equipment_skills(text: &str) -> Result<ShamanEquipmentSkills, ()
         || source.class != "shaman"
         || source.class_id != 7
         || source.class_mask != 64
-        || source.race_policy != "class-wide only; SkillRaceClassInfo race mask must be unrestricted"
+        || source.race_policy
+            != "class-wide only; SkillRaceClassInfo race mask must be unrestricted"
         || source.skills.is_empty()
     {
         return Err(());
@@ -201,7 +202,9 @@ fn parse_shaman_equipment_skills(text: &str) -> Result<ShamanEquipmentSkills, ()
     for row in source.skills {
         if row.skill_id <= 0
             || row.name.trim().is_empty()
-            || row.min_level.is_some_and(|level| !(1..=60).contains(&level))
+            || row
+                .min_level
+                .is_some_and(|level| !(1..=60).contains(&level))
             || row.min_level.is_some() != row.race_unrestricted
             || skill_ids.insert(row.skill_id, ()).is_some()
         {

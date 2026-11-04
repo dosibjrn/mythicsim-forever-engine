@@ -562,7 +562,9 @@ fn native_shaman_item_eligible(
                     | "RangedWeaponTypeSigil"
             ) {
                 // Relics have no weapon skill line. Require an explicit native Shaman allowlist.
-                item.class_allowlist.iter().any(|allowed| allowed == "ClassShaman")
+                item.class_allowlist
+                    .iter()
+                    .any(|allowed| allowed == "ClassShaman")
             } else {
                 native_shaman_weapon_eligible(item, level, skills)
             }
@@ -887,10 +889,26 @@ mod native_item_options_contract_tests {
             armor_type: armor_type.to_string(),
             ..Item::default()
         };
-        assert!(native_shaman_item_eligible(&armor("ArmorTypeCloth"), 20, skills));
-        assert!(native_shaman_item_eligible(&armor("ArmorTypeLeather"), 20, skills));
-        assert!(!native_shaman_item_eligible(&armor("ArmorTypeMail"), 20, skills));
-        assert!(!native_shaman_item_eligible(&armor("ArmorTypePlate"), 20, skills));
+        assert!(native_shaman_item_eligible(
+            &armor("ArmorTypeCloth"),
+            20,
+            skills
+        ));
+        assert!(native_shaman_item_eligible(
+            &armor("ArmorTypeLeather"),
+            20,
+            skills
+        ));
+        assert!(!native_shaman_item_eligible(
+            &armor("ArmorTypeMail"),
+            20,
+            skills
+        ));
+        assert!(!native_shaman_item_eligible(
+            &armor("ArmorTypePlate"),
+            20,
+            skills
+        ));
 
         let weapon = |weapon_type: &str, hand_type: &str| Item {
             id: 1,
