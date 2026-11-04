@@ -51,6 +51,9 @@ jobs:
           print("ROGUE_EQUIPMENT_MANIFEST_START", flush=True)
           print(Path("data/rogue-equipment-skills.manifest.json").read_text().strip(), flush=True)
           print("ROGUE_EQUIPMENT_MANIFEST_END", flush=True)
+          print("ROGUE_MAIN_MANIFEST_START", flush=True)
+          print(Path("data/manifest.json").read_text().strip(), flush=True)
+          print("ROGUE_MAIN_MANIFEST_END", flush=True)
           PY
       - name: Upload canonical source projection and manifests
         if: always()
