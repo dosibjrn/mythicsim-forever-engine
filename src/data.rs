@@ -116,7 +116,6 @@ pub(crate) fn proto_row(
     })
 }
 
-
 /// Required character levels projected from the pinned client's ItemSparse DB2 table.
 const ITEM_REQUIRED_LEVELS: &str = include_str!("../data/item-required-levels.jsonl");
 
@@ -132,8 +131,12 @@ fn parse_item_required_levels(text: &str) -> HashMap<i32, i32> {
         if line.trim().is_empty() {
             continue;
         }
-        let row: ItemRequiredLevelRow = serde_json::from_str(line)
-            .unwrap_or_else(|error| panic!("data/item-required-levels.jsonl:{}: {error}", line_number + 1));
+        let row: ItemRequiredLevelRow = serde_json::from_str(line).unwrap_or_else(|error| {
+            panic!(
+                "data/item-required-levels.jsonl:{}: {error}",
+                line_number + 1
+            )
+        });
         assert!(
             row.required_level >= 0,
             "data/item-required-levels.jsonl:{}: negative RequiredLevel for item {}",

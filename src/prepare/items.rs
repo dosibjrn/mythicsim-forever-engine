@@ -510,7 +510,8 @@ fn native_item_class_eligible(item: &Item, class: &str, class_proto: &str) -> bo
     if matches!(
         slot,
         Some("head" | "shoulder" | "chest" | "wrist" | "hands" | "waist" | "legs" | "feet")
-    ) && item.armor_type != "ArmorTypeCloth" {
+    ) && item.armor_type != "ArmorTypeCloth"
+    {
         return false;
     }
 
@@ -535,13 +536,7 @@ pub fn native_item_options(
     spec: &str,
     slot: &str,
 ) -> NativeItemOptionsResponse {
-    native_item_options_with_required_levels(
-        class,
-        level,
-        spec,
-        slot,
-        data::item_required_levels(),
-    )
+    native_item_options_with_required_levels(class, level, spec, slot, data::item_required_levels())
 }
 
 fn native_item_options_with_required_levels(
@@ -713,8 +708,13 @@ mod native_item_options_contract_tests {
     fn priest_and_mage_options_return_source_level_legal_candidates() {
         let levels = synthetic_levels();
         for class in ["priest", "mage"] {
-            let response =
-                native_item_options_with_required_levels(class, 20, "unrestricted", "chest", &levels);
+            let response = native_item_options_with_required_levels(
+                class,
+                20,
+                "unrestricted",
+                "chest",
+                &levels,
+            );
             assert_eq!(response.status, "ok");
             assert!(response.required_level_supported);
             assert!(response.refusal.is_none());
@@ -731,14 +731,27 @@ mod native_item_options_contract_tests {
     #[test]
     fn candidates_above_the_character_required_level_are_excluded() {
         let mut levels = synthetic_levels();
-        let baseline =
-            native_item_options_with_required_levels("priest", 20, "unrestricted", "chest", &levels);
+        let baseline = native_item_options_with_required_levels(
+            "priest",
+            20,
+            "unrestricted",
+            "chest",
+            &levels,
+        );
         assert!(!baseline.items.is_empty());
         let excluded_id = baseline.items[0].item_id;
         levels.insert(excluded_id, 21);
-        let filtered =
-            native_item_options_with_required_levels("priest", 20, "unrestricted", "chest", &levels);
-        assert!(!filtered.items.iter().any(|item| item.item_id == excluded_id));
+        let filtered = native_item_options_with_required_levels(
+            "priest",
+            20,
+            "unrestricted",
+            "chest",
+            &levels,
+        );
+        assert!(!filtered
+            .items
+            .iter()
+            .any(|item| item.item_id == excluded_id));
         assert_eq!(filtered.items.len() + 1, baseline.items.len());
     }
 
