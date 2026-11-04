@@ -400,6 +400,9 @@ pub struct NativeItemOption {
     pub name: String,
     /// The embedded database's base scaling-option item level, not required level.
     pub item_level: Option<i32>,
+    /// Actual character required level. None until the native source exposes it;
+    /// item level must never be substituted for this field.
+    pub required_level: Option<i32>,
     /// Native equipment slot, e.g. chest, finger, one_hand, off_hand or ranged.
     pub slot: String,
     pub item_type: String,
@@ -638,6 +641,7 @@ pub fn native_item_options(
             item_id: item.id,
             name: item.name,
             item_level: scaling.has("ilvl").then(|| scaling.i32("ilvl")),
+            required_level: None,
             slot: source_slot.to_string(),
             item_type: item.item_type,
             armor_type: item.armor_type,
@@ -689,6 +693,7 @@ mod native_item_options_contract_tests {
             assert!(!response.required_level_supported);
             assert!(response.refusal.is_none());
             assert!(!response.items.is_empty());
+            assert!(response.items.iter().all(|item| item.required_level.is_none()));
             assert!(response.items.windows(2).all(|pair| {
                 pair[0].item_level.unwrap_or(-1) > pair[1].item_level.unwrap_or(-1)
                     || (pair[0].item_level == pair[1].item_level
