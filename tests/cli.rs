@@ -215,7 +215,6 @@ fn sim_without_the_gate_still_fails_a_refusal_as_an_error() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("prepared input unsupported"));
 }
 
-
 /// Exercise the actual Rogue L20 actor and learned Sinister Strike against native Rust,
 /// without granting gate credit from request labels or a fake level-60 prepared actor.
 #[test]
@@ -255,10 +254,8 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     request["simOptions"]["iterations"] = serde_json::json!(1);
     request["simOptions"]["debugFirstIteration"] = serde_json::json!(false);
 
-    let directory = std::env::temp_dir().join(format!(
-        "forever-rogue-l20-cli-{}",
-        std::process::id()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("forever-rogue-l20-cli-{}", std::process::id()));
     let _ = fs::remove_dir_all(&directory);
     fs::create_dir_all(&directory).unwrap();
     let input = directory.join("rogue-l20.request.json");
@@ -284,11 +281,15 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     assert_eq!(prepared["player"]["class"], "ClassRogue");
     let spells = prepared["player"]["spells"].as_array().unwrap();
     assert!(
-        spells.iter().any(|spell| spell["action_id"]["spell_id"] == 1752),
+        spells
+            .iter()
+            .any(|spell| spell["action_id"]["spell_id"] == 1752),
         "Rogue L20 must have native rank-one Sinister Strike: {spells:?}"
     );
     assert!(
-        !spells.iter().any(|spell| spell["action_id"]["spell_id"] == 11294),
+        !spells
+            .iter()
+            .any(|spell| spell["action_id"]["spell_id"] == 11294),
         "Rogue L20 must not inherit the final-level Sinister Strike rank"
     );
 
@@ -315,11 +316,15 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
         .flat_map(|action| action["targets"].as_array().into_iter().flatten())
         .map(|target| target["casts"].as_i64().unwrap_or(0))
         .sum::<i64>();
-    assert!(casts > 0, "Rogue L20 must cast actual low-rank Sinister Strike: {actions:?}");
+    assert!(
+        casts > 0,
+        "Rogue L20 must cast actual low-rank Sinister Strike: {actions:?}"
+    );
     assert!(
         report["result"]["raidMetrics"]["dps"]["avg"]
             .as_f64()
-            .unwrap_or(0.0) > 0.0,
+            .unwrap_or(0.0)
+            > 0.0,
         "native Rogue L20 must actually produce positive combat damage"
     );
     fs::remove_dir_all(directory).unwrap();
@@ -366,10 +371,8 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     request["simOptions"]["iterations"] = serde_json::json!(1);
     request["simOptions"]["debugFirstIteration"] = serde_json::json!(false);
 
-    let directory = std::env::temp_dir().join(format!(
-        "forever-priest-l20-cli-{}",
-        std::process::id()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("forever-priest-l20-cli-{}", std::process::id()));
     let _ = fs::remove_dir_all(&directory);
     fs::create_dir_all(&directory).unwrap();
     let input = directory.join("priest-l20.request.json");
