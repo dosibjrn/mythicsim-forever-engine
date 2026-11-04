@@ -34,6 +34,9 @@ pub use engine::simulate;
 pub use prepare::{
     prepare, prepare_json, prepare_json_with, PrepareError, Refusal as PrepareRefusal, Rules,
 };
+pub use prepare::items::{
+    native_item_options, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
+};
 
 /// Prepared v2 effect kinds this engine executes. The release manifest must agree.
 pub fn implemented_prepared_effects() -> &'static [&'static str] {
