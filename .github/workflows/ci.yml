@@ -100,6 +100,4 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Verify native Paladin L20 source context before broad suite
-        run: cargo test --locked --test native_player_context
       - run: cargo test --locked
