@@ -243,6 +243,17 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     request["encounter"]["targets"][0]["level"] = serde_json::json!(20);
     request["encounter"]["targets"][0]["name"] = serde_json::json!("Level 20");
     request["encounter"]["targets"][0]["minBaseDamage"] = serde_json::json!(0);
+    request["encounter"]["targets"][0]["damageSpread"] = serde_json::json!(0.0);
+    let target_stats_len = request["encounter"]["targets"][0]["stats"]
+        .as_array()
+        .unwrap()
+        .len();
+    let mut target_stats = vec![0.0; target_stats_len];
+    // The target's source health is stat index 32 in the request contract.
+    // Keep it alive for the 30-second smoke without letting a level-63 boss
+    // fixture kill the level-20 actor before its first cast.
+    target_stats[32] = 10_000.0;
+    request["encounter"]["targets"][0]["stats"] = serde_json::json!(target_stats);
     request["simOptions"]["iterations"] = serde_json::json!(1);
     request["simOptions"]["debugFirstIteration"] = serde_json::json!(false);
 
@@ -272,6 +283,10 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     let prepared: serde_json::Value =
         serde_json::from_slice(&fs::read(&prepared_path).unwrap()).unwrap();
     assert_eq!(prepared["player"]["level"], 20);
+    assert!(
+        prepared["player"]["mana"]["max"].as_f64().unwrap_or(0.0) > 0.0,
+        "the native Priest L20 actor must have its source-backed mana pool"
+    );
     let spells = prepared["player"]["spells"].as_array().unwrap();
     assert!(
         spells
@@ -302,7 +317,7 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
         serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
     assert!(
         report["counts"]["casts"].as_f64().unwrap_or(0.0) > 0.0,
-        "the native Priest L20 actor must cast a source-backed action"
+        "the native Priest L20 actor must cast a source-backed action; report: {report}"
     );
     assert!(
         report["result"]["raidMetrics"]["dps"]["avg"]
