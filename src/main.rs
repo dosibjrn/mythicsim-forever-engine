@@ -1,5 +1,6 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, native_item_options, native_player_context,
+    native_talent_options,
     native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals,
     simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
@@ -166,7 +167,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine talent-options --class druid|hunter|mage|paladin|priest|rogue|shaman|warlock|warrior --level N\nforever-engine version");
         return Ok(());
     }
 
@@ -189,6 +190,37 @@ fn run() -> Result<(), Failure> {
         let output = serde_json::to_string_pretty(&gear_options(&item_types))
             .map_err(|err| err.to_string())?;
         println!("{output}");
+        return Ok(());
+    }
+
+    if args[0] == "talent-options" {
+        let mut class: Option<String> = None;
+        let mut level: Option<i32> = None;
+        let mut index = 1;
+        while index < args.len() {
+            let flag = args[index].as_str();
+            let value = args.get(index + 1)
+                .ok_or_else(|| format!("{flag} requires a value"))?;
+            match flag {
+                "--class" => {
+                    if class.replace(value.clone()).is_some() {
+                        return Err("duplicate --class".into());
+                    }
+                }
+                "--level" => {
+                    let parsed = value.parse::<i32>().map_err(|_| "invalid --level")?;
+                    if level.replace(parsed).is_some() {
+                        return Err("duplicate --level".into());
+                    }
+                }
+                _ => return Err(format!("unsupported talent-options argument {flag}").into()),
+            }
+            index += 2;
+        }
+        let class = class.ok_or("talent-options requires --class")?;
+        let level = level.ok_or("talent-options requires --level")?;
+        println!("{}", serde_json::to_string_pretty(&native_talent_options(&class, level))
+            .map_err(|err| err.to_string())?);
         return Ok(());
     }
     if args[0] == "player-context" {
