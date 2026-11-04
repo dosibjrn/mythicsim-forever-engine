@@ -25,6 +25,13 @@ DATA = ROOT / "data"
 TOOL = ROOT / "tools" / "rust-data"
 MANIFEST = DATA / "manifest.json"
 
+PRESERVED_CLIENT_DATA = (
+    "item-required-levels.jsonl",
+    "item-required-levels.manifest.json",
+    "shaman-equipment-skills.json",
+    "shaman-equipment-skills.manifest.json",
+)
+
 # SimDatabase list, output file and the key each row is found by.
 DATABASE_TABLES = [
     ("items", "items.jsonl", "id"),
@@ -132,9 +139,9 @@ def write_data(raw):
     extras = {"curves": spells["curves"], "hand_triggers": spells["hand_triggers"]}
     emit("spell-extras.json", json.dumps(extras, sort_keys=True, separators=(",", ":")) + "\n")
     emit("go-tables.json", json.dumps(load(raw / "go-tables.json"), indent=1, sort_keys=True) + "\n")
-    # Preserve the native client ItemSparse projection across reference-data reimports.
-    # Its source is the pinned client's DB2 table, not the Forever database.
-    for name in ("item-required-levels.jsonl", "item-required-levels.manifest.json"):
+    # Preserve native client DB2 projections across reference-data reimports.
+    # Their source is the pinned client, not the Forever database.
+    for name in PRESERVED_CLIENT_DATA:
         path = DATA / name
         if path.exists():
             files[name] = file_digest(path)
@@ -194,6 +201,49 @@ def check():
             missing_count = int(source_manifest.get("native_items_without_item_sparse_row", -1))
             if native_count <= 0 or missing_count != native_count - len(rows):
                 errors.append("native ItemSparse source manifest item counts are inconsistent")
+    shaman_manifest_path = DATA / "shaman-equipment-skills.manifest.json"
+    shaman_skills_path = DATA / "shaman-equipment-skills.json"
+    if not shaman_manifest_path.exists():
+        errors.append("missing native Shaman SkillLine/SkillRaceClassInfo source manifest")
+    else:
+        shaman_source_manifest = load(shaman_manifest_path)
+        shaman_source = shaman_source_manifest.get("source", {})
+        if shaman_source.get("provider") != "wago.tools":
+            errors.append("native Shaman equipment source is not the pinned Wago DB2 export")
+        if shaman_source.get("client_build") != CLIENT_BUILD:
+            errors.append("native Shaman equipment source build differs from the pinned client build")
+        tables = shaman_source.get("tables", {})
+        for table in ("SkillLine", "SkillRaceClassInfo"):
+            table_source = tables.get(table, {})
+            if not table_source.get("csv_sha256") or int(table_source.get("csv_row_count", 0)) <= 0:
+                errors.append(f"native Shaman equipment source manifest lacks {table} provenance")
+        if "shaman-equipment-skills.manifest.json" not in manifest.get("files", {}):
+            errors.append("native Shaman equipment source manifest is not pinned by data/manifest.json")
+        if "shaman-equipment-skills.json" not in manifest.get("files", {}):
+            errors.append("native Shaman equipment projection is not pinned by data/manifest.json")
+        if not shaman_skills_path.exists() or not shaman_skills_path.read_text(encoding="utf-8").strip():
+            errors.append("native Shaman equipment projection is empty")
+        else:
+            shaman_skills = load(shaman_skills_path)
+            if shaman_skills.get("class") != "shaman" or int(shaman_skills.get("class_id", 0)) != 7:
+                errors.append("native Shaman equipment projection has the wrong class identity")
+            if int(shaman_skills.get("class_mask", 0)) != 64:
+                errors.append("native Shaman equipment projection has the wrong class mask")
+            if shaman_skills.get("client_build") != CLIENT_BUILD:
+                errors.append("native Shaman equipment projection has the wrong client build")
+            if shaman_skills.get("race_policy") != "class-wide only; SkillRaceClassInfo race mask must be unrestricted":
+                errors.append("native Shaman equipment projection has an unknown race policy")
+            skills = shaman_skills.get("skills", [])
+            skill_ids = [int(skill["id"]) for skill in skills]
+            if not skills or len(skill_ids) != len(set(skill_ids)):
+                errors.append("native Shaman equipment projection has no skills or duplicate skill IDs")
+            for skill in skills:
+                if skill.get("min_level") is not None and (
+                    not skill.get("race_unrestricted")
+                    or not 1 <= int(skill["min_level"]) <= 60
+                ):
+                    errors.append(f"native Shaman skill {skill.get('name')} is not a valid class-wide level")
+
     for name, digest in manifest["files"].items():
         path = DATA / name
         if not path.exists():

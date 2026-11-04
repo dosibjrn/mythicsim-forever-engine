@@ -153,6 +153,77 @@ fn parse_item_required_levels(text: &str) -> HashMap<i32, i32> {
     levels
 }
 
+/// The pinned client's class-wide Shaman equipment proficiencies.
+const SHAMAN_EQUIPMENT_SKILLS: &str = include_str!("../data/shaman-equipment-skills.json");
+
+#[derive(serde::Deserialize)]
+struct ShamanEquipmentSkillRow {
+    id: i32,
+    name: String,
+    min_level: Option<i32>,
+    race_unrestricted: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct ShamanEquipmentSkillsFile {
+    client_build: String,
+    class: String,
+    class_id: i32,
+    class_mask: i32,
+    race_policy: String,
+    skills: Vec<ShamanEquipmentSkillRow>,
+}
+
+pub(crate) struct ShamanEquipmentSkills {
+    skill_levels: HashMap<String, Option<i32>>,
+}
+
+impl ShamanEquipmentSkills {
+    pub(crate) fn min_level(&self, name: &str) -> Option<i32> {
+        self.skill_levels.get(name).copied().flatten()
+    }
+}
+
+fn parse_shaman_equipment_skills(text: &str) -> Result<ShamanEquipmentSkills, ()> {
+    let source: ShamanEquipmentSkillsFile = serde_json::from_str(text).map_err(|_| ())?;
+    if source.client_build != crate::CLIENT_BUILD
+        || source.class != "shaman"
+        || source.class_id != 7
+        || source.class_mask != 64
+        || source.race_policy != "class-wide only; SkillRaceClassInfo race mask must be unrestricted"
+        || source.skills.is_empty()
+    {
+        return Err(());
+    }
+
+    let mut skill_ids = HashMap::new();
+    let mut skill_levels = HashMap::new();
+    for row in source.skills {
+        if row.id <= 0
+            || row.name.trim().is_empty()
+            || row.min_level.is_some_and(|level| !(1..=60).contains(&level))
+            || row.min_level.is_some() != row.race_unrestricted
+            || skill_ids.insert(row.id, ()).is_some()
+        {
+            return Err(());
+        }
+        if let Some(existing) = skill_levels.insert(row.name, row.min_level) {
+            if existing != row.min_level {
+                return Err(());
+            }
+        }
+    }
+    Ok(ShamanEquipmentSkills { skill_levels })
+}
+
+pub(crate) fn shaman_equipment_skills() -> Result<&'static ShamanEquipmentSkills, &'static str> {
+    static SKILLS: OnceLock<Result<ShamanEquipmentSkills, ()>> = OnceLock::new();
+    match SKILLS.get_or_init(|| parse_shaman_equipment_skills(SHAMAN_EQUIPMENT_SKILLS)) {
+        Ok(skills) => Ok(skills),
+        Err(()) => Err("the pinned Shaman SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
+    }
+}
+
 /// The native ItemSparse RequiredLevel field, keyed by item ID.
 pub(crate) fn item_required_levels() -> &'static HashMap<i32, i32> {
     static LEVELS: OnceLock<HashMap<i32, i32>> = OnceLock::new();
@@ -162,6 +233,19 @@ pub(crate) fn item_required_levels() -> &'static HashMap<i32, i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_pinned_shaman_equipment_skills_and_keeps_race_restricted_skills_unavailable() {
+        let skills = shaman_equipment_skills().expect("pinned Shaman equipment source");
+        assert_eq!(skills.min_level("Axes"), Some(1));
+        assert_eq!(skills.min_level("Two-Handed Axes"), Some(1));
+        assert_eq!(skills.min_level("Leather"), Some(1));
+        assert_eq!(skills.min_level("Mail"), Some(40));
+        assert_eq!(skills.min_level("Maces"), Some(1));
+        assert_eq!(skills.min_level("Staves"), Some(1));
+        assert_eq!(skills.min_level("Daggers"), None);
+        assert_eq!(skills.min_level("Two-Handed Maces"), None);
+    }
 
     #[test]
     fn finds_rows_by_key() {

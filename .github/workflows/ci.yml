@@ -33,6 +33,19 @@ jobs:
           RUSTDOCFLAGS: -D warnings
       - run: cargo clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
       - run: cargo build --locked --target wasm32-wasip1
+      - name: Query native Shaman L20 item options
+        run: |
+          cargo run --locked -- item-options --class shaman --level 20 --spec unrestricted --slot all > /tmp/shaman-item-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/shaman-item-options.json").read_text())
+          assert result["status"] == "ok", result
+          assert result["required_level_supported"], result
+          assert result["items"], result
+          assert all(item["required_level"] <= 20 for item in result["items"]), result
+          print("SHAMAN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
+          PY
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.25.6'
@@ -42,6 +55,7 @@ jobs:
       - run: go vet ./...
         working-directory: tools/matched-go
       - run: python3 -m unittest discover -s tools -p '*_test.py'
+      - run: python3 tools/rust_data.py check
       - run: python3 tools/inventory.py check
       - run: python3 tools/prepared_v2.py check
       - run: python3 tools/upstream.py check
