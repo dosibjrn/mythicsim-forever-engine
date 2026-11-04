@@ -299,6 +299,7 @@ pub(crate) fn shaman_equipment_skills() -> Result<&'static ShamanEquipmentSkills
 }
 
 const PALADIN_EQUIPMENT_SKILLS: &str = include_str!("../data/paladin-equipment-skills.json");
+const ROGUE_EQUIPMENT_SKILLS: &str = include_str!("../data/rogue-equipment-skills.json");
 
 #[derive(serde::Deserialize)]
 struct PaladinSkillLineName {
@@ -342,13 +343,17 @@ impl PaladinEquipmentSkills {
     }
 }
 
-fn parse_paladin_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()> {
+fn parse_class_equipment_skills(
+    text: &str,
+    class: &str,
+    class_id: i32,
+) -> Result<PaladinEquipmentSkills, ()> {
     let source: PaladinEquipmentSkillsFile = serde_json::from_str(text).map_err(|_| ())?;
     if source.schema_version != 2
         || source.client_build != crate::CLIENT_BUILD
-        || source.class != "paladin"
-        || source.class_id != 2
-        || source.class_mask != 2
+        || source.class != class
+        || source.class_id != class_id
+        || source.class_mask != (1 << (class_id - 1))
         || source.race_policy
             != "class-wide only; SkillRaceClassInfo race mask must be unrestricted"
         || source.skills.is_empty()
@@ -434,11 +439,28 @@ fn parse_paladin_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, 
     })
 }
 
+fn parse_paladin_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()> {
+    parse_class_equipment_skills(text, "paladin", 2)
+}
+
+fn parse_rogue_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()> {
+    parse_class_equipment_skills(text, "rogue", 4)
+}
+
 pub(crate) fn paladin_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
     static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
     match SKILLS.get_or_init(|| parse_paladin_equipment_skills(PALADIN_EQUIPMENT_SKILLS)) {
         Ok(skills) => Ok(skills),
         Err(()) => Err("the pinned Paladin SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
+    }
+}
+
+/// The same validated client SkillLine/SkillRaceClassInfo schema, scoped to Rogue mask 8.
+pub(crate) fn rogue_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
+    static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
+    match SKILLS.get_or_init(|| parse_rogue_equipment_skills(ROGUE_EQUIPMENT_SKILLS)) {
+        Ok(skills) => Ok(skills),
+        Err(()) => Err("the pinned Rogue SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
     }
 }
 
@@ -476,6 +498,22 @@ mod tests {
         assert_eq!(skills.min_level("Plate Mail"), Some(40));
         assert!(skills.has_skill_line("Axes"));
         assert!(skills.has_skill_line("Shield"));
+    }
+
+    #[test]
+    fn reads_source_generated_rogue_equipment_projection() {
+        let skills = rogue_equipment_skills().expect("pinned Rogue equipment source");
+        assert_eq!(skills.min_level("Daggers"), Some(1));
+        assert_eq!(skills.min_level("Leather"), Some(1));
+        assert_eq!(skills.min_level("Cloth"), Some(1));
+        assert_eq!(skills.min_level("Swords"), None); // race-restricted DB2 rows
+        assert_eq!(skills.min_level("Maces"), None);
+        assert!(skills.has_skill_line("Plate Mail"));
+        let source: serde_json::Value =
+            serde_json::from_str(ROGUE_EQUIPMENT_SKILLS).expect("checked-in DB2 projection");
+        assert_eq!(source["class_mask"], 8);
+        assert_eq!(source["client_build"], crate::CLIENT_BUILD);
+        assert!(parse_class_equipment_skills(ROGUE_EQUIPMENT_SKILLS, "paladin", 2).is_err());
     }
 
     #[test]
