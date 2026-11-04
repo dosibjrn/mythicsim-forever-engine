@@ -5797,18 +5797,30 @@ impl<A: Agent> Fight<A> {
         let mut previous_mana_regen_events = 0_i32;
 
         for index in 0..target_count {
+            let mut native_recovery_ticks = 0;
+            let mut native_recovery_elapsed_ns = 0;
             if index != 0 {
-                // No free actor reset. This intentionally retains the current
-                // no-downtime diagnostic clock until real paid travel/recovery
-                // is coupled through the same native/world timeline.
-                let next_at = self
-                    .now
+                // Pay for rest on the same native clock and actor, without
+                // resetting resources, cooldowns, auras or the event queue.
+                // Only native scheduled passive regeneration is processed
+                // while the previous 2D target is dead.
+                let killed_at = self.now;
+                let next_at = killed_at
+                    .checked_add(12 * crate::core::time::NS_PER_SECOND)
+                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                // The new target is selected before the paid travel/rest
+                // interval, so every 2D movement step can be observed by the
+                // native boundary while attacks remain paused.
+                let world_started_at = killed_at
                     .checked_add(1_000_000)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                world_bridge::begin_next_target(world_started_at)?;
+                native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
+                native_recovery_elapsed_ns = next_at - killed_at;
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
-                self.begin_next_target(next_at, next_end)?;
+                self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
             while self.step() {}
             if !world_bridge::acknowledged_lethal() {
@@ -5848,6 +5860,8 @@ impl<A: Agent> Fight<A> {
                     (mana_regen_gain - previous_mana_regen_gain).max(0.0),
                 "native_combat_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
+                "native_passive_recovery_ns": native_recovery_elapsed_ns,
+                "native_passive_recovery_ticks": native_recovery_ticks,
                 "source_action_counts": world_bridge::take_source_action_counts(),
             }));
             previous_damage = total_damage;
@@ -5856,10 +5870,20 @@ impl<A: Agent> Fight<A> {
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
+        // Count only native scheduler regeneration actually paid on the
+        // retained actor between ACKed world kills. Time alone, an assumed
+        // refill or a completed movement schedule is not regeneration proof.
+        let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
+            window["native_passive_recovery_ns"]
+                .as_i64().is_some_and(|ns| ns > 0)
+                && window["native_passive_recovery_ticks"]
+                    .as_u64().is_some_and(|ticks| ticks > 0)
+        });
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
-            "paid_recovery": false, "world_targets_killed": target_count,
+            "paid_recovery": native_passive_recovery_paid,
+            "world_targets_killed": target_count,
             "windows": windows,
         });
         self.cleanup();
@@ -5906,10 +5930,62 @@ impl<A: Agent> Fight<A> {
         Ok(report)
     }
 
+    /// Advance a retained native actor through a paid, target-free rest interval.
+    /// Consume the existing native scheduled mana/health regeneration actions,
+    /// not an invented mana refill. Keep combat events and their handles queued
+    /// for the following pull; never execute attacks on a defeated world target.
+    fn recover_native_world_actor_until(&mut self, until_ns: i64)
+        -> Result<usize, &'static str>
+    {
+        if until_ns < self.now {
+            return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
+        }
+        let mut ticks = 0;
+        // Follow the live 2D clock through travel. A single 12-second jump
+        // would skip the actual SpatialPlayerMoveStep observations and lose
+        // native moving/cast-legality receipts even though gsim paid the route.
+        // No native attacks are allowed while the actor recovers.
+        let mut boundary = self.now;
+        while boundary < until_ns {
+            boundary = boundary
+                .saturating_add(100_000_000)
+                .min(until_ns);
+            while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
+                boundary,
+                |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }),
+            ) {
+                if at > self.now {
+                    self.advance_to(at);
+                }
+                if self.handle_still_valid(handle, &action) {
+                    self.run_action(handle, action);
+                    ticks += 1;
+                }
+            }
+            self.advance_to(boundary);
+            if world_bridge::enabled() {
+                let (distance, front, moving) =
+                    world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken);
+                if distance != self.config.distance {
+                    self.config.distance = distance;
+                    self.changed(reads::CASTS);
+                }
+                if self.config.melee.in_front_of_target != front {
+                    self.config.melee.in_front_of_target = front;
+                    self.changed(reads::CASTS);
+                }
+                if self.player.moving != moving {
+                    self.player.moving = moving;
+                    self.changed(reads::CASTS);
+                }
+            }
+        }
+        Ok(ticks)
+    }
+
     /// Begin a second distinct world target on the SAME native actor.
     /// No iteration reset, resource reset, cooldown reset, aura reset or queue clear.
-    /// Until paid downtime is implemented in the native session, accept only
-    /// an immediate next pull; skipping scheduled recovery events is illegal.
+    /// A native-only window still starts at the preceding exact window end.
     /// Native-only duration windows continue at the old exact end timestamp.
     /// A live world may kill its target earlier, but only the separate
     /// world_bridge::begin_next_target() validates the actual lethal ACK.
@@ -5918,7 +5994,9 @@ impl<A: Agent> Fight<A> {
             && at_ns >= 0
             && next_end_ns > at_ns
             && (if live_world {
-                at_ns <= self.end_of_combat
+                // The paid passive recovery helper already advanced the
+                // retained actor to its next pull's timestamp.
+                at_ns <= self.end_of_combat || (at_ns == self.now)
             } else {
                 at_ns == self.end_of_combat
             })
@@ -5929,10 +6007,19 @@ impl<A: Agent> Fight<A> {
         at_ns: i64,
         next_end_ns: i64,
     ) -> Result<(), &'static str> {
+        self.begin_next_target_with_bridge(at_ns, next_end_ns, true)
+    }
+
+    fn begin_next_target_with_bridge(
+        &mut self,
+        at_ns: i64,
+        next_end_ns: i64,
+        start_world_target: bool,
+    ) -> Result<(), &'static str> {
         if !self.accepts_next_target_clock(at_ns, next_end_ns, world_bridge::enabled()) {
             return Err("RUST_NEXT_TARGET_CLOCK_INVALID");
         }
-        if world_bridge::enabled() {
+        if world_bridge::enabled() && start_world_target {
             world_bridge::begin_next_target(at_ns)?;
         }
         self.advance_to(at_ns);
@@ -5941,7 +6028,20 @@ impl<A: Agent> Fight<A> {
         // A defeated target can still have active debuffs. End ONLY its aura
         // lifetime before reset; never call global cleanup on the actor.
         self.aura_done_iteration(Side::Target);
+        self.retire_defeated_world_enemy_attack();
         self.reset_unit(Side::Target);
+        if self.config.target_auto_swing_melee {
+            // Enemy reset computes an offset from a fight starting at t=0.
+            // A retained world's fresh enemy must swing relative to THIS
+            // pull, not immediately at a stale timestamp from the first.
+            let attack = self.autos.enemy_attack(Side::Target);
+            attack.swing_at = at_ns.checked_add(attack.swing_at)
+                .ok_or("RUST_NEXT_TARGET_ENEMY_SWING_CLOCK_OVERFLOW")?;
+            attack.natural_ready_at = at_ns.checked_add(attack.natural_ready_at)
+                .ok_or("RUST_NEXT_TARGET_ENEMY_SWING_CLOCK_OVERFLOW")?;
+            attack.previous_swing = at_ns.checked_add(attack.previous_swing)
+                .ok_or("RUST_NEXT_TARGET_ENEMY_SWING_CLOCK_OVERFLOW")?;
+        }
         self.pull_started_at = at_ns;
         self.duration = next_end_ns;
         self.end_of_combat = next_end_ns;
@@ -6794,6 +6894,55 @@ mod tests {
         assert!(!fight.accepts_next_target_clock(now - 1, cap + 1, true));
         assert!(!fight.accepts_next_target_clock(early, early, true));
         // This test does not fake a lethal source event or certify a hybrid mob.
+    }
+
+    #[test]
+    fn native_world_recovery_pays_scheduled_mana_without_resetting_actor() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+        let before = fight.now;
+        fight.player.mana = 0.0;
+        let end = before + 12 * crate::core::time::NS_PER_SECOND;
+        let ticks = fight.recover_native_world_actor_until(end).unwrap();
+        assert!(ticks > 0, "scheduled native mana ticks were not replayed");
+        assert!(fight.player.mana > 0.0, "native mana regeneration did not apply");
+        assert_eq!(fight.now, end);
+        assert!(fight.accepts_next_target_clock(end, end + 1_000_000_000, true));
+    }
+
+    #[test]
+    fn native_persistent_next_target_resets_only_enemy_swing_on_monotonic_clock() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/feral-bear-druid-defensives.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+        let at = fight.end_of_combat;
+        fight.begin_next_target(at, at + 5 * crate::core::time::NS_PER_SECOND)
+            .unwrap();
+        assert!(fight.config.target_auto_swing_melee);
+        assert!(!fight.autos.enemy.enabled, "enemy cannot attack before next pull starts");
+        assert!(fight.autos.enemy.swing_at >= at, "new enemy swing was backdated");
+        assert!(fight.autos.enemy.swing_at < at + fight.autos.enemy.cur_swing_duration);
     }
 
     #[test]
