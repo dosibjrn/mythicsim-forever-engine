@@ -633,3 +633,34 @@ RNG behavior, combat semantics and reference tooling derive from
 [MythicSim's Go fork](https://github.com/sage3648/mythicsim-forever-engine-go).
 See [NOTICE.md](NOTICE.md) for provenance. This project is not affiliated with
 Blizzard Entertainment or the WoW Forever server team.
+
+
+### Native build search options (Rust)
+
+Use the single native-source discovery entry point:
+
+```text
+forever-engine options --class druid --level 30
+forever-engine talent-options --class druid --level 30
+```
+
+Rust: `get_options(level: u8, class: OptionsClass) -> Result<CharacterOptions, String>`.
+
+`options` combines spell-family candidate rows, source-backed item options,
+and the pinned TalentsForever tree metadata (9 classes, tier and parent/rank
+prerequisites, point budget). It does not invent a new build validator or alter
+simulation semantics. The existing `native_item_options()` implementation
+provides verified class proficiency and client `ItemSparse.RequiredLevel` facts
+for Priest, Mage, Shaman, Paladin and Rogue. Other classes expose client-level-
+bounded candidate items *only as proficiency-unverified source facts*, never as
+legal proposals. Spell family rows likewise do not prove trainer learnability.
+
+Legacy Wowhead decisions item facts are available via
+`legacy_item_fact(item_id)`. The imported `data/legacy-wowhead-items.jsonl`
+contains 7,913 historical items with 7,348 observed and 565 inferred
+required levels and class-capture provenance. The client `ItemSparse` level
+always takes precedence; the historical level is **metadata**, not a
+substitute for live client eligibility. Run
+`tools/export_legacy_wowhead_items.py` on the pinned private source SQLite
+snapshot to regenerate the projection. `coverage` marks any incomplete
+learnability/proficiency scope explicitly.
