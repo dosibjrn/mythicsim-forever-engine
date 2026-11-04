@@ -42,6 +42,7 @@ pub fn implemented_prepared_effects() -> &'static [&'static str] {
 pub use prepare::items::{
     native_item_options, native_player_context, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
 };
+pub use prepare::talent_options::native_talent_options;
 pub use report::{Counts, Report, TraceEvent, Work};
 
 /// The pinned Go reference revision, from upstream/sources.json.
