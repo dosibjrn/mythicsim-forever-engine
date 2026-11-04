@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Import Shaman equipment skill eligibility from the pinned client's Wago DB2 tables.
 
-The projection is deliberately class-wide: a skill is marked available only when every
-race represented by the pinned SkillRaceClassInfo rows for Shaman has that skill.
-Race-specific proficiencies are never silently widened to all Shamans.
+The native item-options API has no race parameter, so this projection only treats a skill
+as class-wide when SkillRaceClassInfo has an unrestricted race mask for Shaman. A
+race-restricted skill is preserved as unavailable instead of being widened.
 """
 
 import argparse
@@ -71,6 +71,11 @@ def race_mask(row, table, line_number):
     return low | (high << 32)
 
 
+def race_mask_is_unrestricted(mask):
+    # SkillRaceClassInfo uses both an empty mask and an all-bits mask for no race restriction.
+    return mask == 0 or mask < 0 or mask in (0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+
+
 def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=DATA):
     data_dir = Path(data_dir)
     main_manifest_path = data_dir / "manifest.json"
@@ -100,80 +105,58 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
         category_id = integer(row, ("CategoryID",), "SkillLine", line_number, required=False, default=0)
         skill_lines[skill_id] = {"name": name, "category_id": category_id}
 
-    raw_rows = []
-    shaman_race_mask = 0
+    by_skill = {}
     shaman_class_rows = 0
-    unavailable_rows = 0
+    availability_counts = {}
     for line_number, row in enumerate(skill_info_rows, 2):
         skill_id = integer(row, ("SkillID",), "SkillRaceClassInfo", line_number)
         class_mask = integer(row, ("ClassMask", "ClassMask1", "ClassMask_0"), "SkillRaceClassInfo", line_number)
         mask = race_mask(row, "SkillRaceClassInfo", line_number)
         raw_min_level = integer(row, ("MinLevel",), "SkillRaceClassInfo", line_number)
         availability = integer(row, ("Availability",), "SkillRaceClassInfo", line_number)
-        if availability != 1:
-            unavailable_rows += 1
-            continue
+        availability_counts[str(availability)] = availability_counts.get(str(availability), 0) + 1
+
         if class_mask != 0 and not (class_mask & SHAMAN_CLASS_MASK):
             continue
         if class_mask & SHAMAN_CLASS_MASK:
             shaman_class_rows += 1
-            if mask:
-                shaman_race_mask |= mask
-        raw_rows.append({
-            "skill_id": skill_id,
+        by_skill.setdefault(skill_id, []).append({
             "class_mask": class_mask,
             "race_mask": mask,
+            "race_unrestricted": race_mask_is_unrestricted(mask),
             "source_min_level": raw_min_level,
             "min_level": max(1, raw_min_level),
+            "availability": availability,
         })
 
     if not shaman_class_rows:
-        raise ValueError("SkillRaceClassInfo contains no available rows for Shaman class mask 64")
+        raise ValueError("SkillRaceClassInfo contains no rows for Shaman class mask 64")
     if not skill_lines:
         raise ValueError("SkillLine contains no rows")
 
-    by_skill = {}
-    for row in raw_rows:
-        if row["skill_id"] not in skill_lines:
-            raise ValueError(f"SkillRaceClassInfo references missing SkillLine ID {row['skill_id']}")
-        if not skill_lines[row["skill_id"]]["name"]:
-            raise ValueError(f"SkillLine ID {row['skill_id']} has no display name")
-        by_skill.setdefault(row["skill_id"], []).append(row)
-
-    race_ids = [
-        bit_index + 1
-        for bit_index in range(shaman_race_mask.bit_length())
-        if shaman_race_mask & (1 << bit_index)
-    ]
     skills = []
     for skill_id, rows in by_skill.items():
-        if shaman_race_mask:
-            per_race = {}
-            for race_id in race_ids:
-                bit = 1 << (race_id - 1)
-                available = [
-                    row["min_level"]
-                    for row in rows
-                    if row["race_mask"] == 0 or row["race_mask"] & bit
-                ]
-                per_race[str(race_id)] = min(available) if available else None
-            min_level = (
-                max(per_race.values())
-                if per_race and all(value is not None for value in per_race.values())
-                else None
-            )
-        else:
-            universal = [row["min_level"] for row in rows if row["race_mask"] == 0]
-            per_race = {}
-            min_level = min(universal) if universal else None
-
+        if skill_id not in skill_lines:
+            raise ValueError(f"SkillRaceClassInfo references missing SkillLine ID {skill_id}")
+        name = skill_lines[skill_id]["name"]
+        if not name:
+            raise ValueError(f"SkillLine ID {skill_id} has no display name")
+        class_rows = [
+            row for row in rows
+            if row["class_mask"] == 0 or row["class_mask"] & SHAMAN_CLASS_MASK
+        ]
+        unrestricted_rows = [row for row in class_rows if row["race_unrestricted"]]
+        min_level = min((row["min_level"] for row in unrestricted_rows), default=None)
         skills.append({
             "skill_id": skill_id,
-            "name": skill_lines[skill_id]["name"],
+            "name": name,
             "category_id": skill_lines[skill_id]["category_id"],
             "min_level": min_level,
-            "per_race_min_level": per_race,
-            "source_rows": len(rows),
+            "race_unrestricted": bool(unrestricted_rows),
+            "availability_values": sorted({row["availability"] for row in class_rows}),
+            "source_rows": len(class_rows),
+            "unrestricted_race_rows": len(unrestricted_rows),
+            "race_restricted_rows": len(class_rows) - len(unrestricted_rows),
         })
     skills.sort(key=lambda item: (item["name"].casefold(), item["skill_id"]))
 
@@ -183,8 +166,7 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
         "class": "shaman",
         "class_id": SHAMAN_CLASS_ID,
         "class_mask": SHAMAN_CLASS_MASK,
-        "race_mask": shaman_race_mask,
-        "race_ids": race_ids,
+        "race_policy": "class-wide only; SkillRaceClassInfo race mask must be unrestricted",
         "skills": skills,
     }
     output_path = data_dir / "shaman-equipment-skills.json"
@@ -212,10 +194,8 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
         },
         "class_id": SHAMAN_CLASS_ID,
         "class_mask": SHAMAN_CLASS_MASK,
-        "shaman_race_mask": shaman_race_mask,
-        "shaman_race_ids": race_ids,
-        "available_shaman_class_skill_row_count": shaman_class_rows,
-        "unavailable_skill_race_class_row_count": unavailable_rows,
+        "shaman_class_skill_row_count": shaman_class_rows,
+        "skill_race_class_availability_counts": dict(sorted(availability_counts.items())),
         "projected_skill_count": len(skills),
         "class_wide_skill_count": sum(skill["min_level"] is not None for skill in skills),
         "race_specific_or_unavailable_skill_count": sum(skill["min_level"] is None for skill in skills),
@@ -231,13 +211,11 @@ def import_shaman_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=
 
     return {
         "client_build": client_build,
-        "shaman_race_mask": shaman_race_mask,
-        "shaman_race_ids": race_ids,
-        "available_shaman_class_skill_row_count": shaman_class_rows,
-        "unavailable_skill_race_class_row_count": unavailable_rows,
+        "shaman_class_skill_row_count": shaman_class_rows,
         "projected_skill_count": len(skills),
         "class_wide_skill_count": source_manifest["class_wide_skill_count"],
         "race_specific_or_unavailable_skill_count": source_manifest["race_specific_or_unavailable_skill_count"],
+        "availability_counts": source_manifest["skill_race_class_availability_counts"],
         "output_sha256": digest(output_path),
         "skill_line_csv_sha256": digest(skill_line_path),
         "skill_race_class_info_csv_sha256": digest(skill_info_path),
