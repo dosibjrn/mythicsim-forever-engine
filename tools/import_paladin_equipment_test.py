@@ -75,10 +75,10 @@ class ImportPaladinEquipmentTests(unittest.TestCase):
             self.row(3, 45, all_races, min_level=1),
             # Availability=0 means not granted automatically at character creation;
             # MinLevel still records the class's trainer-gated proficiency threshold.
-            self.row(4, 46, all_races, min_level=40, availability=0),
+            self.row(4, 46, all_races, min_level=1, availability=0),
             self.row(5, 415, 0, class_mask=0, min_level=0),
             self.row(6, 433, all_races, min_level=1),
-            self.row(7, 293, all_races, min_level=1),
+            self.row(7, 293, all_races, min_level=40),
             # Race-restricted rows are not widened into class-wide access.
             self.row(8, 43, 2, race_mask_high=0),
             self.row(9, 43, 32, race_mask_high=0),
@@ -100,7 +100,7 @@ class ImportPaladinEquipmentTests(unittest.TestCase):
         self.assertEqual(skills["Axes"]["min_level"], 1)
         self.assertEqual(skills["Two-Handed Axes"]["min_level"], 20)
         self.assertEqual(skills["Leather"]["min_level"], 1)
-        self.assertEqual(skills["Mail"]["min_level"], 40)
+        self.assertEqual(skills["Mail"]["min_level"], 1)
         self.assertEqual(skills["Mail"]["availability_values"], [0])
         self.assertEqual(skills["Cloth"]["min_level"], 1)
         self.assertEqual(skills["Shield"]["min_level"], 1)
