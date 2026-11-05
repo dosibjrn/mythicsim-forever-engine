@@ -7,6 +7,10 @@
 //! original public API and prepared v1 JSON contract.
 
 pub mod contracts;
+pub mod legacy_items;
+pub mod options;
+pub use legacy_items::{legacy_item_count, legacy_item_fact, LegacyItemFact};
+pub use options::{get_options, CharacterOptions, Class as OptionsClass};
 pub use core::rng::RngMode;
 pub mod report;
 
@@ -42,6 +46,7 @@ pub fn implemented_prepared_effects() -> &'static [&'static str] {
 pub use prepare::items::{
     native_item_options, native_player_context, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
 };
+pub use prepare::talent_options::native_talent_options;
 pub use report::{Counts, Report, TraceEvent, Work};
 
 /// The pinned Go reference revision, from upstream/sources.json.
