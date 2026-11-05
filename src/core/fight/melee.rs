@@ -488,6 +488,31 @@ impl<A: Agent> Fight<A> {
         }
     }
 
+    /// Retire the defeated world target's swing entry before the next pull.
+    /// Keeping it in the shared auto-attack list re-registers the enemy at
+    /// every EncounterStart, multiplying incoming attacks across the route.
+    /// Player and pet attacks remain registered on the retained actor.
+    pub(crate) fn retire_defeated_world_enemy_attack(&mut self) {
+        while self.autos.attacks.backing[..self.autos.attacks.len]
+            .contains(&(Side::Target, Hand::Enemy))
+        {
+            self.autos.attacks.remove((Side::Target, Hand::Enemy));
+        }
+        self.autos.enemy.enabled = false;
+        let mut next = NEVER_EXPIRES;
+        for index in 0..self.autos.attacks.len() {
+            let (side, hand) = self.autos.attacks[index];
+            let at = match hand {
+                Hand::Enemy => self.autos.enemy_attack(side).swing_at,
+                Hand::Main => self.autos_of(side).mh.swing_at,
+                Hand::Off => self.autos_of(side).oh.swing_at,
+                Hand::Ranged => self.autos_of(side).ranged.swing_at,
+            };
+            next = next.min(at);
+        }
+        self.autos.min_time = next;
+    }
+
     /// Go `AutoAttacks.startPull` for the targets, whose swings are added in unit index order
     /// before the player's.
     pub(crate) fn start_enemy_attacks(&mut self) {
