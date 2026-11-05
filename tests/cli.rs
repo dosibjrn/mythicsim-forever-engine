@@ -512,13 +512,13 @@ fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
     let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--request"])
         .arg(&input)
-        .args(["--actor-level", "20", "--rng-mode", "balanced", "--outfile"])
+        .args(["--actor-level", "20", "--gate", "--rng-mode", "balanced", "--outfile"])
         .arg(&report_path)
         .output()
         .unwrap();
     assert!(
         simulation.status.success(),
-        "native Druid L20 sim failed: stdout={} stderr={}",
+        "native Druid L20 gated sim failed: stdout={} stderr={}",
         String::from_utf8_lossy(&simulation.stdout),
         String::from_utf8_lossy(&simulation.stderr)
     );
