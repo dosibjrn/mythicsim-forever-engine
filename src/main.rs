@@ -1,6 +1,6 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, native_item_options, native_player_context,
-    native_two_pull_windows, native_two_world_targets, prepare_json_with, prepared_refusals,
+    native_two_pull_windows, native_two_world_targets, prepare_json_with_actor_level, prepared_refusals,
     simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, PrepareError,
     PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
@@ -100,8 +100,11 @@ fn prepare_request(
     request: &[u8],
     scenario: &str,
     rules: Rules,
+    actor_level: Option<i32>,
 ) -> Result<serde_json::Value, Failure> {
-    let prepared = std::panic::catch_unwind(|| prepare_json_with(request, scenario, rules))
+    let prepared = std::panic::catch_unwind(|| {
+        prepare_json_with_actor_level(request, scenario, rules, actor_level)
+    })
         .unwrap_or_else(|panic| {
             let reason = panic
                 .downcast_ref::<String>()
@@ -167,7 +170,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine options --class CLASS --level LEVEL\nforever-engine talent-options --class CLASS --level LEVEL\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules] [--actor-level 20]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules] [--actor-level 20]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine options --class CLASS --level LEVEL\nforever-engine talent-options --class CLASS --level LEVEL\nforever-engine version");
         return Ok(());
     }
 
@@ -382,6 +385,7 @@ fn run() -> Result<(), Failure> {
     let mut rng_mode: Option<RngMode> = None;
     let mut infile = None;
     let mut request_file = None;
+    let mut actor_level: Option<i32> = None;
     let mut scenario = None;
     let mut outfile = None;
     let mut trace = false;
@@ -410,6 +414,14 @@ fn run() -> Result<(), Failure> {
                 };
                 if target.replace(value.clone()).is_some() {
                     return Err(format!("duplicate {flag}").into());
+                }
+            }
+            "--actor-level" => {
+                index += 1;
+                let value = args.get(index).ok_or("--actor-level requires a value")?;
+                let parsed = value.parse::<i32>().map_err(|_| "invalid --actor-level")?;
+                if actor_level.replace(parsed).is_some() {
+                    return Err("duplicate --actor-level".into());
                 }
             }
             "--rng-mode" => {
@@ -449,6 +461,9 @@ fn run() -> Result<(), Failure> {
     if go_rules && request_file.is_none() {
         return Err("--go-rules requires --request".into());
     }
+    if actor_level.is_some() && request_file.is_none() {
+        return Err("--actor-level requires --request".into());
+    }
     if args[0] == "prepare" {
         let request = request_file.ok_or("prepare requires --request")?;
         if infile.is_some() || trace || gate {
@@ -457,7 +472,7 @@ fn run() -> Result<(), Failure> {
             );
         }
         let input = fs::read(request).map_err(|err| err.to_string())?;
-        let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules)?;
+        let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
         let output = serde_json::to_string_pretty(&prepared).map_err(|err| err.to_string())?;
         if let Some(path) = outfile {
             write_atomically(&path, &(output + "\n"))?;
@@ -477,7 +492,7 @@ fn run() -> Result<(), Failure> {
                 return Err("--request replaces --infile and is for sim and prepare".into());
             }
             let input = fs::read(request).map_err(|err| err.to_string())?;
-            let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules)?;
+            let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
             Some(serde_json::to_vec(&prepared).map_err(|err| err.to_string())?)
         }
         None => None,
