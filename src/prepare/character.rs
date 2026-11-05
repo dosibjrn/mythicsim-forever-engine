@@ -1019,14 +1019,27 @@ mod level_contract_tests {
     #[test]
     fn omitted_and_explicit_60_keep_legacy_level() {
         let player = Message::from_json_text("proto.Player", "{}").unwrap();
-        assert_eq!(requested_player_level(&player, None).unwrap(), constants::CHARACTER_LEVEL);
-        assert_eq!(requested_player_level(&player, Some(60)).unwrap(), constants::CHARACTER_LEVEL);
+        assert_eq!(
+            requested_player_level(&player, None).unwrap(),
+            constants::CHARACTER_LEVEL
+        );
+        assert_eq!(
+            requested_player_level(&player, Some(60)).unwrap(),
+            constants::CHARACTER_LEVEL
+        );
         let extended = Message::from_json_text(
-            "proto.Player", r#"{"class":"ClassDruid","race":"RaceNightElf","level":20}"#,
-        ).unwrap();
+            "proto.Player",
+            r#"{"class":"ClassDruid","race":"RaceNightElf","level":20}"#,
+        )
+        .unwrap();
         assert_eq!(requested_player_level(&extended, None).unwrap(), 20);
         assert_eq!(requested_player_level(&extended, Some(20)).unwrap(), 20);
-        assert_eq!(requested_player_level(&extended, Some(60)).unwrap_err().code, "level");
+        assert_eq!(
+            requested_player_level(&extended, Some(60))
+                .unwrap_err()
+                .code,
+            "level"
+        );
     }
 
     #[test]
@@ -1060,7 +1073,9 @@ mod level_contract_tests {
         .unwrap();
         assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
         let mut sim = Sim::new();
-        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
+        let unit = sim
+            .new_character_at_level(0, 0, &player, &[], Some(20))
+            .unwrap();
         assert_eq!(sim.unit(unit).level, 20);
         let stats = sim.character(unit).base_stats;
         assert_eq!(stats[Stat::Strength], 37.0);
@@ -1088,7 +1103,12 @@ mod level_contract_tests {
             (r#"{"class":"ClassRogue","race":"RaceHuman"}"#, 30),
         ] {
             let player = Message::from_json_text("proto.Player", json).unwrap();
-            assert_eq!(requested_player_level(&player, Some(level)).unwrap_err().code, "level");
+            assert_eq!(
+                requested_player_level(&player, Some(level))
+                    .unwrap_err()
+                    .code,
+                "level"
+            );
         }
     }
 
@@ -1100,7 +1120,9 @@ mod level_contract_tests {
         )
         .unwrap();
         let mut sim = Sim::new();
-        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
+        let unit = sim
+            .new_character_at_level(0, 0, &player, &[], Some(20))
+            .unwrap();
 
         assert_eq!(sim.unit(unit).level, 20);
         let base = sim.character(unit).base_stats;
@@ -1172,7 +1194,9 @@ mod level_contract_tests {
             .unwrap();
             assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
             let mut sim = Sim::new();
-            let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
+            let unit = sim
+                .new_character_at_level(0, 0, &player, &[], Some(20))
+                .unwrap();
             assert_eq!(sim.unit(unit).level, 20);
             let stats = sim.character(unit).base_stats;
             for (stat, value) in [
@@ -1211,7 +1235,12 @@ mod level_contract_tests {
             (r#"{"class":"ClassDruid","race":"RaceTauren"}"#, 30),
         ] {
             let player = Message::from_json_text("proto.Player", json).unwrap();
-            assert_eq!(requested_player_level(&player, Some(level)).unwrap_err().code, "level");
+            assert_eq!(
+                requested_player_level(&player, Some(level))
+                    .unwrap_err()
+                    .code,
+                "level"
+            );
         }
     }
 
