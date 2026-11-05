@@ -7,6 +7,12 @@ on:
       - .github/workflows/work1-druid-equipment-source.yml
       - tools/import_druid_equipment.py
       - tools/import_paladin_equipment.py
+      - src/data.rs
+      - src/prepare/items.rs
+      - src/options.rs
+      - data/druid-equipment-skills.json
+      - data/druid-equipment-skills.manifest.json
+      - data/manifest.json
   workflow_dispatch:
 
 permissions:
@@ -55,6 +61,26 @@ jobs:
           print("DRUID_MAIN_MANIFEST_START", flush=True)
           print(Path("data/manifest.json").read_text().strip(), flush=True)
           print("DRUID_MAIN_MANIFEST_END", flush=True)
+          PY
+      - name: Verify pinned projection and native Druid item-options
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- data/druid-equipment-skills.json data/druid-equipment-skills.manifest.json data/manifest.json
+          python3 tools/rust_data.py check
+          cargo test --locked druid_l60_native_item_options_use_pinned_client_class_skills -- --nocapture
+          cargo test --locked supported_classes_reuse_native_item_eligibility -- --nocapture
+          cargo run --locked -- item-options --class druid --level 60 --spec unrestricted --slot all > /tmp/druid-l60-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          response = json.loads(Path("/tmp/druid-l60-options.json").read_text())
+          assert response["status"] == "ok", response.get("refusal")
+          assert response["class"] == "druid" and response["level"] == 60
+          assert response["required_level_supported"]
+          assert response["items"] and response["unverified_candidate_count"] == 0
+          print("DRUID_L60_NATIVE_OPTIONS", len(response["items"]),
+                "excluded_non_client", response["excluded_non_client_item_count"], flush=True)
           PY
       - name: Upload exact source projection and manifests
         if: always()
