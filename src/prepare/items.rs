@@ -684,6 +684,10 @@ fn native_item_class_eligible(
         return paladin_skills
             .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassRogue"));
     }
+    if class == "druid" {
+        return paladin_skills
+            .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassDruid"));
+    }
 
     let slot = native_item_source_slot(item);
     if matches!(
@@ -734,6 +738,7 @@ fn native_item_options_with_required_levels(
         "shaman" | "classshaman" => Some(("shaman", "ClassShaman")),
         "paladin" | "classpaladin" => Some(("paladin", "ClassPaladin")),
         "rogue" | "classrogue" => Some(("rogue", "ClassRogue")),
+        "druid" | "classdruid" => Some(("druid", "ClassDruid")),
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
@@ -747,7 +752,7 @@ fn native_item_options_with_required_levels(
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
-            format!("native item-options currently supports priest, mage, shaman, paladin and rogue, not {class}"),
+            format!("native item-options currently supports priest, mage, shaman, paladin, rogue and druid, not {class}"),
         ))
     } else if !(1..=60).contains(&level) {
         Some((
@@ -774,7 +779,7 @@ fn native_item_options_with_required_levels(
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: if matches!(class_input.as_str(), "shaman" | "paladin" | "rogue") {
+        source: if matches!(class_input.as_str(), "shaman" | "paladin" | "rogue" | "druid") {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo".to_string()
         } else {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string()
@@ -816,13 +821,13 @@ fn native_item_options_with_required_levels(
     } else {
         None
     };
-    // Paladin and Rogue use the same source schema, but distinct pinned
-    // SkillRaceClassInfo class-mask projections. Never fall back between them.
-    let paladin_skills = if matches!(class, "paladin" | "rogue") {
-        let source = if class == "rogue" {
-            data::rogue_equipment_skills()
-        } else {
-            data::paladin_equipment_skills()
+    // Paladin, Rogue and Druid share the source schema but have independent
+    // pinned SkillRaceClassInfo class-mask projections. Never fall back.
+    let paladin_skills = if matches!(class, "paladin" | "rogue" | "druid") {
+        let source = match class {
+            "rogue" => data::rogue_equipment_skills(),
+            "druid" => data::druid_equipment_skills(),
+            _ => data::paladin_equipment_skills(),
         };
         match source {
             Ok(skills) => Some(skills),
@@ -860,7 +865,7 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin" | "mage" | "rogue") {
+            if matches!(class, "shaman" | "paladin" | "mage" | "rogue" | "druid") {
                 // These P3 consumers select from the pinned client-build ItemSparse
                 // universe. A MythicSim-only row absent from this source is not
                 // an unresolved RequiredLevel for a playable client item.
@@ -1417,6 +1422,21 @@ mod native_item_options_contract_tests {
             .items
             .iter()
             .any(|row| row.weapon_type == "WeaponTypeShield"));
+    }
+
+    #[test]
+    fn druid_l60_native_item_options_use_pinned_client_class_skills() {
+        let result = native_item_options("druid", 60, "unrestricted", "all");
+        assert_eq!(result.status, "ok", "{:?}", result.refusal);
+        assert!(result.required_level_supported);
+        assert_eq!(
+            result.source,
+            "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo"
+        );
+        assert_eq!(result.unverified_candidate_count, 0);
+        assert!(!result.items.is_empty());
+        assert!(result.items.iter().all(|row| row.required_level <= 60));
+        assert!(result.items.iter().any(|row| row.slot == "chest"));
     }
 
     #[test]
