@@ -906,10 +906,11 @@ fn item_swap_limits(
     };
     let mut reasons = Vec::new();
     let player = &prepared.player;
-    // A Warrior's off hand swaps beside the main hand when neither set swings it: the swapped
-    // state's off hand and dual wield must then read as the reset's, which the changes check.
+    // A paired main-hand/off-hand swap is executable for Warrior or Druid
+    // when neither set dual-wields. The native exporter separately refuses
+    // real off-hand weapons; changed state and callbacks are checked below.
     let off_hand = slots.as_slice() == ["ItemSlotMainHand", "ItemSlotOffHand"]
-        && prepared.player.class == "ClassWarrior"
+        && matches!(prepared.player.class.as_str(), "ClassWarrior" | "ClassDruid")
         && !prepared.melee.dual_wielding;
     if slots.as_slice() != ["ItemSlotMainHand"] && !off_hand {
         reasons.push(format!("an item swap of slots {slots:?} is unsupported"));
