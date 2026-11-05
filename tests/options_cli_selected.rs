@@ -14,6 +14,13 @@ fn native_options(class: &str, level: u8) -> serde_json::Value {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    // The optimizer consumes one newline-terminated JSON document from stdout.
+    // Pretty-printing thousands of item records is unnecessary transport cost.
+    assert!(output.stdout.ends_with(b"\n"));
+    assert_eq!(
+        output.stdout.iter().filter(|&&byte| byte == b'\n').count(),
+        1
+    );
     serde_json::from_slice(&output.stdout).expect("typed native options response")
 }
 
@@ -29,7 +36,9 @@ fn two_contrasting_class_levels_preserve_native_source_coverage() {
         assert_eq!(response["class"], class);
         assert_eq!(response["level"], level);
         assert!(
-            response["source_revision"].as_str().is_some_and(|s| !s.is_empty()),
+            response["source_revision"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
             "native provenance is required"
         );
         assert_eq!(response["talents"]["status"], "ok");
@@ -39,7 +48,9 @@ fn two_contrasting_class_levels_preserve_native_source_coverage() {
         assert_eq!(response["coverage"]["spell_learnability_complete"], false);
         assert_eq!(response["coverage"]["talent_prerequisites_complete"], true);
         assert!(
-            response["coverage"]["native_item_status"].as_str().is_some(),
+            response["coverage"]["native_item_status"]
+                .as_str()
+                .is_some(),
             "native item status cannot be collapsed into a pretend legal candidate"
         );
         assert!(response["spells"].as_array().unwrap().iter().all(|spell| {
@@ -53,7 +64,10 @@ fn two_contrasting_class_levels_preserve_native_source_coverage() {
             && item["unverified"].is_null()
     }));
     assert_eq!(warrior["coverage"]["item_eligibility_complete"], false);
-    assert_eq!(warrior["coverage"]["native_item_status"], "proficiency_unverified");
+    assert_eq!(
+        warrior["coverage"]["native_item_status"],
+        "proficiency_unverified"
+    );
     assert!(warrior["items"].as_array().unwrap().iter().all(|item| {
         item["eligibility"] == "proficiency_unverified"
             && item["native"].is_null()

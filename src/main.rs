@@ -191,10 +191,11 @@ fn run() -> Result<(), Failure> {
                 .parse::<u8>()
                 .map_err(|_| "options level must be an integer 1..=60")?;
             let options = get_options(level, class)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&options).map_err(|err| err.to_string())?
-            );
+            // Stream large item domains directly to the optimizer without
+            // allocating a second pretty-printed copy of the full catalogue.
+            serde_json::to_writer(std::io::stdout().lock(), &options)
+                .map_err(|err| err.to_string())?;
+            println!();
         }
         return Ok(());
     }
