@@ -5769,13 +5769,6 @@ impl<A: Agent> Fight<A> {
 
     /// Multiple distinct gsim world deaths on one retained source-Rust actor.
     /// Native paid rest is charged between ACKed kills; this alone does not certify P4–P6.
-    pub(crate) fn native_two_world_targets(
-        &mut self,
-        target_count: usize,
-    ) -> Result<serde_json::Value, &'static str> {
-        self.native_two_world_targets_with_recovery(target_count, 12)
-    }
-
     /// Source-native, clock-paid recovery duration is a candidate choice,
     /// not a fabricated health/mana refill. Preserve one actor and live ACKs.
     pub(crate) fn native_two_world_targets_with_recovery(
