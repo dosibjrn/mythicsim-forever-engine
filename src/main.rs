@@ -1,9 +1,9 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
-    native_two_world_targets_with_recovery, prepare_json_with, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated, validate_prepared, Gated, OptionsClass, PrepareError, PreparedError,
-    Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    native_two_world_targets_with_recovery, prepare_json_with, prepared_refusals, simulate,
+    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
+    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -321,7 +321,9 @@ fn run() -> Result<(), Failure> {
             );
         }
         let recovery_seconds = if args.len() == 9 {
-            args[8].parse::<u32>().map_err(|_| "native-world-pulls recovery seconds must be an integer")?
+            args[8]
+                .parse::<u32>()
+                .map_err(|_| "native-world-pulls recovery seconds must be an integer")?
         } else {
             12
         };
@@ -338,8 +340,9 @@ fn run() -> Result<(), Failure> {
         let prepared =
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
-        let report = native_two_world_targets_with_recovery(&prepared, target_count, mode, recovery_seconds)
-            .map_err(|err| err.to_string())?;
+        let report =
+            native_two_world_targets_with_recovery(&prepared, target_count, mode, recovery_seconds)
+                .map_err(|err| err.to_string())?;
         println!(
             "{}",
             serde_json::json!({
