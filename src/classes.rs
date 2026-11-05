@@ -31,21 +31,22 @@ pub(crate) fn run_prepared(
 
 
 /// Multiple distinct world ACKs with one source-native actor.
-pub(crate) fn native_two_world_targets(
+pub(crate) fn native_two_world_targets_with_recovery(
     prepared: &crate::contracts::prepared_v2::PreparedV2,
     target_count: usize,
     rng_mode: crate::core::rng::RngMode,
+    recovery_seconds: u32,
 ) -> Result<serde_json::Value, String> {
     match prepared.player.class.as_str() {
-        "ClassMage" => mage::agent::MageAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassDruid" => druid::agent::DruidAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassWarlock" => warlock::agent::WarlockAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassShaman" => shaman::agent::ShamanAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassPaladin" => paladin::agent::PaladinAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassPriest" => priest::agent::PriestAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassRogue" => rogue::agent::RogueAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassWarrior" => warrior::agent::WarriorAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
-        "ClassHunter" => hunter::agent::HunterAgent::fight(prepared, rng_mode)?.native_two_world_targets(target_count).map_err(str::to_string),
+        "ClassMage" => mage::agent::MageAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassDruid" => druid::agent::DruidAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassWarlock" => warlock::agent::WarlockAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassShaman" => shaman::agent::ShamanAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassPaladin" => paladin::agent::PaladinAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassPriest" => priest::agent::PriestAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassRogue" => rogue::agent::RogueAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassWarrior" => warrior::agent::WarriorAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassHunter" => hunter::agent::HunterAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
         other => Err(format!("class {other} has no native fight agent")),
     }
 }

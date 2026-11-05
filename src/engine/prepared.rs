@@ -339,10 +339,20 @@ pub fn simulate(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> R
 }
 
 
-/// One selected source-native actor and monotonic gsim ACKs; diagnostic only.
+/// Preserve the selected native default for existing tests/callers.
 pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode)
     -> Result<serde_json::Value, PreparedError>
 {
+    native_two_world_targets_with_recovery(prepared, target_count, rng_mode, 12)
+}
+
+/// One selected source-native actor and monotonic gsim ACKs; diagnostic only.
+pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode, recovery_seconds: u32)
+    -> Result<serde_json::Value, PreparedError>
+{
+    if !(1..=120).contains(&recovery_seconds) {
+        return Err(PreparedError::Invalid("RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned()));
+    }
     check(prepared)?;
     if !crate::core::fight::world_bridge::enabled() {
         return Err(PreparedError::Invalid(
@@ -353,7 +363,7 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_
             "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned()));
     }
     crate::core::fight::world_bridge::start(&prepared.request_sha256);
-    crate::classes::native_two_world_targets(prepared, target_count, rng_mode)
+    crate::classes::native_two_world_targets_with_recovery(prepared, target_count, rng_mode, recovery_seconds)
         .map_err(PreparedError::Invalid)
 }
 

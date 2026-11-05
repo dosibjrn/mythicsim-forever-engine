@@ -5769,10 +5769,16 @@ impl<A: Agent> Fight<A> {
 
     /// Multiple distinct gsim world deaths on one retained source-Rust actor.
     /// Native paid rest is charged between ACKed kills; this alone does not certify P4–P6.
-    pub(crate) fn native_two_world_targets(
+    /// Source-native, clock-paid recovery duration is a candidate choice,
+    /// not a fabricated health/mana refill. Preserve one actor and live ACKs.
+    pub(crate) fn native_two_world_targets_with_recovery(
         &mut self,
         target_count: usize,
+        recovery_seconds: u32,
     ) -> Result<serde_json::Value, &'static str> {
+        if !(1..=120).contains(&recovery_seconds) {
+            return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
+        }
         if !world_bridge::enabled() {
             return Err("RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM");
         }
@@ -5805,7 +5811,7 @@ impl<A: Agent> Fight<A> {
                 // while the previous 2D target is dead.
                 let killed_at = self.now;
                 let next_at = killed_at
-                    .checked_add(12 * crate::core::time::NS_PER_SECOND)
+                    .checked_add(i64::from(recovery_seconds) * crate::core::time::NS_PER_SECOND)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
                 // The new target is selected before the paid travel/rest
                 // interval, so every 2D movement step can be observed by the
@@ -5882,6 +5888,7 @@ impl<A: Agent> Fight<A> {
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
+            "recovery_seconds_per_gap": recovery_seconds,
             "windows": windows,
         });
         self.cleanup();
@@ -5940,7 +5947,7 @@ impl<A: Agent> Fight<A> {
             return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
         }
         let mut ticks = 0;
-        // Follow the live 2D clock through travel. A single 12-second jump
+        // Follow the live 2D clock through travel. A single unobserved time jump
         // would skip the actual SpatialPlayerMoveStep observations and lose
         // native moving/cast-legality receipts even though gsim paid the route.
         // No native attacks are allowed while the actor recovers.
