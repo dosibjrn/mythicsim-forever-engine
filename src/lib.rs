@@ -32,7 +32,8 @@ pub use engine::prepared::{
 };
 pub use engine::simulate;
 pub use prepare::{
-    prepare, prepare_json, prepare_json_with, PrepareError, Refusal as PrepareRefusal, Rules,
+    prepare, prepare_json, prepare_json_with, prepare_json_with_actor_level, PrepareError,
+    Refusal as PrepareRefusal, Rules,
 };
 
 /// Prepared v2 effect kinds this engine executes. The release manifest must agree.
