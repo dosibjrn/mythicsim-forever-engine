@@ -250,8 +250,8 @@ pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: Uni
     sdm.add_stat_dependency(Stat::Agility, Stat::Armor, 2.0);
 }
 
-/// Legacy requests omit level and remain level 60. Level-20 Priest and Rogue actors
-/// use CMaNGOS-sourced native base stats and level-dependent class conversions.
+/// Legacy requests omit level and remain level 60. Source-backed level-20
+/// Priest, Rogue, and Druid actors use CMaNGOS base stats and class conversions.
 fn requested_player_level(player: &Message) -> Result<i32, Refusal> {
     let requested = player.i32("level");
     let level = if requested == 0 {
@@ -270,7 +270,7 @@ fn requested_player_level(player: &Message) -> Result<i32, Refusal> {
     Err(Refusal::new(
         "level",
         format!(
-            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest L20 and Rogue L20 for sourced Classic races)"
+            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest/Rogue L20 and Druid L20 for sourced Classic races)"
         ),
     ))
 }
@@ -386,12 +386,73 @@ fn rogue_l20_base_stats(race: &str) -> Option<Stats> {
     Some(out)
 }
 
+#[derive(serde::Deserialize)]
+struct DruidL20CritSource {
+    spell_base_percent: f64,
+    spell_intellect_rate0: f64,
+    spell_intellect_rate_per_level: f64,
+    melee_agility_rate_level_1: f64,
+    melee_agility_rate_level_60: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct DruidL20Source {
+    class: String,
+    level: i32,
+    base_health: f64,
+    base_mana: f64,
+    crit: DruidL20CritSource,
+    races: BTreeMap<String, BTreeMap<String, f64>>,
+}
+
+fn druid_l20_source() -> &'static DruidL20Source {
+    static SOURCE: OnceLock<DruidL20Source> = OnceLock::new();
+    SOURCE.get_or_init(|| {
+        let parsed: DruidL20Source =
+            serde_json::from_str(include_str!("../../data/druid-l20-base-stats.json"))
+                .expect("Druid L20 source attributes and conversions parse");
+        assert_eq!(parsed.class, "ClassDruid");
+        assert_eq!(parsed.level, 20);
+        parsed
+    })
+}
+
+fn druid_l20_crit_per_int() -> f64 {
+    let source = druid_l20_source();
+    let crit = &source.crit;
+    1.0 / (crit.spell_intellect_rate0
+        + crit.spell_intellect_rate_per_level * source.level as f64)
+}
+
+fn druid_l20_crit_per_agi() -> f64 {
+    let source = druid_l20_source();
+    let crit = &source.crit;
+    let level = source.level as f64;
+    let agility_rate = crit.melee_agility_rate_level_1 * (60.0 - level) / 59.0
+        + crit.melee_agility_rate_level_60 * (level - 1.0) / 59.0;
+    1.0 / agility_rate
+}
+
+fn druid_l20_base_stats(race: &str) -> Option<Stats> {
+    let source = druid_l20_source();
+    let values = source.races.get(race)?;
+    let mut out = Stats::default();
+    for (name, value) in values {
+        out[Stat::by_name(name)?] = *value;
+    }
+    out[Stat::Health] = source.base_health;
+    out[Stat::Mana] = source.base_mana;
+    out[Stat::SpellCritPercent] = source.crit.spell_base_percent;
+    Some(out)
+}
+
 /// Go `BaseStats[{race, class}]` for L60; sourced class L20 rows otherwise.
 fn base_stats(class: &str, race: &str, level: i32) -> Option<Stats> {
     if level == 20 {
         return match class {
             "ClassPriest" => priest_l20_base_stats(race),
             "ClassRogue" => rogue_l20_base_stats(race),
+            "ClassDruid" => druid_l20_base_stats(race),
             _ => None,
         };
     }
@@ -702,10 +763,14 @@ impl Sim {
         u.current_power_bar = super::sim::PowerBar::Mana;
     }
 
-    /// Go `CritPerIntMaxLevel[class]`, with the sourced Priest L20 conversion when applicable.
+    /// Go `CritPerIntMaxLevel[class]`, with sourced L20 class conversions.
     pub(crate) fn crit_per_int(&self, unit: UnitId) -> f64 {
-        if self.unit(unit).level == 20 && self.character(unit).class == "ClassPriest" {
-            return priest_l20_crit_per_int();
+        if self.unit(unit).level == 20 {
+            match self.character(unit).class.as_str() {
+                "ClassPriest" => return priest_l20_crit_per_int(),
+                "ClassDruid" => return druid_l20_crit_per_int(),
+                _ => {}
+            }
         }
         crate::data::tables::tables()
             .crit_per_int_max_level
@@ -720,6 +785,7 @@ impl Sim {
             return match self.character(unit).class.as_str() {
                 "ClassPriest" => priest_l20_crit_per_agi(),
                 "ClassRogue" => rogue_l20_crit_per_agi(),
+                "ClassDruid" => druid_l20_crit_per_agi(),
                 _ => 0.0,
             };
         }
@@ -922,8 +988,9 @@ pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
 #[cfg(test)]
 mod level_contract_tests {
     use super::{
-        constants, has_level_dependent_rating_stats, priest_l20_crit_per_agi,
-        priest_l20_crit_per_int, requested_player_level, rogue_l20_crit_per_agi, Sim,
+        constants, druid_l20_crit_per_agi, druid_l20_crit_per_int,
+        has_level_dependent_rating_stats, priest_l20_crit_per_agi, priest_l20_crit_per_int,
+        requested_player_level, rogue_l20_crit_per_agi, Sim,
     };
     use crate::contracts::request::Message;
     use crate::prepare::stats::{Stat, Stats};
@@ -1067,6 +1134,59 @@ mod level_contract_tests {
         assert_eq!(applied[Stat::Mana], 877.0);
         assert!((applied[Stat::SpellCritPercent] - (2.97 + 48.0 * crit_per_int)).abs() < 1e-10);
         assert!((applied[Stat::PhysicalCritPercent] - 21.0 * crit_per_agi).abs() < 1e-10);
+    }
+
+    #[test]
+    fn druid_l20_uses_source_actor_stats_and_class_crit_conversions() {
+        for (race, expected_primary) in [
+            ("RaceNightElf", [30.0, 35.0, 32.0, 43.0, 46.0]),
+            ("RaceTauren", [37.0, 26.0, 35.0, 39.0, 48.0]),
+        ] {
+            let player = Message::from_json_text(
+                "proto.Player",
+                &format!(r#"{{"level":20,"class":"ClassDruid","race":"{race}"}}"#),
+            )
+            .unwrap();
+            assert_eq!(requested_player_level(&player).unwrap(), 20);
+            let mut sim = Sim::new();
+            let unit = sim.new_character(0, 0, &player, &[]).unwrap();
+            assert_eq!(sim.unit(unit).level, 20);
+            let stats = sim.character(unit).base_stats;
+            for (stat, value) in [
+                Stat::Strength, Stat::Agility, Stat::Stamina,
+                Stat::Intellect, Stat::Spirit,
+            ]
+            .into_iter()
+            .zip(expected_primary)
+            {
+                assert_eq!(stats[stat], value);
+            }
+            assert_eq!(stats[Stat::Health], 243.0);
+            assert_eq!(stats[Stat::Mana], 354.0);
+            assert_eq!(stats[Stat::SpellCritPercent], 3.33);
+            assert_eq!(sim.crit_per_int(unit), druid_l20_crit_per_int());
+            assert_eq!(sim.crit_per_agi(unit), druid_l20_crit_per_agi());
+            assert_ne!(sim.crit_per_agi(unit), sim.crit_per_agi_max_level(unit));
+            sim.enable_mana_bar(unit);
+            assert_eq!(
+                sim.unit(unit)
+                    .sdm
+                    .stat_dependency_coeff(Stat::Intellect, Stat::SpellCritPercent),
+                druid_l20_crit_per_int()
+            );
+        }
+    }
+
+    #[test]
+    fn druid_l20_unsupported_races_and_levels_refuse_in_native() {
+        for json in [
+            r#"{"level":20,"class":"ClassDruid","race":"RaceHuman"}"#,
+            r#"{"level":19,"class":"ClassDruid","race":"RaceNightElf"}"#,
+            r#"{"level":30,"class":"ClassDruid","race":"RaceTauren"}"#,
+        ] {
+            let player = Message::from_json_text("proto.Player", json).unwrap();
+            assert_eq!(requested_player_level(&player).unwrap_err().code, "level");
+        }
     }
 
     #[test]
