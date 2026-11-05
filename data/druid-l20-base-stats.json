@@ -1,0 +1,32 @@
+{
+  "source_primary": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f sql/archive/0.8/4537_player_levelstats.sql (race=4/6,class=11,level=20; primary attributes only)",
+  "source_resources": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql (class=11,level=20)",
+  "source_crit": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f src/game/Entities/Player.cpp (GetSpellCritFromIntellect and GetMeleeCritFromAgility, CLASS_DRUID)",
+  "class": "ClassDruid",
+  "level": 20,
+  "base_health": 243,
+  "base_mana": 354,
+  "crit": {
+    "spell_base_percent": 3.33,
+    "spell_intellect_rate0": 12.41,
+    "spell_intellect_rate_per_level": 0.79,
+    "melee_agility_rate_level_1": 4.6,
+    "melee_agility_rate_level_60": 20
+  },
+  "races": {
+    "RaceNightElf": {
+      "Strength": 30,
+      "Agility": 35,
+      "Stamina": 32,
+      "Intellect": 43,
+      "Spirit": 46
+    },
+    "RaceTauren": {
+      "Strength": 37,
+      "Agility": 26,
+      "Stamina": 35,
+      "Intellect": 39,
+      "Spirit": 48
+    }
+  }
+}
