@@ -139,6 +139,17 @@ pub fn prepare_json_with(
     scenario: &str,
     rules: Rules,
 ) -> Result<serde_json::Value, PrepareError> {
+    prepare_json_with_actor_level(request, scenario, rules, None)
+}
+
+/// Native-only execution context. Keep the original Go protobuf request unchanged.
+/// The selected engine validates the requested actor level and race/class support.
+pub fn prepare_json_with_actor_level(
+    request: &[u8],
+    scenario: &str,
+    rules: Rules,
+    actor_level: Option<i32>,
+) -> Result<serde_json::Value, PrepareError> {
     let bytes = request;
     let mut request = Request::from_json(bytes).map_err(PrepareError::Invalid)?;
     let options = request.message().message("sim_options");
@@ -152,8 +163,9 @@ pub fn prepare_json_with(
         }
     }
     let mut env =
-        env::Environment::with_rules(request.message(), crate::classes::prepare_agent, rules)
-            .map_err(PrepareError::Refused)?;
+        env::Environment::with_rules_at_level(
+            request.message(), crate::classes::prepare_agent, rules, actor_level,
+        ).map_err(PrepareError::Refused)?;
     export::export(&mut env, &digest, scenario).map_err(PrepareError::Refused)
 }
 
