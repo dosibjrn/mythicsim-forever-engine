@@ -1044,10 +1044,9 @@ pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
 #[cfg(test)]
 mod level_contract_tests {
     use super::{
-        constants, druid_crit_per_agi_at, druid_crit_per_int_at,
-        druid_l20_crit_per_agi, druid_l20_crit_per_int,
-        has_level_dependent_rating_stats, priest_l20_crit_per_agi, priest_l20_crit_per_int,
-        requested_player_level, rogue_l20_crit_per_agi, Sim,
+        constants, druid_crit_per_agi_at, druid_crit_per_int_at, druid_l20_crit_per_agi,
+        druid_l20_crit_per_int, has_level_dependent_rating_stats, priest_l20_crit_per_agi,
+        priest_l20_crit_per_int, requested_player_level, rogue_l20_crit_per_agi, Sim,
     };
     use crate::contracts::request::Message;
     use crate::prepare::stats::{Stat, Stats};
