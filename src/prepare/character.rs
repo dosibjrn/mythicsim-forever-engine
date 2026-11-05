@@ -454,10 +454,6 @@ fn druid_crit_per_int_at(level: i32) -> f64 {
     1.0 / (crit.spell_intellect_rate0 + crit.spell_intellect_rate_per_level * source.level as f64)
 }
 
-fn druid_l20_crit_per_int() -> f64 {
-    druid_crit_per_int_at(20)
-}
-
 fn druid_crit_per_agi_at(level: i32) -> f64 {
     let source = druid_level_source(level).expect("supported Druid source level");
     let crit = &source.crit;
@@ -465,10 +461,6 @@ fn druid_crit_per_agi_at(level: i32) -> f64 {
     let agility_rate = crit.melee_agility_rate_level_1 * (60.0 - level) / 59.0
         + crit.melee_agility_rate_level_60 * (level - 1.0) / 59.0;
     1.0 / agility_rate
-}
-
-fn druid_l20_crit_per_agi() -> f64 {
-    druid_crit_per_agi_at(20)
 }
 
 fn druid_base_stats(race: &str, level: i32) -> Option<Stats> {
@@ -1044,9 +1036,9 @@ pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
 #[cfg(test)]
 mod level_contract_tests {
     use super::{
-        constants, druid_crit_per_agi_at, druid_crit_per_int_at, druid_l20_crit_per_agi,
-        druid_l20_crit_per_int, has_level_dependent_rating_stats, priest_l20_crit_per_agi,
-        priest_l20_crit_per_int, requested_player_level, rogue_l20_crit_per_agi, Sim,
+        constants, druid_crit_per_agi_at, druid_crit_per_int_at, has_level_dependent_rating_stats,
+        priest_l20_crit_per_agi, priest_l20_crit_per_int, requested_player_level,
+        rogue_l20_crit_per_agi, Sim,
     };
     use crate::contracts::request::Message;
     use crate::prepare::stats::{Stat, Stats};
@@ -1249,15 +1241,15 @@ mod level_contract_tests {
             assert_eq!(stats[Stat::Health], 243.0);
             assert_eq!(stats[Stat::Mana], 354.0);
             assert_eq!(stats[Stat::SpellCritPercent], 3.33);
-            assert_eq!(sim.crit_per_int(unit), druid_l20_crit_per_int());
-            assert_eq!(sim.crit_per_agi(unit), druid_l20_crit_per_agi());
+            assert_eq!(sim.crit_per_int(unit), druid_crit_per_int_at(20));
+            assert_eq!(sim.crit_per_agi(unit), druid_crit_per_agi_at(20));
             assert_ne!(sim.crit_per_agi(unit), sim.crit_per_agi_max_level(unit));
             sim.enable_mana_bar(unit);
             assert_eq!(
                 sim.unit(unit)
                     .sdm
                     .stat_dependency_coeff(Stat::Intellect, Stat::SpellCritPercent),
-                druid_l20_crit_per_int()
+                druid_crit_per_int_at(20)
             );
         }
     }
