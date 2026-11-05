@@ -30,15 +30,6 @@ pub(crate) fn run_prepared(
 }
 
 
-/// Keep existing callers on the native 12-second default.
-pub(crate) fn native_two_world_targets(
-    prepared: &crate::contracts::prepared_v2::PreparedV2,
-    target_count: usize,
-    rng_mode: crate::core::rng::RngMode,
-) -> Result<serde_json::Value, String> {
-    native_two_world_targets_with_recovery(prepared, target_count, rng_mode, 12)
-}
-
 /// Multiple distinct world ACKs with one source-native actor.
 pub(crate) fn native_two_world_targets_with_recovery(
     prepared: &crate::contracts::prepared_v2::PreparedV2,
