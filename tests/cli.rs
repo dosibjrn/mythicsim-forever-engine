@@ -224,7 +224,6 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     ))
     .unwrap();
     let player = &mut request["raid"]["parties"][0]["players"][0];
-    player["level"] = serde_json::json!(20);
     player["race"] = serde_json::json!("RaceHuman");
     player["talentsString"] = serde_json::json!("0-0-0");
     player["consumables"] = serde_json::json!({});
@@ -266,6 +265,7 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     let prepare = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["prepare", "--request"])
         .arg(&input)
+        .args(["--actor-level", "20"])
         .arg("--outfile")
         .arg(&prepared_path)
         .output()
@@ -296,7 +296,7 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--request"])
         .arg(&input)
-        .args(["--rng-mode", "balanced", "--outfile"])
+        .args(["--actor-level", "20", "--rng-mode", "balanced", "--outfile"])
         .arg(&report_path)
         .output()
         .unwrap();
@@ -340,7 +340,6 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     ))
     .unwrap();
     let player = &mut request["raid"]["parties"][0]["players"][0];
-    player["level"] = serde_json::json!(20);
     player["talentsString"] = serde_json::json!("0-0-0");
     player["equipment"]["items"] = serde_json::json!([]);
     player["rotation"] = serde_json::json!({
@@ -383,6 +382,7 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     let prepare = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["prepare", "--request"])
         .arg(&input)
+        .args(["--actor-level", "20"])
         .arg("--outfile")
         .arg(&prepared_path)
         .output()
@@ -416,7 +416,7 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--request"])
         .arg(&input)
-        .args(["--rng-mode", "balanced", "--outfile"])
+        .args(["--actor-level", "20", "--rng-mode", "balanced", "--outfile"])
         .arg(&report_path)
         .output()
         .unwrap();
