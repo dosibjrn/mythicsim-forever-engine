@@ -461,35 +461,23 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
 /// This is a one-fight smoke, NOT the 1,000-stochastic P7.1 gate.
 #[test]
 fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
-    let mut request: serde_json::Value = serde_json::from_str(include_str!(
-        "classes/druid/prepare/balance.request.json"
+    // This is the *production* native-owned frozen-reference input, not a
+    // mutated L60 Balance saved donor. The same bytes feed Forever's P7.1
+    // reference producer once this actor-capable engine is selected.
+    let request: serde_json::Value = serde_json::from_str(include_str!(
+        "../fixtures/references/druid-l20-p71.request.json"
     ))
     .unwrap();
-    let player = &mut request["raid"]["parties"][0]["players"][0];
-    // Go proto.Player deliberately has no level field.
+    let player = &request["raid"]["parties"][0]["players"][0];
+    assert_eq!(player["class"], "ClassDruid");
+    assert_eq!(player["race"], "RaceNightElf");
     assert!(player.get("level").is_none());
-    player["talentsString"] = serde_json::json!("0-0-0");
-    player["equipment"]["items"] = serde_json::json!([]);
-    player["rotation"] = serde_json::json!({
-        "type": "TypeAPL",
-        "priorityList": [{
-            "action": {"castSpell": {"spellId": {"spellId": 5176}}}
-        }]
-    });
-    request["encounter"]["duration"] = serde_json::json!(30);
-    request["encounter"]["durationVariation"] = serde_json::json!(0);
-    request["encounter"]["targets"][0]["level"] = serde_json::json!(20);
-    request["encounter"]["targets"][0]["minBaseDamage"] = serde_json::json!(0);
-    request["encounter"]["targets"][0]["damageSpread"] = serde_json::json!(0.0);
-    let target_stats_len = request["encounter"]["targets"][0]["stats"]
-        .as_array()
-        .unwrap()
-        .len();
-    let mut target_stats = vec![0.0; target_stats_len];
-    target_stats[32] = 10_000.0;
-    request["encounter"]["targets"][0]["stats"] = serde_json::json!(target_stats);
-    request["simOptions"]["iterations"] = serde_json::json!(1);
-    request["simOptions"]["debugFirstIteration"] = serde_json::json!(false);
+    assert_eq!(player["rotation"]["priorityList"][0]["action"]["castSpell"]["spellId"]["spellId"], 5176);
+    assert_eq!(request["encounter"]["duration"], 120);
+    assert_eq!(request["encounter"]["durationVariation"], 0);
+    assert_eq!(request["encounter"]["targets"][0]["level"], 20);
+    assert_eq!(request["encounter"]["targets"][0]["minBaseDamage"], 0);
+    assert_eq!(request["simOptions"]["iterations"], 1000);
 
     let directory =
         std::env::temp_dir().join(format!("forever-druid-l20-cli-{}", std::process::id()));
