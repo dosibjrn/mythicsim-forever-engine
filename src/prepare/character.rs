@@ -252,13 +252,10 @@ pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: Uni
 
 /// Legacy requests omit level and remain level 60. Source-backed level-20
 /// Priest, Rogue, and Druid actors use CMaNGOS base stats and class conversions.
-fn requested_player_level(player: &Message) -> Result<i32, Refusal> {
-    let requested = player.i32("level");
-    let level = if requested == 0 {
-        constants::CHARACTER_LEVEL
-    } else {
-        requested
-    };
+fn requested_player_level(player: &Message, actor_level: Option<i32>) -> Result<i32, Refusal> {
+    // Level is native execution context, NOT a field of the Go proto.Player schema.
+    // Keep protojson strict and default omitted native context to legacy level 60.
+    let level = actor_level.unwrap_or(constants::CHARACTER_LEVEL);
     if level == constants::CHARACTER_LEVEL {
         return Ok(level);
     }
@@ -496,13 +493,24 @@ impl Sim {
         player: &Message,
         area_types: &[String],
     ) -> Result<UnitId, Refusal> {
+        self.new_character_at_level(party_index, player_index, player, area_types, None)
+    }
+
+    pub(crate) fn new_character_at_level(
+        &mut self,
+        party_index: i32,
+        player_index: i32,
+        player: &Message,
+        area_types: &[String],
+        actor_level: Option<i32>,
+    ) -> Result<UnitId, Refusal> {
         if player.has("database") {
             return Err(Refusal::new(
                 "request",
                 "a player database is unsupported".to_string(),
             ));
         }
-        let level = requested_player_level(player)?;
+        let level = requested_player_level(player, actor_level)?;
         let index = party_index * 5 + player_index;
         let name = player.str("name").to_string();
         let mut unit = Unit::new(UnitType::Player, format!("{} (#{})", name, index + 1));
@@ -996,33 +1004,30 @@ mod level_contract_tests {
 
     #[test]
     fn omitted_and_explicit_60_keep_legacy_level() {
-        for json in ["{}", r#"{"level":60}"#] {
-            let player = Message::from_json_text("proto.Player", json).unwrap();
-            assert_eq!(
-                requested_player_level(&player).unwrap(),
-                constants::CHARACTER_LEVEL
-            );
-        }
+        let player = Message::from_json_text("proto.Player", "{}").unwrap();
+        assert_eq!(requested_player_level(&player, None).unwrap(), constants::CHARACTER_LEVEL);
+        assert_eq!(requested_player_level(&player, Some(60)).unwrap(), constants::CHARACTER_LEVEL);
+        assert!(Message::from_json_text("proto.Player", r#"{}"#).is_err());
     }
 
     #[test]
     fn only_sourced_priest_classic_races_accept_level_20() {
         let priest = Message::from_json_text(
             "proto.Player",
-            r#"{"level":20,"class":"ClassPriest","race":"RaceDwarf"}"#,
+            r#"{"class":"ClassPriest","race":"RaceDwarf"}"#,
         )
         .unwrap();
-        assert_eq!(requested_player_level(&priest).unwrap(), 20);
+        assert_eq!(requested_player_level(&priest, Some(20)).unwrap(), 20);
 
-        for json in [
-            r#"{"level":20}"#,
-            r#"{"level":20,"class":"ClassMage","race":"RaceHuman"}"#,
-            r#"{"level":20,"class":"ClassPriest","race":"RaceGnome"}"#,
-            r#"{"level":19,"class":"ClassPriest","race":"RaceDwarf"}"#,
-            r#"{"level":-1,"class":"ClassPriest","race":"RaceDwarf"}"#,
+        for (json, level) in [
+            (r#"{}"#, 20),
+            (r#"{"class":"ClassMage","race":"RaceHuman"}"#, 20),
+            (r#"{"class":"ClassPriest","race":"RaceGnome"}"#, 20),
+            (r#"{"class":"ClassPriest","race":"RaceDwarf"}"#, 19),
+            (r#"{"class":"ClassPriest","race":"RaceDwarf"}"#, -1),
         ] {
             let player = Message::from_json_text("proto.Player", json).unwrap();
-            let refusal = requested_player_level(&player).unwrap_err();
+            let refusal = requested_player_level(&player, Some(level)).unwrap_err();
             assert_eq!(refusal.code, "level");
         }
     }
@@ -1031,12 +1036,12 @@ mod level_contract_tests {
     fn rogue_l20_prepares_with_sourced_health_primary_stats_and_agility_conversion() {
         let player = Message::from_json_text(
             "proto.Player",
-            r#"{"level":20,"class":"ClassRogue","race":"RaceHuman"}"#,
+            r#"{"class":"ClassRogue","race":"RaceHuman"}"#,
         )
         .unwrap();
-        assert_eq!(requested_player_level(&player).unwrap(), 20);
+        assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
         let mut sim = Sim::new();
-        let unit = sim.new_character(0, 0, &player, &[]).unwrap();
+        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
         assert_eq!(sim.unit(unit).level, 20);
         let stats = sim.character(unit).base_stats;
         assert_eq!(stats[Stat::Strength], 37.0);
@@ -1058,13 +1063,13 @@ mod level_contract_tests {
 
     #[test]
     fn rogue_l20_unsupported_race_and_level_fail_closed() {
-        for json in [
-            r#"{"level":20,"class":"ClassRogue","race":"RaceBloodElf"}"#,
-            r#"{"level":19,"class":"ClassRogue","race":"RaceHuman"}"#,
-            r#"{"level":30,"class":"ClassRogue","race":"RaceHuman"}"#,
+        for (json, level) in [
+            (r#"{"class":"ClassRogue","race":"RaceBloodElf"}"#, 20),
+            (r#"{"class":"ClassRogue","race":"RaceHuman"}"#, 19),
+            (r#"{"class":"ClassRogue","race":"RaceHuman"}"#, 30),
         ] {
             let player = Message::from_json_text("proto.Player", json).unwrap();
-            assert_eq!(requested_player_level(&player).unwrap_err().code, "level");
+            assert_eq!(requested_player_level(&player, Some(level)).unwrap_err().code, "level");
         }
     }
 
@@ -1072,11 +1077,11 @@ mod level_contract_tests {
     fn priest_l20_is_prepared_as_a_source_backed_native_actor() {
         let player = Message::from_json_text(
             "proto.Player",
-            r#"{"level":20,"class":"ClassPriest","race":"RaceDwarf"}"#,
+            r#"{"class":"ClassPriest","race":"RaceDwarf"}"#,
         )
         .unwrap();
         let mut sim = Sim::new();
-        let unit = sim.new_character(0, 0, &player, &[]).unwrap();
+        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
 
         assert_eq!(sim.unit(unit).level, 20);
         let base = sim.character(unit).base_stats;
@@ -1143,12 +1148,12 @@ mod level_contract_tests {
         ] {
             let player = Message::from_json_text(
                 "proto.Player",
-                &format!(r#"{{"level":20,"class":"ClassDruid","race":"{race}"}}"#),
+                &format!(r#"{{"class":"ClassDruid","race":"{race}"}}"#),
             )
             .unwrap();
-            assert_eq!(requested_player_level(&player).unwrap(), 20);
+            assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
             let mut sim = Sim::new();
-            let unit = sim.new_character(0, 0, &player, &[]).unwrap();
+            let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
             assert_eq!(sim.unit(unit).level, 20);
             let stats = sim.character(unit).base_stats;
             for (stat, value) in [
@@ -1181,13 +1186,13 @@ mod level_contract_tests {
 
     #[test]
     fn druid_l20_unsupported_races_and_levels_refuse_in_native() {
-        for json in [
-            r#"{"level":20,"class":"ClassDruid","race":"RaceHuman"}"#,
-            r#"{"level":19,"class":"ClassDruid","race":"RaceNightElf"}"#,
-            r#"{"level":30,"class":"ClassDruid","race":"RaceTauren"}"#,
+        for (json, level) in [
+            (r#"{"class":"ClassDruid","race":"RaceHuman"}"#, 20),
+            (r#"{"class":"ClassDruid","race":"RaceNightElf"}"#, 19),
+            (r#"{"class":"ClassDruid","race":"RaceTauren"}"#, 30),
         ] {
             let player = Message::from_json_text("proto.Player", json).unwrap();
-            assert_eq!(requested_player_level(&player).unwrap_err().code, "level");
+            assert_eq!(requested_player_level(&player, Some(level)).unwrap_err().code, "level");
         }
     }
 
