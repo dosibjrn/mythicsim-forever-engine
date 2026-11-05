@@ -420,8 +420,7 @@ fn druid_l20_source() -> &'static DruidL20Source {
 fn druid_l20_crit_per_int() -> f64 {
     let source = druid_l20_source();
     let crit = &source.crit;
-    1.0 / (crit.spell_intellect_rate0
-        + crit.spell_intellect_rate_per_level * source.level as f64)
+    1.0 / (crit.spell_intellect_rate0 + crit.spell_intellect_rate_per_level * source.level as f64)
 }
 
 fn druid_l20_crit_per_agi() -> f64 {
@@ -1153,8 +1152,11 @@ mod level_contract_tests {
             assert_eq!(sim.unit(unit).level, 20);
             let stats = sim.character(unit).base_stats;
             for (stat, value) in [
-                Stat::Strength, Stat::Agility, Stat::Stamina,
-                Stat::Intellect, Stat::Spirit,
+                Stat::Strength,
+                Stat::Agility,
+                Stat::Stamina,
+                Stat::Intellect,
+                Stat::Spirit,
             ]
             .into_iter()
             .zip(expected_primary)
