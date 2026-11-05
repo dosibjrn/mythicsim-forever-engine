@@ -779,7 +779,10 @@ fn native_item_options_with_required_levels(
         level,
         spec: spec_input,
         slot: slot_input.clone(),
-        source: if matches!(class_input.as_str(), "shaman" | "paladin" | "rogue" | "druid") {
+        source: if matches!(
+            class_input.as_str(),
+            "shaman" | "paladin" | "rogue" | "druid"
+        ) {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo".to_string()
         } else {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel".to_string()
