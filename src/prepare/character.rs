@@ -253,9 +253,23 @@ pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: Uni
 /// Legacy requests omit level and remain level 60. Source-backed level-20
 /// Priest, Rogue, and Druid actors use CMaNGOS base stats and class conversions.
 fn requested_player_level(player: &Message, actor_level: Option<i32>) -> Result<i32, Refusal> {
-    // Level is native execution context, NOT a field of the Go proto.Player schema.
-    // Keep protojson strict and default omitted native context to legacy level 60.
-    let level = actor_level.unwrap_or(constants::CHARACTER_LEVEL);
+    // Rust also accepts a Forever-only request-level scalar (field 1001),
+    // outside the Go descriptor. Preserve existing native callers; a separately
+    // supplied CLI actor level must agree with that scalar when present.
+    let embedded = player.i32("level");
+    if let Some(external) = actor_level {
+        if embedded != 0 && embedded != external {
+            return Err(Refusal::new(
+                "level",
+                format!("native actor level {external} conflicts with request level {embedded}"),
+            ));
+        }
+    }
+    let level = actor_level.unwrap_or(if embedded == 0 {
+        constants::CHARACTER_LEVEL
+    } else {
+        embedded
+    });
     if level == constants::CHARACTER_LEVEL {
         return Ok(level);
     }
@@ -1007,7 +1021,12 @@ mod level_contract_tests {
         let player = Message::from_json_text("proto.Player", "{}").unwrap();
         assert_eq!(requested_player_level(&player, None).unwrap(), constants::CHARACTER_LEVEL);
         assert_eq!(requested_player_level(&player, Some(60)).unwrap(), constants::CHARACTER_LEVEL);
-        assert!(Message::from_json_text("proto.Player", r#"{"level":20}"#).is_err());
+        let extended = Message::from_json_text(
+            "proto.Player", r#"{"class":"ClassDruid","race":"RaceNightElf","level":20}"#,
+        ).unwrap();
+        assert_eq!(requested_player_level(&extended, None).unwrap(), 20);
+        assert_eq!(requested_player_level(&extended, Some(20)).unwrap(), 20);
+        assert_eq!(requested_player_level(&extended, Some(60)).unwrap_err().code, "level");
     }
 
     #[test]
