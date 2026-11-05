@@ -300,6 +300,7 @@ pub(crate) fn shaman_equipment_skills() -> Result<&'static ShamanEquipmentSkills
 
 const PALADIN_EQUIPMENT_SKILLS: &str = include_str!("../data/paladin-equipment-skills.json");
 const ROGUE_EQUIPMENT_SKILLS: &str = include_str!("../data/rogue-equipment-skills.json");
+const DRUID_EQUIPMENT_SKILLS: &str = include_str!("../data/druid-equipment-skills.json");
 
 #[derive(serde::Deserialize)]
 struct PaladinSkillLineName {
@@ -447,6 +448,10 @@ fn parse_rogue_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()
     parse_class_equipment_skills(text, "rogue", 4)
 }
 
+fn parse_druid_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()> {
+    parse_class_equipment_skills(text, "druid", 11)
+}
+
 pub(crate) fn paladin_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
     static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
     match SKILLS.get_or_init(|| parse_paladin_equipment_skills(PALADIN_EQUIPMENT_SKILLS)) {
@@ -461,6 +466,15 @@ pub(crate) fn rogue_equipment_skills() -> Result<&'static PaladinEquipmentSkills
     match SKILLS.get_or_init(|| parse_rogue_equipment_skills(ROGUE_EQUIPMENT_SKILLS)) {
         Ok(skills) => Ok(skills),
         Err(()) => Err("the pinned Rogue SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
+    }
+}
+
+/// The same pinned client class-wide skill projection, scoped to Druid mask 1024.
+pub(crate) fn druid_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
+    static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
+    match SKILLS.get_or_init(|| parse_druid_equipment_skills(DRUID_EQUIPMENT_SKILLS)) {
+        Ok(skills) => Ok(skills),
+        Err(()) => Err("the pinned Druid SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
     }
 }
 

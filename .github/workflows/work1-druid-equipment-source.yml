@@ -1,0 +1,97 @@
+name: Work1 Druid L60 pinned-client equipment source
+
+on:
+  push:
+    branches: [work1/feral-l60-druid-options-preserve-selected-20261105]
+    paths:
+      - .github/workflows/work1-druid-equipment-source.yml
+      - tools/import_druid_equipment.py
+      - tools/import_paladin_equipment.py
+      - src/data.rs
+      - src/prepare/items.rs
+      - src/options.rs
+      - data/druid-equipment-skills.json
+      - data/druid-equipment-skills.manifest.json
+      - data/manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  project-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch the exact pinned-client DB2 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$(python3 -c 'import json; print(json.load(open("data/manifest.json"))["client_build"])')"
+          for table in SkillLine SkillRaceClassInfo; do
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+              --user-agent "MythicSim source importer" \
+              "https://wago.tools/db2/${table}/csv?build=${build}" \
+              -o "/tmp/${table}.csv"
+            test -s "/tmp/${table}.csv"
+            sha256sum "/tmp/${table}.csv"
+          done
+      - name: Test shared source projector and import Druid class-mask rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tools -p 'import_paladin_equipment_test.py'
+          python3 tools/import_druid_equipment.py /tmp/SkillLine.csv /tmp/SkillRaceClassInfo.csv
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("data/druid-equipment-skills.json").read_text())
+          manifest = json.loads(Path("data/manifest.json").read_text())
+          assert data["client_build"] == manifest["client_build"]
+          assert data["class"] == "druid" and data["class_id"] == 11
+          assert data["class_mask"] == 1024 and data["skills"]
+          assert any(row["min_level"] is not None for row in data["skills"])
+          print("DRUID_SOURCE_PROJECTION_START", flush=True)
+          print(json.dumps(data, sort_keys=True, separators=(",", ":")), flush=True)
+          print("DRUID_SOURCE_PROJECTION_END", flush=True)
+          print("DRUID_SOURCE_MANIFEST_START", flush=True)
+          print(Path("data/druid-equipment-skills.manifest.json").read_text().strip(), flush=True)
+          print("DRUID_SOURCE_MANIFEST_END", flush=True)
+          print("DRUID_MAIN_MANIFEST_START", flush=True)
+          print(Path("data/manifest.json").read_text().strip(), flush=True)
+          print("DRUID_MAIN_MANIFEST_END", flush=True)
+          PY
+      - name: Verify pinned projection and native Druid item-options
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- data/druid-equipment-skills.json data/druid-equipment-skills.manifest.json data/manifest.json
+          python3 tools/rust_data.py check
+          cargo test --locked druid_l60_native_item_options_use_pinned_client_class_skills -- --nocapture
+          cargo test --locked supported_classes_reuse_native_item_eligibility -- --nocapture
+          cargo run --locked -- item-options --class druid --level 60 --spec unrestricted --slot all > /tmp/druid-l60-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          response = json.loads(Path("/tmp/druid-l60-options.json").read_text())
+          assert response["status"] == "ok", response.get("refusal")
+          assert response["class"] == "druid" and response["level"] == 60
+          assert response["required_level_supported"]
+          assert response["items"] and response["unverified_candidate_count"] == 0
+          print("DRUID_L60_NATIVE_OPTIONS", len(response["items"]),
+                "excluded_non_client", response["excluded_non_client_item_count"], flush=True)
+          PY
+      - name: Upload exact source projection and manifests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: druid-equipment-source-${{ github.sha }}
+          path: |
+            /tmp/SkillLine.csv
+            /tmp/SkillRaceClassInfo.csv
+            data/manifest.json
+            data/druid-equipment-skills.json
+            data/druid-equipment-skills.manifest.json
+          if-no-files-found: warn
+          retention-days: 14
