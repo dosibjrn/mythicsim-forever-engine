@@ -464,7 +464,7 @@ fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
     // This is the *production* native-owned frozen-reference input, not a
     // mutated L60 Balance saved donor. The same bytes feed Forever's P7.1
     // reference producer once this actor-capable engine is selected.
-    let request: serde_json::Value = serde_json::from_str(include_str!(
+    let mut request: serde_json::Value = serde_json::from_str(include_str!(
         "../fixtures/references/druid-l20-p71.request.json"
     ))
     .unwrap();
@@ -478,6 +478,8 @@ fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
     assert_eq!(request["encounter"]["targets"][0]["level"], 20);
     assert_eq!(request["encounter"]["targets"][0]["minBaseDamage"], 0);
     assert_eq!(request["simOptions"]["iterations"], 1000);
+    // Keep the exact source fixture intact; pay only one fight in this smoke.
+    request["simOptions"]["iterations"] = serde_json::json!(1);
 
     let directory =
         std::env::temp_dir().join(format!("forever-druid-l20-cli-{}", std::process::id()));
