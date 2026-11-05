@@ -1007,7 +1007,7 @@ mod level_contract_tests {
         let player = Message::from_json_text("proto.Player", "{}").unwrap();
         assert_eq!(requested_player_level(&player, None).unwrap(), constants::CHARACTER_LEVEL);
         assert_eq!(requested_player_level(&player, Some(60)).unwrap(), constants::CHARACTER_LEVEL);
-        assert!(Message::from_json_text("proto.Player", r#"{}"#).is_err());
+        assert!(Message::from_json_text("proto.Player", r#"{"level":20}"#).is_err());
     }
 
     #[test]
