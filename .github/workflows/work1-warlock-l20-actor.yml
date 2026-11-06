@@ -1,0 +1,68 @@
+name: Work1 Troll Warlock L20 selected-native paid smoke
+
+on:
+  push:
+    branches: [work/work1-warlock-l20-native-item-options-20261106]
+    paths:
+      - .github/workflows/work1-warlock-l20-actor.yml
+      - src/prepare.rs
+      - src/prepare/character.rs
+      - src/prepare/env.rs
+      - src/classes/warlock/**
+      - src/main.rs
+      - src/lib.rs
+      - data/warlock-l20-actor-source.json
+      - fixtures/warlock-l20-troll-native.request.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warlock-l20-actor-paid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test native level-specific character and preserved L60 path
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
+          cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
+      - name: Prepare actual selected Troll Warlock L20 (no L60 surrogate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- prepare --request fixtures/warlock-l20-troll-native.request.json --actor-level 20 --scenario warlock-l20-native-smoke --outfile /tmp/warlock-l20-prepared.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/warlock-l20-prepared.json').read_text())
+          actor=p['player']
+          assert actor['level']==20, ('NOT_L20',actor.get('level'))
+          assert actor['stats']['Health']>0 and actor['stats']['Mana']>0, actor['stats']
+          print('SELECTED_NATIVE_ACTOR', {'level':actor['level'],'health':actor['stats']['Health'],'mana':actor['stats']['Mana']},flush=True)
+          PY
+      - name: Run one real native balanced paid encounter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- sim --infile /tmp/warlock-l20-prepared.json --rng-mode balanced --outfile /tmp/warlock-l20-paid.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('/tmp/warlock-l20-paid.json').read_text())
+          print('WARLOCK_L20_NATIVE_PAID_RESULT',json.dumps(result)[:3500],flush=True)
+          PY
+      - name: Preserve authentic request, prepared actor and paid output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: work1-warlock-l20-actor-paid
+          path: |
+            fixtures/warlock-l20-troll-native.request.json
+            /tmp/warlock-l20-prepared.json
+            /tmp/warlock-l20-paid.json
+          if-no-files-found: warn
+          retention-days: 14
