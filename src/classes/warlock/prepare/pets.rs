@@ -16,7 +16,7 @@ use crate::prepare::spell::{
 use crate::prepare::stats::{Stat, Stats};
 
 use super::masks;
-use super::spell_data::{prepared_rank, spell_data};
+
 use super::spells::spell_action;
 use super::Warlock;
 
@@ -29,6 +29,20 @@ const PET_ATTACK_POWER_FRACTION: f64 = 0.17;
 /// 17% spell hit cap. Forever's developers on their tracker (22 October 2026): "Warlocks will give
 /// spell hit equal to their spell hit, and melee hit equal to 8/17ths of their spell hit."
 pub(crate) const DEMON_MELEE_HIT_PER_SPELL_HIT: f64 = 8.0 / 17.0;
+
+/// Source-exported WoW Forever beta pet rank rows (not an alternate pet
+/// simulator). The pinned core spelldata store lacks rank 1 Firebolt and some
+/// lower pet spells, so keeping their verbatim client metadata here avoids
+/// borrowing L60 rank 7 on an L30 actor.
+pub(super) fn native_pet_rank(ability: &str, level: i32) -> Option<&'static Value> {
+    static RANKS: OnceLock<Value> = OnceLock::new();
+    let rows = RANKS.get_or_init(|| serde_json::from_str(
+        include_str!("../../../../data/forever-warlock-pet-ability-levels.json"))
+        .expect("Forever beta pet spell rank table must parse"));
+    rows.get(ability)?.as_array()?.iter().rev().find(|r| {
+        r.get(1).and_then(Value::as_i64).is_some_and(|min| min <= i64::from(level))
+    })
+}
 
 /// Go `proto.WarlockOptions_Summon` of the four demons the warlock registers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,10 +306,12 @@ impl Warlock {
     /// 2.4 sec after the last; 430 would round up to 2.5. Improved Imp rides on its talent as a
     /// SpellMod.
     fn register_firebolt_spell(&mut self, sim: &mut Sim, pet: UnitId) {
-        let Some(rank) = prepared_rank(&spell_data().imp_firebolt, sim, pet) else {
+        let Some(rank) = native_pet_rank("firebolt", sim.unit(pet).level) else {
             return;
         };
-        let mana_cost = rank.cost() as i32;
+        let spell_id = rank[0].as_i64().expect("Firebolt client ID") as i32;
+        let mana_cost = rank[4].as_i64().expect("Firebolt client cost") as i32;
+        let coefficient = rank[5].as_f64().expect("Firebolt client SP coefficient");
         if let Some(state) = self.pets.state_mut(pet) {
             state.min_mana = f64::from(mana_cost);
         }
@@ -303,7 +319,7 @@ impl Warlock {
         let spell = sim.register_spell(
             pet,
             SpellConfig {
-                action_id: spell_action(rank.id),
+                action_id: spell_action(spell_id),
                 spell_school: school::FIRE,
                 defense_type: DefenseType::Magic,
                 proc_mask: ProcMask::SPELL_DAMAGE,
@@ -327,7 +343,7 @@ impl Warlock {
                 damage_multiplier_additive: 1.0,
                 damage_multiplier: 1.0,
                 threat_multiplier: 1.0,
-                bonus_coefficient: 0.571,
+                bonus_coefficient: coefficient,
                 ..SpellConfig::default()
             },
         );
@@ -339,10 +355,12 @@ impl Warlock {
     /// Lash of Pain carries our client-verified beta 1.60.1 values (rank 6). Improved Sayaad
     /// rides on its talent as a SpellMod.
     fn register_lash_of_pain_spell(&mut self, sim: &mut Sim, pet: UnitId) {
-        let Some(rank) = prepared_rank(&spell_data().succubus_lash_of_pain, sim, pet) else {
+        let Some(rank) = native_pet_rank("lash_of_pain", sim.unit(pet).level) else {
             return;
         };
-        let mana_cost = rank.cost() as i32;
+        let spell_id = rank[0].as_i64().expect("Lash client ID") as i32;
+        let mana_cost = rank[4].as_i64().expect("Lash client cost") as i32;
+        let coefficient = rank[5].as_f64().expect("Lash client SP coefficient");
         if let Some(state) = self.pets.state_mut(pet) {
             state.min_mana = f64::from(mana_cost);
         }
@@ -350,7 +368,7 @@ impl Warlock {
         let spell = sim.register_spell(
             pet,
             SpellConfig {
-                action_id: spell_action(rank.id),
+                action_id: spell_action(spell_id),
                 spell_school: school::SHADOW,
                 defense_type: DefenseType::Magic,
                 proc_mask: ProcMask::SPELL_DAMAGE,
@@ -374,7 +392,7 @@ impl Warlock {
                 damage_multiplier_additive: 1.0,
                 damage_multiplier: 1.0,
                 threat_multiplier: 1.0,
-                bonus_coefficient: 0.429,
+                bonus_coefficient: coefficient,
                 ..SpellConfig::default()
             },
         );
