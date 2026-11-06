@@ -14,6 +14,7 @@ on:
       - src/lib.rs
       - data/warlock-l20-actor-source.json
       - fixtures/warlock-l20-troll-native.request.json
+      - tests/warlock_l20_native_registration.rs
   workflow_dispatch:
 
 permissions:
@@ -31,6 +32,7 @@ jobs:
           set -euo pipefail
           cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
           cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
+          cargo test --locked warlock_l20_exported_effects_reference_registered_native_actions -- --nocapture
       - name: Prepare actual selected Troll Warlock L20 (no L60 surrogate)
         shell: bash
         run: |
