@@ -3,11 +3,32 @@ import unittest
 
 from warlock_l20_native_search import (
     native_spell_candidates, cast_apl, multi_apl, mana_conditioned_apl,
-    choose_paid_gear_upgrade,
+    choose_paid_gear_upgrade, native_gear_refinement_proposals,
 )
 
 
 class NativeWarlockAplSourceTests(unittest.TestCase):
+    def test_refinement_only_changes_one_source_item_and_preserves_joint_axes(self):
+        original = {"raid": {"parties": [{"players": [{
+            "talentsString": "native_selected_talents",
+            "rotation": {"priorityList": [{"action": {
+                "castSpell": {"spellId": {"spellId": 1088}}}}]},
+            "equipment": {"items": [{"id": 101}, {"id": 202}, {"id": 303}]},
+        }]}]}}
+        proposals = list(native_gear_refinement_proposals(
+            original, 1, [202, 404, 404, 505]))
+        self.assertEqual([item_id for item_id, _ in proposals], [404, 505])
+        self.assertEqual([row["id"] for row in
+                          original["raid"]["parties"][0]["players"][0]
+                          ["equipment"]["items"]], [101, 202, 303])
+        for item_id, proposal in proposals:
+            actor = proposal["raid"]["parties"][0]["players"][0]
+            self.assertEqual(actor["talentsString"], "native_selected_talents")
+            self.assertEqual(actor["rotation"], original["raid"]["parties"][0]
+                             ["players"][0]["rotation"])
+            self.assertEqual([row["id"] for row in actor["equipment"]["items"]],
+                             [101, item_id, 303])
+
     def test_native_paid_gear_selection_never_degrades_current_build(self):
         # Real Rust responses may refuse an item or pay less DPS than naked.
         # Neither is evidence of an improved equipped candidate.

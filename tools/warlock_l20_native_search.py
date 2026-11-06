@@ -221,6 +221,22 @@ def choose_paid_gear_upgrade(baseline_dps, trials):
     return winner_id, winner_dps
 
 
+def native_gear_refinement_proposals(equipped_request, slot_index, source_item_ids):
+    """Vary just one slot of a paid native build, preserving other axes.
+
+    Item IDs come from Rust options and every full proposal goes back through
+    native prepare/simulate. This helper never asserts item legality.
+    """
+    equipped = player(equipped_request)["equipment"]["items"]
+    current_id = equipped[slot_index]["id"]
+    for item_id in dict.fromkeys(source_item_ids):
+        if item_id == current_id:
+            continue
+        proposal = copy.deepcopy(equipped_request)
+        player(proposal)["equipment"]["items"][slot_index] = {"id": item_id}
+        yield item_id, proposal
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -429,6 +445,29 @@ def main():
             player(trial)["talentsString"] = encoded
             player(trial)["rotation"]["priorityList"] = copy.deepcopy(apl)
             score("joint_apl_" + str(index) + "_" + encoded[:22], trial)
+
+    # Re-check source-native item options after joint talent/APL selection:
+    # the best weapon/slot under the earlier APL need not be best here.
+    # Only genuine paid improvements change the equipped incumbent.
+    refined = copy.deepcopy(base)
+    player(refined)["talentsString"] = best["talents"]
+    player(refined)["rotation"]["priorityList"] = copy.deepcopy(best["apl"])
+    player(refined)["equipment"]["items"] = copy.deepcopy(best["equipment"])
+    refined_baseline = score("joint_gear_refinement_baseline", refined)
+    if refined_baseline is None:
+        raise SystemExit("Native joint gear baseline refused")
+    refined_dps = refined_baseline["dps"]
+    for index in sorted(pools):
+        trials = [
+            (item_id, score("joint_gear_refine_slot_" + str(index) +
+                            "_item_" + str(item_id), proposal))
+            for item_id, proposal in native_gear_refinement_proposals(
+                refined, index, pools[index][:3])
+        ]
+        chosen_id, improved_dps = choose_paid_gear_upgrade(refined_dps, trials)
+        if chosen_id is not None:
+            player(refined)["equipment"]["items"][index] = {"id": chosen_id}
+            refined_dps = improved_dps
 
     summary = {
         "source": "selected_native_get_options_and_paid_rust",
