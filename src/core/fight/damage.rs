@@ -1235,9 +1235,14 @@ impl<A: Agent> Fight<A> {
                 }
             }
         }
-        if result.target == Side::Target {
+        if result.target == Side::Target
+            || (super::world_bridge::enabled() && result.target.is_target())
+        {
+            // Non-world DPS accounting retains the original primary-target
+            // metric. A live rolling world must account for *all* native
+            // source-target damage, including old mobs ticking after retarget.
             self.encounter_damage_taken += result.damage;
-            if result.damage > 0.0 {
+            if result.damage > 0.0 && super::world_bridge::enabled() {
                 // Pre-pull source hits are genuine target damage. Keep their
                 // negative native clock; gsim applies them at the first t=0
                 // boundary, before the next native combat decision.
@@ -1257,6 +1262,11 @@ impl<A: Agent> Fight<A> {
                     periodic,
                     super::world_bridge::DamageSource {
                         action: format!("{:?}", self.spells[spell].id),
+                        // The prepared Rust Side is the authority: Target=0,
+                        // Extra(0)=1, and so forth. Never force extra-target
+                        // DoT damage onto the new/current world target.
+                        target_index: result.target.target_position()
+                            .expect("RUST_WORLD_DAMAGE_MUST_TARGET_ENEMY") as u32,
                         target_label: self.label_of(result.target),
                         caster_type: caster_type.to_owned(),
                         caster_index,

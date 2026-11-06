@@ -1735,6 +1735,12 @@ impl<A: Agent> Fight<A> {
             Compiled::CurrentManaPercent => self.player.mana / self.player.powers.max_mana,
             // Go `Unit.CurrentHealthPercent`.
             Compiled::CurrentHealthPercent => self.player.health / self.player_max_health(),
+            // Never infer enemy HP from local damage or stationary DPS. The
+            // world bridge owns this only after its exact gsim ACK handshake.
+            Compiled::WorldCurrentTargetHealthPercent => {
+                super::world_bridge::current_target_health_percent()
+                    .expect("RUST_APL_TARGET_HP_REQUIRES_ACKED_LIVE_WORLD")
+            },
             // Go `GetRemainingDurationPercent` for a fight timed by duration.
             Compiled::RemainingTimePercent => {
                 (self.duration - self.now) as f64 / self.duration as f64
