@@ -50,3 +50,9 @@ jobs:
           echo 'WARLOCK_SKILL_PROJECTION_BEGIN'
           cat "$RUNNER_TEMP/data/warlock-equipment-skills.json"
           echo 'WARLOCK_SKILL_PROJECTION_END'
+          echo 'WARLOCK_SKILL_MANIFEST_BEGIN'
+          cat "$RUNNER_TEMP/data/warlock-equipment-skills.manifest.json"
+          echo 'WARLOCK_SKILL_MANIFEST_END'
+          echo 'WARLOCK_DATA_MANIFEST_BEGIN'
+          cat "$RUNNER_TEMP/data/manifest.json"
+          echo 'WARLOCK_DATA_MANIFEST_END'
