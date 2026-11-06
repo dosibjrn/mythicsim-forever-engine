@@ -9,7 +9,7 @@ use crate::prepare::spell::{
 };
 
 use super::masks;
-use super::spell_data::spell_data;
+use super::spell_data::{prepared_rank, spell_data};
 use super::spells::{damage_config, default_cast, flat_cost, longest_cooldown, spell_action};
 use super::Warlock;
 
@@ -44,7 +44,9 @@ impl Warlock {
     /// resistance and raises all magic damage taken by 10%, which is what core's aura already
     /// does.
     pub(super) fn register_curse_of_elements(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().curse_of_the_elements.highest();
+        let Some(rank) = prepared_rank(&spell_data().curse_of_the_elements, sim, unit) else {
+            return;
+        };
 
         // The player copy (untagged 1311680, one label per target): the APLs ask for aura
         // 1311680 on the target, and every warlock of a raid shares it.
@@ -76,7 +78,9 @@ impl Warlock {
     /// Forever renamed Curse of Doom to Bane of Doom (603): one tick after a minute, on the bane
     /// slot.
     pub(super) fn register_curse_of_doom(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().bane_of_doom.highest();
+        let Some(rank) = prepared_rank(&spell_data().bane_of_doom, sim, unit) else {
+            return;
+        };
         let tick = rank.periodic_effect();
         let timer = sim.new_timer(unit);
         sim.register_spell(
@@ -138,7 +142,9 @@ impl Warlock {
     }
 
     pub(super) fn register_curse_of_recklessness(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().curse_of_recklessness.highest();
+        let Some(rank) = prepared_rank(&spell_data().curse_of_recklessness, sim, unit) else {
+            return;
+        };
 
         let auras = new_enemy_aura_array(sim, |sim, target| {
             CURSE_OF_RECKLESSNESS.aura(sim, target, true, 0, 0.0)
