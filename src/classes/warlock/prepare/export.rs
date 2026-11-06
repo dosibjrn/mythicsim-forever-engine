@@ -60,10 +60,9 @@ fn damage_rows() -> &'static HashMap<i32, &'static Row> {
             &data.soul_fire,
             &data.incinerate,
         ] {
-            let row = ladder.highest();
-            if !row.is_nil() {
+            ladder.each(|_, row| {
                 rows.insert(row.id, row);
-            }
+            });
         }
         rows
     })
