@@ -8,6 +8,7 @@ on:
       - src/prepare.rs
       - src/prepare/character.rs
       - src/prepare/env.rs
+      - src/engine/coverage.rs
       - src/classes/warlock/**
       - src/main.rs
       - src/lib.rs
