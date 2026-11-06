@@ -237,6 +237,39 @@ def native_gear_refinement_proposals(equipped_request, slot_index, source_item_i
         yield item_id, proposal
 
 
+def refine_paid_gear(equipped_request, pools, score, *, passes=2, label_prefix="gear"):
+    """Revisit earlier slots after later native-paid gear changes their context.
+
+    Every candidate is a source item in the current full talents/APL build,
+    scored by Rust. Stop on a no-upgrade pass; never accept a score regression.
+    """
+    working = copy.deepcopy(equipped_request)
+    baseline = score(label_prefix + "_baseline", working)
+    if baseline is None:
+        raise RuntimeError("Native equipped gear baseline refused")
+    current_dps = baseline["dps"]
+    for pass_index in range(passes):
+        upgraded = False
+        for index in sorted(pools):
+            trials = [
+                (item_id, score(
+                    label_prefix + "_pass_" + str(pass_index + 1) +
+                    "_slot_" + str(index) + "_item_" + str(item_id),
+                    proposal,
+                ))
+                for item_id, proposal in native_gear_refinement_proposals(
+                    working, index, pools[index][:3])
+            ]
+            chosen_id, improved_dps = choose_paid_gear_upgrade(current_dps, trials)
+            if chosen_id is not None:
+                player(working)["equipment"]["items"][index] = {"id": chosen_id}
+                current_dps = improved_dps
+                upgraded = True
+        if not upgraded:
+            break
+    return working, current_dps
+
+
 def configured_request(request, *, duration, iterations):
     """Align a source-native candidate with the same paid search scenario.
 
@@ -417,31 +450,12 @@ def main():
                 score("apl_mana_" + str(resource) + "_" + str(threshold) +
                       "_" + str(filler), proposal)
 
-    # Observe native equipment effects. Every candidate still goes to Rust.
-    # Keep the highest-paid candidate rather than trusting item-level ranking.
+    # Evaluate source-native full builds under the actual selected talents/APL.
+    # Revisit earlier slots if subsequent native-paid upgrades change context.
     if best is None:
         raise SystemExit("No executable level-20 Warlock candidate; see refusals")
-    # The old loop discarded all equipment and talent choices from the
-    # already-paid winner, restarting gear coordinates from naked. Retain the
-    # exact paid incumbent across all axes before testing native slot upgrades.
-    working = copy.deepcopy(best_request)
-    # Compare each item to the *current, actually paid* equipped build. The
-    # previous loop accepted the best item even when every item lost DPS to
-    # naked gear, damaging the build used for joint talent/APL search.
-    baseline_row = score("gear_start_current_apl", working)
-    if baseline_row is None:
-        raise SystemExit("Native gear baseline refused; cannot compare paid upgrades")
-    equipped_dps = baseline_row["dps"]
-    for index in sorted(pools):
-        trials = []
-        for iid in pools[index][:3]:
-            trial = copy.deepcopy(working)
-            player(trial)["equipment"]["items"][index] = {"id": iid}
-            trials.append((iid, score("gear_slot_" + str(index) + "_item_" + str(iid), trial)))
-        chosen_id, improved_dps = choose_paid_gear_upgrade(equipped_dps, trials)
-        if chosen_id is not None:
-            player(working)["equipment"]["items"][index] = {"id": chosen_id}
-            equipped_dps = improved_dps
+    working, equipped_dps = refine_paid_gear(
+        best_request, pools, score, passes=2, label_prefix="initial_gear")
 
     # Native-sourced talent tree candidates at the actual 11-point L20 budget.
     for label, encoded in talents:
@@ -472,28 +486,10 @@ def main():
             player(trial)["rotation"]["priorityList"] = copy.deepcopy(apl)
             score("joint_apl_" + str(index) + "_" + encoded[:22], trial)
 
-    # Re-check source-native item options after joint talent/APL selection:
-    # the best weapon/slot under the earlier APL need not be best here.
-    # Only genuine paid improvements change the equipped incumbent.
-    refined = copy.deepcopy(base)
-    player(refined)["talentsString"] = best["talents"]
-    player(refined)["rotation"]["priorityList"] = copy.deepcopy(best["apl"])
-    player(refined)["equipment"]["items"] = copy.deepcopy(best["equipment"])
-    refined_baseline = score("joint_gear_refinement_baseline", refined)
-    if refined_baseline is None:
-        raise SystemExit("Native joint gear baseline refused")
-    refined_dps = refined_baseline["dps"]
-    for index in sorted(pools):
-        trials = [
-            (item_id, score("joint_gear_refine_slot_" + str(index) +
-                            "_item_" + str(item_id), proposal))
-            for item_id, proposal in native_gear_refinement_proposals(
-                refined, index, pools[index][:3])
-        ]
-        chosen_id, improved_dps = choose_paid_gear_upgrade(refined_dps, trials)
-        if chosen_id is not None:
-            player(refined)["equipment"]["items"][index] = {"id": chosen_id}
-            refined_dps = improved_dps
+    # The native-paid joint APL/talent winner changes relative slot value;
+    # bounded coordinate revisits keep the entire real prepared context.
+    refined, refined_dps = refine_paid_gear(
+        best_request, pools, score, passes=2, label_prefix="joint_gear")
 
     summary = {
         "source": "selected_native_get_options_and_paid_rust",

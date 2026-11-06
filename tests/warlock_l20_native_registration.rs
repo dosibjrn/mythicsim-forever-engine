@@ -8,9 +8,13 @@ use std::collections::BTreeSet;
 #[test]
 fn warlock_l20_exported_effects_reference_registered_native_actions() {
     let request = include_bytes!("../fixtures/warlock-l20-troll-native.request.json");
-    let prepared =
-        prepare_json_with_actor_level(request, "warlock-l20-native-registration", Rules::Forever, Some(20))
-            .expect("selected Troll Warlock L20 request must prepare");
+    let prepared = prepare_json_with_actor_level(
+        request,
+        "warlock-l20-native-registration",
+        Rules::Forever,
+        Some(20),
+    )
+    .expect("selected Troll Warlock L20 request must prepare");
     assert_eq!(prepared["player"]["level"], 20);
     let spells: BTreeSet<i64> = prepared["player"]["spells"]
         .as_array()
@@ -19,7 +23,13 @@ fn warlock_l20_exported_effects_reference_registered_native_actions() {
         .filter_map(|spell| spell["action_id"]["spell_id"].as_i64())
         .collect();
     let effects = prepared["effects"].as_array().expect("native effects");
-    for kind in ["immolate", "corruption", "drain_life", "bane_of_agony", "life_tap"] {
+    for kind in [
+        "immolate",
+        "corruption",
+        "drain_life",
+        "bane_of_agony",
+        "life_tap",
+    ] {
         let effect = effects
             .iter()
             .find(|effect| effect["kind"] == kind)

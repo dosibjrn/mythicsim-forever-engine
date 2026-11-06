@@ -4,6 +4,7 @@ import unittest
 from warlock_l20_native_search import (
     native_spell_candidates, cast_apl, multi_apl, mana_conditioned_apl,
     choose_paid_gear_upgrade, native_gear_refinement_proposals,
+    refine_paid_gear, player,
     configured_request,
 )
 
@@ -37,6 +38,37 @@ class NativeWarlockAplSourceTests(unittest.TestCase):
         self.assertEqual(incumbent["simOptions"]["iterations"], 4)
         selected_actor["equipment"]["items"][0]["id"] = 999
         self.assertEqual(original_actor["equipment"]["items"][0]["id"], 101)
+
+    def test_second_paid_gear_pass_revisits_earlier_slot_after_later_upgrade(self):
+        # Stub the adapter's paid response, not Warcraft mechanics or legality.
+        original = {"raid": {"parties": [{"players": [{
+            "equipment": {"items": [{"id": 10}, {"id": 20}]},
+            "talentsString": "native_talents",
+            "rotation": {"priorityList": [cast_apl(6222), cast_apl(1088)]},
+        }]}]}}
+        scores = {(10, 20): 10.0, (11, 20): 9.0,
+                  (10, 21): 12.0, (11, 21): 15.0}
+
+        def native_paid(_label, request):
+            ids = tuple(item["id"] for item in
+                        player(request)["equipment"]["items"])
+            return {"dps": scores[ids]}
+
+        pools = {0: [11], 1: [21]}
+        once, first_dps = refine_paid_gear(
+            original, pools, native_paid, passes=1)
+        twice, second_dps = refine_paid_gear(
+            original, pools, native_paid, passes=2)
+        self.assertEqual([item["id"] for item in
+                          player(once)["equipment"]["items"]], [10, 21])
+        self.assertEqual(first_dps, 12.0)
+        self.assertEqual([item["id"] for item in
+                          player(twice)["equipment"]["items"]], [11, 21])
+        self.assertEqual(second_dps, 15.0)
+        self.assertEqual(player(twice)["talentsString"], "native_talents")
+        self.assertEqual(player(twice)["rotation"], player(original)["rotation"])
+        self.assertEqual([item["id"] for item in
+                          player(original)["equipment"]["items"]], [10, 20])
 
     def test_refinement_only_changes_one_source_item_and_preserves_joint_axes(self):
         original = {"raid": {"parties": [{"players": [{
