@@ -206,6 +206,21 @@ def summarize(native, request):
     }
 
 
+def choose_paid_gear_upgrade(baseline_dps, trials):
+    """Only accept a Rust-paid item improvement over the actually equipped build.
+
+    Each trial is (item_id, native-paid row or None). The engine decides gear
+    validity and scores; this optimizer merely keeps the best measured gain.
+    """
+    winner_id = None
+    winner_dps = baseline_dps
+    for item_id, row in trials:
+        if row is not None and row["dps"] > winner_dps:
+            winner_id = item_id
+            winner_dps = row["dps"]
+    return winner_id, winner_dps
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -242,13 +257,16 @@ def main():
     refused = []
     refused_reasons = Counter()
     seen = set()
+    paid_cache = {}
     best = None
 
     def score(label, request):
         nonlocal total_attempts, best
         key = json.dumps(request, sort_keys=True)
         if key in seen:
-            return None
+            # Reusing an already paid request must reuse its genuine native
+            # score, not silently turn an executable build into a refusal.
+            return paid_cache.get(key)
         seen.add(key)
         total_attempts += 1
         req = args.out / "candidate.json"
@@ -269,6 +287,7 @@ def main():
             paid = json.loads(output.read_text())
             row = {"label": label, **summarize(paid, request)}
             accepted.append(row)
+            paid_cache[key] = row
             if best is None or row["dps"] > best["dps"]:
                 best = row
                 (args.out / "best_request.json").write_text(json.dumps(request, indent=2) + "\n")
@@ -277,6 +296,7 @@ def main():
                   "best", round(best["dps"], 4), flush=True)
             return row
         except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+            paid_cache[key] = None
             reason = str(exc)[-320:]
             refused_reasons[reason] += 1
             if len(refused) < 40:
@@ -363,16 +383,23 @@ def main():
         raise SystemExit("No executable level-20 Warlock candidate; see refusals")
     working = copy.deepcopy(base)
     player(working)["rotation"]["priorityList"] = copy.deepcopy(best["apl"])
+    # Compare each item to the *current, actually paid* equipped build. The
+    # previous loop accepted the best item even when every item lost DPS to
+    # naked gear, damaging the build used for joint talent/APL search.
+    baseline_row = score("gear_start_current_apl", working)
+    if baseline_row is None:
+        raise SystemExit("Native gear baseline refused; cannot compare paid upgrades")
+    equipped_dps = baseline_row["dps"]
     for index in sorted(pools):
-        current = None
+        trials = []
         for iid in pools[index][:3]:
             trial = copy.deepcopy(working)
             player(trial)["equipment"]["items"][index] = {"id": iid}
-            row = score("gear_slot_" + str(index) + "_item_" + str(iid), trial)
-            if row and (current is None or row["dps"] > current[0]):
-                current = (row["dps"], iid)
-        if current:
-            player(working)["equipment"]["items"][index] = {"id": current[1]}
+            trials.append((iid, score("gear_slot_" + str(index) + "_item_" + str(iid), trial)))
+        chosen_id, improved_dps = choose_paid_gear_upgrade(equipped_dps, trials)
+        if chosen_id is not None:
+            player(working)["equipment"]["items"][index] = {"id": chosen_id}
+            equipped_dps = improved_dps
 
     # Native-sourced talent tree candidates at the actual 11-point L20 budget.
     for label, encoded in talents:
