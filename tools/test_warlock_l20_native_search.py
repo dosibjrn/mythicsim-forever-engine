@@ -4,10 +4,40 @@ import unittest
 from warlock_l20_native_search import (
     native_spell_candidates, cast_apl, multi_apl, mana_conditioned_apl,
     choose_paid_gear_upgrade, native_gear_refinement_proposals,
+    configured_request,
 )
 
 
 class NativeWarlockAplSourceTests(unittest.TestCase):
+    def test_paid_incumbent_keeps_full_joint_build_and_is_not_mutated(self):
+        incumbent = {
+            "simOptions": {"iterations": 4, "randomSeed": "old",
+                           "debugFirstIteration": True},
+            "encounter": {"duration": 12, "targets": [{"level": 20}]},
+            "raid": {"parties": [{"players": [{
+                "talentsString": "0-0-0550001000000000",
+                "equipment": {"items": [{"id": 101}, {"id": 202}]},
+                "rotation": {"priorityList": [
+                    cast_apl(6222, guard="dot_missing"),
+                    cast_apl(1088),
+                ]},
+            }]}]},
+        }
+        aligned = configured_request(incumbent, duration=30, iterations=8)
+        self.assertEqual(aligned["simOptions"], {
+            "iterations": 8, "randomSeed": "4242", "debugFirstIteration": False
+        })
+        self.assertEqual(aligned["encounter"], {
+            "duration": 30, "targets": [{"level": 20}]
+        })
+        original_actor = incumbent["raid"]["parties"][0]["players"][0]
+        selected_actor = aligned["raid"]["parties"][0]["players"][0]
+        self.assertEqual(selected_actor, original_actor)
+        self.assertEqual(incumbent["encounter"]["duration"], 12)
+        self.assertEqual(incumbent["simOptions"]["iterations"], 4)
+        selected_actor["equipment"]["items"][0]["id"] = 999
+        self.assertEqual(original_actor["equipment"]["items"][0]["id"], 101)
+
     def test_refinement_only_changes_one_source_item_and_preserves_joint_axes(self):
         original = {"raid": {"parties": [{"players": [{
             "talentsString": "native_selected_talents",
