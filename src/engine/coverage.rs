@@ -2043,16 +2043,11 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    // The selected native Troll Warlock L20 source now prepares a real L20
-    // actor. This is a runtime coverage decision, not a Warcraft legality
-    // check or a new gate. Keep all other unsupported levels refused.
-    let native_warlock_l20 = player.class == "ClassWarlock" && player.level == 20;
-    if player.level != 60 && !native_warlock_l20 {
-        reasons.push(Refusal::new(
-            "level_unsupported",
-            format!("player level {} is not supported", player.level),
-        ));
-    }
+    // Actor level/proficiency is the authoritative Rust prepare path's
+    // responsibility. Do NOT introduce a second handwritten list here
+    // (formerly only 60 or special-cased Troll Warlock 20). If an actual
+    // lower-level actor has source-backed stats and reaches this point,
+    // native execution, not this coverage wrapper, evaluates the request.
     // The exporter writes the count only for a fight against several targets.
     let targets = prepared.encounter.target_count as usize;
     if targets == 1 || targets > crate::core::fight::MAX_TARGETS {
@@ -2064,14 +2059,9 @@ pub(crate) fn prepared_coverage(
             ),
         ));
     }
-    if !(60..=63).contains(&prepared.target.level)
-        && !(native_warlock_l20 && prepared.target.level == 20)
-    {
-        reasons.push(Refusal::new(
-            "level_unsupported",
-            format!("target level {} is not supported", prepared.target.level),
-        ));
-    }
+    // Target level likewise comes from the prepared Rust encounter. A
+    // class-specific magic-level allowlist is not an engine mechanic.
+    // Real native combat still owns its level-dependent damage/miss results.
 
     let claims = |effect: &Effect| {
         let mut claimed = common_claims(effect);
