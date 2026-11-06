@@ -79,7 +79,7 @@ pub(super) fn target_units(sim: &Sim) -> Vec<UnitId> {
 
 impl Warlock {
     pub(super) fn register_corruption(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().corruption.highest_for(sim.rules);
+        let rank = spell_data().corruption.highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -149,7 +149,7 @@ impl Warlock {
     /// Improved Drains rides on the talent as a dot SpellMod. Soul Siphon has to be counted per
     /// tick, so it stays in the tick.
     pub(super) fn register_drain_life(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().drain_life.highest();
+        let rank = spell_data().drain_life.highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -210,7 +210,7 @@ impl Warlock {
     }
 
     pub(super) fn register_immolate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().immolate.highest_for(sim.rules);
+        let rank = spell_data().immolate.highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         let immolate = sim.register_spell(
             unit,
@@ -268,7 +268,7 @@ impl Warlock {
 
     /// Life Tap is a plain mana gain, not damage.
     pub(super) fn register_life_tap(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().life_tap.highest();
+        let rank = spell_data().life_tap.highest_for_level(sim.unit(unit).level, sim.rules);
         sim.register_spell(
             unit,
             SpellConfig {
@@ -335,7 +335,7 @@ impl Warlock {
     }
 
     pub(super) fn register_searing_pain(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().searing_pain.highest();
+        let rank = spell_data().searing_pain.highest_for_level(sim.unit(unit).level, sim.rules);
         sim.register_spell(
             unit,
             SpellConfig {
@@ -352,7 +352,11 @@ impl Warlock {
     /// Every rank is registered so a rotation can drop to a cheaper one when mana runs short;
     /// the talents and procs reach them all through the Shadow Bolt mask.
     pub(super) fn register_shadow_bolt(&mut self, sim: &mut Sim, unit: UnitId) {
+        let level = sim.unit(unit).level;
         spell_data().shadow_bolt.each(|_, rank| {
+            if i32::from(rank.spell_level) > level {
+                return;
+            }
             sim.register_spell(
                 unit,
                 SpellConfig {
