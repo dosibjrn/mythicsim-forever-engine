@@ -692,8 +692,9 @@ fn native_item_class_eligible(
             .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassDruid"));
     }
     if class == "warlock" {
-        return paladin_skills
-            .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassWarlock"));
+        return paladin_skills.is_some_and(|skills| {
+            native_skilled_item_eligible(item, level, skills, "ClassWarlock")
+        });
     }
 
     let slot = native_item_source_slot(item);
@@ -877,7 +878,10 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin" | "mage" | "rogue" | "druid" | "warlock") {
+            if matches!(
+                class,
+                "shaman" | "paladin" | "mage" | "rogue" | "druid" | "warlock"
+            ) {
                 // These P3 consumers select from the pinned client-build ItemSparse
                 // universe. A MythicSim-only row absent from this source is not
                 // an unresolved RequiredLevel for a playable client item.
