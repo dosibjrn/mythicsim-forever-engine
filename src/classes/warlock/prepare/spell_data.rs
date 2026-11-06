@@ -117,7 +117,10 @@ pub(crate) fn spell_data() -> &'static SpellData {
         improved_drains: Ladder::talent(403511, 3),
         improved_imp: Ladder::talent(18694, 3),
         // Source-owned client ranks. Lower-level demons no longer inherit L60 casts.
-        imp_firebolt: Ladder::ranked(&[3110, 7799, 7800, 7801, 7802, 11762, 11763]),
+        imp_firebolt: Ladder::ranked(
+            &[3110, 7799, 7800, 7801, 7802, 11762, 11763]
+                .into_iter().filter(|&id| crate::data::spells::find(id).is_some())
+                .collect::<Vec<_>>().as_slice()),
         improved_life_tap: Ladder::talent(18182, 2),
         improved_sayaad: Ladder::talent(18754, 3),
         improved_shadow_bolt: Ladder::talent(17793, 5),
@@ -141,7 +144,10 @@ pub(crate) fn spell_data() -> &'static SpellData {
         siphon_life: Ladder::ranked(&[18265, 18879, 18880, 18881]),
         soul_fire: Ladder::ranked(&[6353, 17924]),
         soul_link_triggered: Ladder::ranked(&[18814, 25228]),
-        succubus_lash_of_pain: Ladder::ranked(&[7814, 7815, 7816, 11778, 11779, 11780]),
+        succubus_lash_of_pain: Ladder::ranked(
+            &[7814, 7815, 7816, 11778, 11779, 11780]
+                .into_iter().filter(|&id| crate::data::spells::find(id).is_some())
+                .collect::<Vec<_>>().as_slice()),
         soul_siphon: Ladder::talent(17804, 3),
         suppression: Ladder::talent(18174, 5),
         unholy_power: Ladder::talent(18769, 5),
