@@ -1,0 +1,109 @@
+{
+  "encounter": {
+    "duration": 120,
+    "durationVariation": 0,
+    "executeProportion20": 0.2,
+    "executeProportion25": 0.25,
+    "executeProportion35": 0.35,
+    "executeProportion45": 0.45,
+    "executeProportion90": 0.9,
+    "targets": [
+      {
+        "canCrush": false,
+        "damageSpread": 0,
+        "id": 213336,
+        "level": 20,
+        "minBaseDamage": 0,
+        "name": "Level 20",
+        "parryHaste": false,
+        "stats": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          10000,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "swingSpeed": 2
+      }
+    ]
+  },
+  "raid": {
+    "parties": [
+      {
+        "players": [
+          {
+            "balanceDruid": {
+              "options": {
+                "classOptions": {}
+              }
+            },
+            "class": "ClassDruid",
+            "distanceFromTarget": 15,
+            "equipment": {
+              "items": []
+            },
+            "name": "balance-druid",
+            "race": "RaceNightElf",
+            "reactionTimeMs": 100,
+            "rotation": {
+              "type": "TypeAPL",
+              "priorityList": [
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 5176
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "talentsString": "0-0-0"
+          }
+        ]
+      }
+    ]
+  },
+  "simOptions": {
+    "debugFirstIteration": false,
+    "iterations": 1000,
+    "randomSeed": "42"
+  }
+}

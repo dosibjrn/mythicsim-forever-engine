@@ -2044,10 +2044,10 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    // Source-backed Priest and Rogue L20 actors can execute against L20 targets.
+    // Only native-preparable L20 actors are admitted to L20-target gated execution.
     // Other class/level combinations still fail closed.
     let sourced_l20 = player.level == 20
-        && matches!(player.class.as_str(), "ClassPriest" | "ClassRogue");
+        && matches!(player.class.as_str(), "ClassPriest" | "ClassRogue" | "ClassDruid");
     if player.level != 60 && !sourced_l20 {
         reasons.push(Refusal::new(
             "level_unsupported",

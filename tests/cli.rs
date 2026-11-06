@@ -224,7 +224,6 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     ))
     .unwrap();
     let player = &mut request["raid"]["parties"][0]["players"][0];
-    player["level"] = serde_json::json!(20);
     player["race"] = serde_json::json!("RaceHuman");
     player["talentsString"] = serde_json::json!("0-0-0");
     player["consumables"] = serde_json::json!({});
@@ -266,6 +265,7 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     let prepare = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["prepare", "--request"])
         .arg(&input)
+        .args(["--actor-level", "20"])
         .arg("--outfile")
         .arg(&prepared_path)
         .output()
@@ -296,7 +296,7 @@ fn rogue_l20_native_actor_prepares_and_executes_learnable_sinister_strike() {
     let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--request"])
         .arg(&input)
-        .args(["--rng-mode", "balanced", "--outfile"])
+        .args(["--actor-level", "20", "--rng-mode", "balanced", "--outfile"])
         .arg(&report_path)
         .output()
         .unwrap();
@@ -340,7 +340,6 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     ))
     .unwrap();
     let player = &mut request["raid"]["parties"][0]["players"][0];
-    player["level"] = serde_json::json!(20);
     player["talentsString"] = serde_json::json!("0-0-0");
     player["equipment"]["items"] = serde_json::json!([]);
     player["rotation"] = serde_json::json!({
@@ -383,6 +382,7 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     let prepare = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["prepare", "--request"])
         .arg(&input)
+        .args(["--actor-level", "20"])
         .arg("--outfile")
         .arg(&prepared_path)
         .output()
@@ -416,7 +416,7 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--request"])
         .arg(&input)
-        .args(["--rng-mode", "balanced", "--outfile"])
+        .args(["--actor-level", "20", "--rng-mode", "balanced", "--outfile"])
         .arg(&report_path)
         .output()
         .unwrap();
@@ -452,6 +452,85 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
             .unwrap_or(0.0)
             > 0.0,
         "the native Priest L20 actor must produce positive combat damage"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+
+/// End-to-end native actor-level contract for Work1's Druid L20 P7.1 path.
+/// This is a one-fight smoke, NOT the 1,000-stochastic P7.1 gate.
+#[test]
+fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
+    // This is the *production* native-owned frozen-reference input, not a
+    // mutated L60 Balance saved donor. The same bytes feed Forever's P7.1
+    // reference producer once this actor-capable engine is selected.
+    let mut request: serde_json::Value = serde_json::from_str(include_str!(
+        "../fixtures/references/druid-l20-p71.request.json"
+    ))
+    .unwrap();
+    let player = &request["raid"]["parties"][0]["players"][0];
+    assert_eq!(player["class"], "ClassDruid");
+    assert_eq!(player["race"], "RaceNightElf");
+    assert!(player.get("level").is_none());
+    assert_eq!(player["rotation"]["priorityList"][0]["action"]["castSpell"]["spellId"]["spellId"], 5176);
+    assert_eq!(request["encounter"]["duration"], 120);
+    assert_eq!(request["encounter"]["durationVariation"], 0);
+    assert_eq!(request["encounter"]["targets"][0]["level"], 20);
+    assert_eq!(request["encounter"]["targets"][0]["minBaseDamage"], 0);
+    assert_eq!(request["simOptions"]["iterations"], 1000);
+    // Keep the exact source fixture intact; pay only one fight in this smoke.
+    request["simOptions"]["iterations"] = serde_json::json!(1);
+
+    let directory =
+        std::env::temp_dir().join(format!("forever-druid-l20-cli-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let input = directory.join("druid-l20.request.json");
+    let prepared_path = directory.join("druid-l20.prepared.json");
+    let report_path = directory.join("druid-l20.report.json");
+    fs::write(&input, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let prepare = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+        .args(["prepare", "--request"])
+        .arg(&input)
+        .args(["--actor-level", "20", "--outfile"])
+        .arg(&prepared_path)
+        .output()
+        .unwrap();
+    assert!(
+        prepare.status.success(),
+        "native Druid L20 prepare failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&prepare.stdout),
+        String::from_utf8_lossy(&prepare.stderr)
+    );
+    let prepared: serde_json::Value =
+        serde_json::from_slice(&fs::read(&prepared_path).unwrap()).unwrap();
+    assert_eq!(prepared["player"]["class"], "ClassDruid");
+    assert_eq!(prepared["player"]["level"], 20);
+    assert_eq!(prepared["player"]["race"], "RaceNightElf");
+
+    let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
+        .args(["sim", "--request"])
+        .arg(&input)
+        .args(["--actor-level", "20", "--gate", "--rng-mode", "balanced", "--outfile"])
+        .arg(&report_path)
+        .output()
+        .unwrap();
+    assert!(
+        simulation.status.success(),
+        "native Druid L20 gated sim failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&simulation.stdout),
+        String::from_utf8_lossy(&simulation.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+    assert_eq!(report["result"]["iterationsDone"], 1);
+    assert!(
+        report["result"]["raidMetrics"]["dps"]["avg"]
+            .as_f64()
+            .unwrap_or(0.0)
+            > 0.0,
+        "native L20 Druid must execute its prepared rank-one Wrath"
     );
     fs::remove_dir_all(directory).unwrap();
 }
