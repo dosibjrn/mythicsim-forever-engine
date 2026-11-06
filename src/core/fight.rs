@@ -5798,6 +5798,7 @@ impl<A: Agent> Fight<A> {
         let mut previous_damage = 0.0;
         let mut previous_health_damage = 0.0_f64;
         let mut previous_health_damage_events = 0;
+        let mut previous_native_health = self.player.health;
         let mut previous_mana_regen_gain = 0.0_f64;
         let mut previous_mana_regen_events = 0_i32;
         // These values come from the actual retained Rust actor/spell metrics,
@@ -5868,6 +5869,28 @@ impl<A: Agent> Fight<A> {
             }
             // Actual casts since the previous world death. Long cooldown
             // *availability* alone must never be reported as cooldown *usage*.
+            let health_gain = self.player.health - previous_native_health
+                + (health_damage - previous_health_damage);
+            if !health_gain.is_finite() || health_gain < -1e-6 {
+                return Err("RUST_WORLD_HEALTH_GAIN_BUDGET_INVALID");
+            }
+            let cooldown_states: Vec<_> = self.spells.iter()
+                .filter_map(|spell| {
+                    let cd_ns = spell.cd.map_or(0, |(_, duration)| duration);
+                    let shared_ns = spell.shared_cd.map_or(0, |(_, duration)| duration);
+                    let duration_ns = cd_ns.max(shared_ns);
+                    if duration_ns < 30 * crate::core::time::NS_PER_SECOND {
+                        return None;
+                    }
+                    let ready_at_ns = spell.cd.map_or(0, |(timer,_)| self.timers[timer])
+                        .max(spell.shared_cd.map_or(0, |(timer,_)| self.timers[timer]));
+                    Some(serde_json::json!({
+                        "spell_id": spell.id.spell_id,
+                        "item_id": spell.id.item_id,
+                        "duration_ns": duration_ns,
+                        "ready_in_ns": (ready_at_ns - self.now).max(0),
+                    }))
+                }).collect();
             let cast_receipts: Vec<_> = self.spells.iter().enumerate()
                 .filter_map(|(position, spell)| {
                     let count = spell.casts.saturating_sub(previous_spell_casts[position]);
@@ -5888,6 +5911,8 @@ impl<A: Agent> Fight<A> {
                 "native_spell_cast_receipts": cast_receipts,
                 "native_mana_spent": spent.max(0.0),
                 "native_mana_gained": gained.max(0.0),
+                "native_health_actual_gain": health_gain.max(0.0),
+                "native_long_cooldown_states": cooldown_states,
                 "index": index,
                 "native_kill_ns": self.now,
                 "native_damage": total_damage - previous_damage,
@@ -5905,6 +5930,7 @@ impl<A: Agent> Fight<A> {
             previous_damage = total_damage;
             previous_health_damage = health_damage;
             previous_health_damage_events = health_damage_events;
+            previous_native_health = self.player.health;
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
             previous_mana_spent = self.player.mana_spent;
