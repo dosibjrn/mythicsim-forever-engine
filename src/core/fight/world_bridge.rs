@@ -211,6 +211,8 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
 /// The world bridge only transports events; it never invents combat damage.
 pub(crate) struct DamageSource {
     pub(crate) action: String,
+    /// Source-native encounter target position (0 for Target; k+1 for Extra(k)).
+    pub(crate) target_index: u32,
     pub(crate) target_label: String,
     pub(crate) caster_type: String,
     pub(crate) caster_index: u32,
@@ -247,6 +249,7 @@ fn append_damage_event(
 ) {
     let DamageSource {
         action,
+        target_index,
         target_label,
         caster_type,
         caster_index,
@@ -254,6 +257,8 @@ fn append_damage_event(
     } = source;
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
+    assert!(target_index < super::MAX_TARGETS as u32,
+        "RUST_WORLD_DAMAGE_TARGET_OUT_OF_RANGE");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -264,8 +269,8 @@ fn append_damage_event(
         landed,
         crit,
         periodic,
-        native_target_index: 0,
-        native_target_unit_index: 0,
+        native_target_index: target_index,
+        native_target_unit_index: target_index,
         native_target_label: target_label,
         native_caster_type: caster_type,
         native_caster_unit_index: caster_index,
@@ -512,10 +517,58 @@ mod persistent_next_target_tests {
 fn test_damage_source(action: &str) -> DamageSource {
     DamageSource {
         action: action.to_owned(),
+        target_index: 0,
         target_label: "target".to_owned(),
         caster_type: "player".to_owned(),
         caster_index: 0,
         caster_label: "Druid".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod rolling_world_target_identity_tests {
+    use super::{append_damage_event, test_damage_source, Bridge};
+
+    fn bridge() -> Bridge {
+        Bridge {
+            iteration: 0,
+            sequence: 1,
+            next_tick_ns: 0,
+            last_tick_ns: -1,
+            last_health: Some(100.0),
+            previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64),
+            event_ordinal: 0,
+            pending: Vec::new(),
+            iteration_finished: false,
+        }
+    }
+
+    #[test]
+    fn first_and_second_native_mob_damage_stay_distinct() {
+        let mut state = bridge();
+        let first = test_damage_source("Corruption first");
+        let mut second = test_damage_source("Corruption second");
+        second.target_index = 1;
+        second.target_label = "Mob 2".into();
+        append_damage_event(&mut state, 1_000_000, 15.0, false, true, true, first);
+        append_damage_event(&mut state, 2_000_000, 17.0, false, true, true, second);
+        assert_eq!(state.pending.len(), 2);
+        assert_eq!(state.pending[0].native_target_index, 0);
+        assert_eq!(state.pending[0].native_target_unit_index, 0);
+        assert_eq!(state.pending[1].native_target_index, 1);
+        assert_eq!(state.pending[1].native_target_unit_index, 1);
+        assert_eq!(state.pending[1].native_target_label, "Mob 2");
+        assert_ne!(state.pending[0].event_id, state.pending[1].event_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_TARGET_OUT_OF_RANGE")]
+    fn no_invalid_target_identity_is_transported() {
+        let mut state = bridge();
+        let mut invalid = test_damage_source("not a source target");
+        invalid.target_index = super::super::MAX_TARGETS as u32;
+        append_damage_event(&mut state, 1_000_000, 10.0, false, true, false, invalid);
     }
 }
 
