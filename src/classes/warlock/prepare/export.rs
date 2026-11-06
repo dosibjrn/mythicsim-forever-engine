@@ -440,31 +440,35 @@ impl Warlock {
             }));
         }
         if let Some(imp) = self.pets.imp {
-            // Frozen Go/Forever rank-7 damage stays unchanged at L60.
-            // Lower-level pets read the actual registered client rank's damage.
+            // Client-ranked source data for lower-level pets; frozen Go rank
+            // 7 source at 60. Damage is still dealt by the canonical Rust core.
             let level = sim.unit(imp).level;
-            let fallback = imp_firebolt_effect();
-            let row = data.imp_firebolt.highest_for_level(level, sim.rules);
-            let effect = if level == 60 || row.is_nil() {
-                &fallback
+            let (average, variance) = if level == 60 {
+                let effect = imp_firebolt_effect();
+                (effect.average(level), effect.variance)
             } else {
-                row.damage_effect()
+                let rank = super::pets::native_pet_rank("firebolt", level)
+                    .expect("rank exists when Imp can be summoned");
+                let min = rank[2].as_f64().expect("source Firebolt minimum");
+                let max = rank[3].as_f64().expect("source Firebolt maximum");
+                let average = (min + max) / 2.0;
+                (average, if average == 0.0 { 0.0 } else { (max - min) / average })
             };
-            let average = effect.average(level);
             effects.push(json!({
                 "kind": "firebolt",
-                "min_damage": average * (1.0 - effect.variance / 2.0),
-                "max_damage": average * (1.0 + effect.variance / 2.0),
-                "average": average, "variance": effect.variance,
+                "min_damage": average * (1.0 - variance / 2.0),
+                "max_damage": average * (1.0 + variance / 2.0),
+                "average": average, "variance": variance,
             }));
         }
         if let Some(succubus) = self.pets.succubus {
             let level = sim.unit(succubus).level;
             let base = if level == 60 {
-                50.0 // Frozen Go rank-6 value.
+                50.0
             } else {
-                let row = data.succubus_lash_of_pain.highest_for_level(level, sim.rules);
-                if row.is_nil() { 0.0 } else { row.damage_effect().average(level) }
+                super::pets::native_pet_rank("lash_of_pain", level)
+                    .and_then(|rank| rank[2].as_f64())
+                    .unwrap_or(0.0)
             };
             effects.push(json!({"kind": "lash_of_pain", "base_damage": base}));
         }
