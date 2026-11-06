@@ -5800,6 +5800,12 @@ impl<A: Agent> Fight<A> {
         let mut previous_health_damage_events = 0;
         let mut previous_mana_regen_gain = 0.0_f64;
         let mut previous_mana_regen_events = 0_i32;
+        // These values come from the actual retained Rust actor/spell metrics,
+        // not a second cooldown / resource simulation or estimated rotation.
+        let mut previous_mana_spent = self.player.mana_spent;
+        let mut previous_mana_gained = self.player.mana_gained;
+        let mut previous_spell_casts: Vec<u32> =
+            self.spells.iter().map(|spell| spell.casts).collect();
 
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
@@ -5853,7 +5859,35 @@ impl<A: Agent> Fight<A> {
             {
                 return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
             }
+            let spent = self.player.mana_spent - previous_mana_spent;
+            let gained = self.player.mana_gained - previous_mana_gained;
+            if !spent.is_finite() || !gained.is_finite()
+                || spent < -1e-8 || gained < -1e-8
+            {
+                return Err("RUST_WORLD_MANA_CAST_RECEIPT_NONMONOTONIC");
+            }
+            // Actual casts since the previous world death. Long cooldown
+            // *availability* alone must never be reported as cooldown *usage*.
+            let cast_receipts: Vec<_> = self.spells.iter().enumerate()
+                .filter_map(|(position, spell)| {
+                    let count = spell.casts.saturating_sub(previous_spell_casts[position]);
+                    if count == 0 {
+                        return None;
+                    }
+                    let cooldown_ns = spell.cd.map_or(0, |(_, duration)| duration)
+                        .max(spell.shared_cd.map_or(0, |(_, duration)| duration));
+                    Some(serde_json::json!({
+                        "spell_id": spell.id.spell_id,
+                        "item_id": spell.id.item_id,
+                        "casts": count,
+                        "cooldown_ns": cooldown_ns,
+                        "is_long_cooldown": cooldown_ns >= 30 * crate::core::time::NS_PER_SECOND,
+                    }))
+                }).collect();
             windows.push(serde_json::json!({
+                "native_spell_cast_receipts": cast_receipts,
+                "native_mana_spent": spent.max(0.0),
+                "native_mana_gained": gained.max(0.0),
                 "index": index,
                 "native_kill_ns": self.now,
                 "native_damage": total_damage - previous_damage,
@@ -5873,6 +5907,11 @@ impl<A: Agent> Fight<A> {
             previous_health_damage_events = health_damage_events;
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
+            previous_mana_spent = self.player.mana_spent;
+            previous_mana_gained = self.player.mana_gained;
+            for (previous, spell) in previous_spell_casts.iter_mut().zip(&self.spells) {
+                *previous = spell.casts;
+            }
         }
         // Count only native scheduler regeneration actually paid on the
         // retained actor between ACKed world kills. Time alone, an assumed
