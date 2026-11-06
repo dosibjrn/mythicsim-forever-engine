@@ -2032,6 +2032,33 @@ fn runtime_limits(spell: &Spell, class_spell: bool) -> Vec<&'static str> {
     limits
 }
 
+/// Exact source-backed lower-level actor coverage. Preparation itself remains the
+/// native authority; this gate must not reject an actor it can already prepare.
+fn sourced_actor_level(class: &str, level: i32) -> bool {
+    match level {
+        20 => matches!(class, "ClassPriest" | "ClassRogue" | "ClassDruid"),
+        30 => class == "ClassDruid",
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod sourced_level_gate_tests {
+    use super::sourced_actor_level;
+
+    #[test]
+    fn coverage_matches_the_source_backed_actor_levels() {
+        assert!(sourced_actor_level("ClassDruid", 30));
+        assert!(sourced_actor_level("ClassDruid", 20));
+        assert!(sourced_actor_level("ClassPriest", 20));
+        assert!(sourced_actor_level("ClassRogue", 20));
+        assert!(!sourced_actor_level("ClassRogue", 30));
+        assert!(!sourced_actor_level("ClassMage", 30));
+        assert!(!sourced_actor_level("ClassDruid", 31));
+        assert!(!sourced_actor_level("ClassDruid", 40));
+    }
+}
+
 pub(crate) fn prepared_coverage(
     prepared: &PreparedV2,
     rotation: Option<&Rotation>,
@@ -2044,11 +2071,10 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    // Source-backed Priest and Rogue L20 actors can execute against L20 targets.
-    // Other class/level combinations still fail closed.
-    let sourced_l20 = player.level == 20
-        && matches!(player.class.as_str(), "ClassPriest" | "ClassRogue");
-    if player.level != 60 && !sourced_l20 {
+    // Admit only sourced native actor levels; unsupported combinations fail closed.
+    // Druid L30 has its own CMaNGOS actor source, distinct from the L20 actor.
+    let sourced_checkpoint = sourced_actor_level(&player.class, player.level);
+    if player.level != 60 && !sourced_checkpoint {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2066,7 +2092,7 @@ pub(crate) fn prepared_coverage(
         ));
     }
     let target_level_supported = (60..=63).contains(&prepared.target.level)
-        || (sourced_l20 && prepared.target.level == 20);
+        || (sourced_checkpoint && prepared.target.level == player.level);
     if !target_level_supported {
         reasons.push(Refusal::new(
             "level_unsupported",

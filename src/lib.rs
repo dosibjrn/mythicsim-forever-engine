@@ -7,6 +7,10 @@
 //! original public API and prepared v1 JSON contract.
 
 pub mod contracts;
+pub mod legacy_items;
+pub mod options;
+pub use legacy_items::{legacy_item_count, legacy_item_fact, LegacyItemFact};
+pub use options::{get_options, CharacterOptions, Class as OptionsClass};
 pub use core::rng::RngMode;
 pub mod report;
 
@@ -32,7 +36,8 @@ pub use engine::prepared::{
 };
 pub use engine::simulate;
 pub use prepare::{
-    prepare, prepare_json, prepare_json_with, PrepareError, Refusal as PrepareRefusal, Rules,
+    prepare, prepare_json, prepare_json_with, prepare_json_with_actor_level, PrepareError,
+    Refusal as PrepareRefusal, Rules,
 };
 
 /// Prepared v2 effect kinds this engine executes. The release manifest must agree.
@@ -42,6 +47,7 @@ pub fn implemented_prepared_effects() -> &'static [&'static str] {
 pub use prepare::items::{
     native_item_options, native_player_context, NativeItemOption, NativeItemOptionsRefusal, NativeItemOptionsResponse,
 };
+pub use prepare::talent_options::native_talent_options;
 pub use report::{Counts, Report, TraceEvent, Work};
 
 /// The pinned Go reference revision, from upstream/sources.json.

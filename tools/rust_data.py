@@ -141,7 +141,7 @@ def write_data(raw):
     emit("go-tables.json", json.dumps(load(raw / "go-tables.json"), indent=1, sort_keys=True) + "\n")
     # Preserve manually sourced native projections across reference-data reimports.
     # The Go importer does not regenerate these pinned client / CMaNGOS source files.
-    for name in PRESERVED_CLIENT_DATA + ("priest-l20-base-stats.json", "rogue-l20-base-stats.json"):
+    for name in PRESERVED_CLIENT_DATA + ("priest-l20-base-stats.json", "rogue-l20-base-stats.json", "druid-l20-base-stats.json", "druid-l30-base-stats.json"):
         path = DATA / name
         if path.exists():
             files[name] = file_digest(path)
