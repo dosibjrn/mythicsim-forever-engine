@@ -155,6 +155,17 @@ impl Environment {
         factory: AgentFactory,
         rules: Rules,
     ) -> Result<Environment, Refusal> {
+        Self::with_rules_at_level(request, factory, rules, None)
+    }
+
+    /// Allow a native-selected actor level while retaining the exact legacy
+    /// L60 path for every existing request.
+    pub(crate) fn with_rules_at_level(
+        request: &Message,
+        factory: AgentFactory,
+        rules: Rules,
+        actor_level: Option<i32>,
+    ) -> Result<Environment, Refusal> {
         let mut sim = Sim::new();
         sim.rules = rules;
         let raid = request
@@ -189,7 +200,7 @@ impl Environment {
             ));
         }
         let player_message = players[0].clone();
-        let player = sim.new_character(0, 0, &player_message, &encounter.area_types)?;
+        let player = sim.new_character_at_level(0, 0, &player_message, &encounter.area_types, actor_level)?;
         let agent = factory(&mut sim, player, &player_message)?;
         // Go `NewAgent` then runs the gear pet constructors.
         super::classic_whelp::construct_gear_pets(&mut sim, player);
