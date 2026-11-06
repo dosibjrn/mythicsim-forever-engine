@@ -1,0 +1,29 @@
+name: Warlock equipped wand native Shoot + APL
+
+on:
+  pull_request:
+    paths:
+      - src/classes/warlock/prepare.rs
+      - tests/classes/warlock/prepare.rs
+      - .github/workflows/warlock-wand-shoot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-shoot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run actual Warlock wand preparation and Shoot APL regression
+        run: cargo test --locked warlock_wand_registers_native_shoot_for_apl_and_combat -- --nocapture
+      - name: Publish selected code revision
+        if: always()
+        run: echo "RUST_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
