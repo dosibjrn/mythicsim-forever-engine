@@ -1,0 +1,52 @@
+name: Warlock client skill source acquisition (diagnostic)
+
+on:
+  pull_request:
+    paths:
+      - 'tools/import_warlock_equipment.py'
+      - 'tools/import_warlock_equipment_test.py'
+      - '.github/workflows/warlock-client-skill-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warlock-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assert class-mask and race restrictions
+        run: python tools/import_warlock_equipment_test.py
+      - name: Fetch pinned client source and compare against existing immutable hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=1.60.1.70425
+          curl -fsSL --retry 2 --max-time 40 \
+            "https://wago.tools/db2/SkillLine/csv?build=$build" \
+            -o "$RUNNER_TEMP/SkillLine.csv"
+          curl -fsSL --retry 2 --max-time 40 \
+            "https://wago.tools/db2/SkillRaceClassInfo/csv?build=$build" \
+            -o "$RUNNER_TEMP/SkillRaceClassInfo.csv"
+          echo '72715f0f750d222f5e907e84b91dd81f85999a2e901489946b8db1e4adfaaae7  '"$RUNNER_TEMP/SkillLine.csv" | sha256sum -c -
+          echo '2193908c90f65d38fa9bc68907217fd759c132ccdc9f882cd3bc5acecabba322  '"$RUNNER_TEMP/SkillRaceClassInfo.csv" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/data"
+          cp data/manifest.json "$RUNNER_TEMP/data/manifest.json"
+          python tools/import_warlock_equipment.py \
+            "$RUNNER_TEMP/SkillLine.csv" "$RUNNER_TEMP/SkillRaceClassInfo.csv" \
+            --data-dir "$RUNNER_TEMP/data"
+          {
+            echo '## Warlock pinned client source projection'
+            echo '~~~json'
+            cat "$RUNNER_TEMP/data/warlock-equipment-skills.json"
+            echo
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo 'WARLOCK_SKILL_PROJECTION_BEGIN'
+          cat "$RUNNER_TEMP/data/warlock-equipment-skills.json"
+          echo 'WARLOCK_SKILL_PROJECTION_END'
