@@ -25,11 +25,23 @@ DATA = ROOT / "data"
 TOOL = ROOT / "tools" / "rust-data"
 MANIFEST = DATA / "manifest.json"
 
-PRESERVED_CLIENT_DATA = (
+# These externally sourced projections are not emitted by the Go rust-data tool.
+# Reimport must retain them *and* their hashes, including the playable L20 actor.
+PRESERVED_NATIVE_DATA = (
     "item-required-levels.jsonl",
     "item-required-levels.manifest.json",
     "shaman-equipment-skills.json",
     "shaman-equipment-skills.manifest.json",
+    "druid-equipment-skills.json",
+    "druid-equipment-skills.manifest.json",
+    "paladin-equipment-skills.json",
+    "paladin-equipment-skills.manifest.json",
+    "rogue-equipment-skills.json",
+    "rogue-equipment-skills.manifest.json",
+    "warlock-equipment-skills.json",
+    "warlock-equipment-skills.manifest.json",
+    "paladin-l20-source-context.json",
+    "warlock-l20-actor-source.json",
 )
 
 # SimDatabase list, output file and the key each row is found by.
@@ -139,9 +151,9 @@ def write_data(raw):
     extras = {"curves": spells["curves"], "hand_triggers": spells["hand_triggers"]}
     emit("spell-extras.json", json.dumps(extras, sort_keys=True, separators=(",", ":")) + "\n")
     emit("go-tables.json", json.dumps(load(raw / "go-tables.json"), indent=1, sort_keys=True) + "\n")
-    # Preserve native client DB2 projections across reference-data reimports.
-    # Their source is the pinned client, not the Forever database.
-    for name in PRESERVED_CLIENT_DATA:
+    # Preserve separately sourced native actor and client projections across reimports.
+    # Their authority is the referenced source, not the Go database exporter.
+    for name in PRESERVED_NATIVE_DATA:
         path = DATA / name
         if path.exists():
             files[name] = file_digest(path)

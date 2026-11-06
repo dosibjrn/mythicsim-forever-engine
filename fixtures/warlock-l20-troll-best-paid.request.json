@@ -1,0 +1,188 @@
+{
+  "simOptions": {
+    "iterations": 8,
+    "randomSeed": "4242",
+    "debugFirstIteration": false
+  },
+  "encounter": {
+    "duration": 30,
+    "targets": [
+      {
+        "level": 20,
+        "name": "Stationary L20 native APL smoke",
+        "stats": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "raid": {
+    "parties": [
+      {
+        "players": [
+          {
+            "name": "Warlock L20 Troll native",
+            "class": "ClassWarlock",
+            "race": "RaceTroll",
+            "talentsString": "0-0-0550001000000000",
+            "distanceFromTarget": 25,
+            "equipment": {
+              "items": [
+                {
+                  "id": 260212
+                },
+                {
+                  "id": 22657
+                },
+                {
+                  "id": 22968
+                },
+                {
+                  "id": 19121
+                },
+                {
+                  "id": 20033
+                },
+                {
+                  "id": 21186
+                },
+                {
+                  "id": 20716
+                },
+                {
+                  "id": 22062
+                },
+                {
+                  "id": 22700
+                },
+                {
+                  "id": 22064
+                },
+                {
+                  "id": 275738
+                },
+                {
+                  "id": 275738
+                },
+                {
+                  "id": 270276
+                },
+                {
+                  "id": 270276
+                },
+                {
+                  "id": 22379
+                },
+                {
+                  "id": 19989
+                },
+                {
+                  "id": 275837
+                }
+              ]
+            },
+            "warlock": {
+              "options": {
+                "classOptions": {}
+              }
+            },
+            "rotation": {
+              "type": "TypeAPL",
+              "priorityList": [
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 6222
+                      }
+                    },
+                    "condition": {
+                      "not": {
+                        "val": {
+                          "dotIsActive": {
+                            "spellId": {
+                              "spellId": 6222
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 1014
+                      }
+                    },
+                    "condition": {
+                      "not": {
+                        "val": {
+                          "dotIsActive": {
+                            "spellId": {
+                              "spellId": 1014
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 1088
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

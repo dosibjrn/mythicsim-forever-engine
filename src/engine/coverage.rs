@@ -2043,7 +2043,11 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    if player.level != 60 {
+    // The selected native Troll Warlock L20 source now prepares a real L20
+    // actor. This is a runtime coverage decision, not a Warcraft legality
+    // check or a new gate. Keep all other unsupported levels refused.
+    let native_warlock_l20 = player.class == "ClassWarlock" && player.level == 20;
+    if player.level != 60 && !native_warlock_l20 {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2060,7 +2064,9 @@ pub(crate) fn prepared_coverage(
             ),
         ));
     }
-    if !(60..=63).contains(&prepared.target.level) {
+    if !(60..=63).contains(&prepared.target.level)
+        && !(native_warlock_l20 && prepared.target.level == 20)
+    {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("target level {} is not supported", prepared.target.level),

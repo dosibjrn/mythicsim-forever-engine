@@ -15,7 +15,7 @@ use crate::prepare::spell::{
 use crate::prepare::spelldata::Spell as Row;
 
 use super::masks;
-use super::spell_data::spell_data;
+use super::spell_data::{prepared_rank, spell_data};
 use super::Warlock;
 
 pub(super) fn spell_action(id: i32) -> ActionId {
@@ -79,7 +79,7 @@ pub(super) fn target_units(sim: &Sim) -> Vec<UnitId> {
 
 impl Warlock {
     pub(super) fn register_corruption(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().corruption.highest_for(sim.rules);
+        let rank = spell_data().corruption.highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -107,7 +107,9 @@ impl Warlock {
     /// The generator files Death Coil's damage under E_HEALTH_LEECH, which it has no Direct role
     /// for, so the row's Direct is nil and the damage and its coefficient are read off the effect.
     pub(super) fn register_death_coil(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().death_coil.highest();
+        let Some(rank) = prepared_rank(&spell_data().death_coil, sim, unit) else {
+            return;
+        };
 
         sim.get_or_register_spell(
             unit,
@@ -149,7 +151,7 @@ impl Warlock {
     /// Improved Drains rides on the talent as a dot SpellMod. Soul Siphon has to be counted per
     /// tick, so it stays in the tick.
     pub(super) fn register_drain_life(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().drain_life.highest();
+        let rank = spell_data().drain_life.highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -180,7 +182,9 @@ impl Warlock {
     }
 
     pub(super) fn register_hellfire(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().hellfire.highest();
+        let Some(rank) = prepared_rank(&spell_data().hellfire, sim, unit) else {
+            return;
+        };
         // The self-burn tick: effect 1 is the periodic trigger that fires Hellfire Effect.
         let tick = rank.effect(dbcenums::A_PERIODIC_DAMAGE, 0);
         let mut config =
@@ -210,7 +214,7 @@ impl Warlock {
     }
 
     pub(super) fn register_immolate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().immolate.highest_for(sim.rules);
+        let rank = spell_data().immolate.highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         let immolate = sim.register_spell(
             unit,
@@ -252,7 +256,9 @@ impl Warlock {
         if !self.talents.bool("incinerate") {
             return;
         }
-        let rank = spell_data().incinerate.highest();
+        let Some(rank) = prepared_rank(&spell_data().incinerate, sim, unit) else {
+            return;
+        };
         sim.register_spell(
             unit,
             SpellConfig {
@@ -268,7 +274,7 @@ impl Warlock {
 
     /// Life Tap is a plain mana gain, not damage.
     pub(super) fn register_life_tap(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().life_tap.highest();
+        let rank = spell_data().life_tap.highest_for_level(sim.unit(unit).level, sim.rules);
         sim.register_spell(
             unit,
             SpellConfig {
@@ -289,7 +295,9 @@ impl Warlock {
     /// casts a direct Fire hit on every enemy in the area every 2 seconds.
     pub(super) fn register_rain_of_fire(&mut self, sim: &mut Sim, unit: UnitId) {
         let data = spell_data();
-        let rank = data.rain_of_fire.highest();
+        let Some(rank) = prepared_rank(&data.rain_of_fire, sim, unit) else {
+            return;
+        };
         let tick_spell = data.rain_of_fire_triggered.rank(rank.rank_number());
         let tick = tick_spell.damage_effect();
         let tick_length = rank.effect(dbcenums::A_PERIODIC_DUMMY, 0).period();
@@ -335,7 +343,7 @@ impl Warlock {
     }
 
     pub(super) fn register_searing_pain(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().searing_pain.highest();
+        let rank = spell_data().searing_pain.highest_for_level(sim.unit(unit).level, sim.rules);
         sim.register_spell(
             unit,
             SpellConfig {
@@ -352,7 +360,11 @@ impl Warlock {
     /// Every rank is registered so a rotation can drop to a cheaper one when mana runs short;
     /// the talents and procs reach them all through the Shadow Bolt mask.
     pub(super) fn register_shadow_bolt(&mut self, sim: &mut Sim, unit: UnitId) {
+        let level = sim.unit(unit).level;
         spell_data().shadow_bolt.each(|_, rank| {
+            if i32::from(rank.spell_level) > level {
+                return;
+            }
             sim.register_spell(
                 unit,
                 SpellConfig {
@@ -374,7 +386,9 @@ impl Warlock {
         if !self.talents.bool("siphon_life") {
             return;
         }
-        let rank = spell_data().siphon_life.highest();
+        let Some(rank) = prepared_rank(&spell_data().siphon_life, sim, unit) else {
+            return;
+        };
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -401,7 +415,9 @@ impl Warlock {
 
     /// Bane's cast time cut and Decimation's cooldown cut ride on the talents as SpellMods.
     pub(super) fn register_soulfire(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().soul_fire.highest();
+        let Some(rank) = prepared_rank(&spell_data().soul_fire, sim, unit) else {
+            return;
+        };
         let timer = sim.new_timer(unit);
         sim.register_spell(
             unit,
@@ -428,7 +444,9 @@ impl Warlock {
         if !self.talents.bool("wrack") {
             return;
         }
-        let rank = spell_data().wrack.highest();
+        let Some(rank) = prepared_rank(&spell_data().wrack, sim, unit) else {
+            return;
+        };
         let tick = rank.periodic_effect();
         let spell = sim.register_spell(
             unit,
@@ -462,7 +480,9 @@ impl Warlock {
     /// Conflagrate burns the Immolate on the target. Shadow and Flame's second effect is the
     /// chance it survives.
     pub(super) fn register_conflagrate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().conflagrate.highest();
+        let Some(rank) = prepared_rank(&spell_data().conflagrate, sim, unit) else {
+            return;
+        };
         let timer = sim.new_timer(unit);
         sim.register_spell(
             unit,
@@ -484,7 +504,9 @@ impl Warlock {
     }
 
     pub(super) fn register_shadow_burn(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().shadowburn.highest();
+        let Some(rank) = prepared_rank(&spell_data().shadowburn, sim, unit) else {
+            return;
+        };
         let timer = sim.new_timer(unit);
         sim.register_spell(
             unit,

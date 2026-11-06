@@ -1250,9 +1250,18 @@ impl<A: Agent> Fight<A> {
                     _ => panic!("RUST_WORLD_UNSUPPORTED_DAMAGE_CASTER"),
                 };
                 super::world_bridge::record_damage(
-                    self.now, result.damage, result.crit(), result.landed(), periodic,
-                    format!("{:?}", self.spells[spell].id), self.label_of(result.target),
-                    caster_type, caster_index, caster_label,
+                    self.now,
+                    result.damage,
+                    result.crit(),
+                    result.landed(),
+                    periodic,
+                    super::world_bridge::DamageSource {
+                        action: format!("{:?}", self.spells[spell].id),
+                        target_label: self.label_of(result.target),
+                        caster_type: caster_type.to_owned(),
+                        caster_index,
+                        caster_label,
+                    },
                 );
             }
         }

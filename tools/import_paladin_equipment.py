@@ -87,11 +87,14 @@ def race_mask_is_unrestricted(mask):
 
 
 def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir=DATA, *,
-                             class_name="paladin", class_id=PALADIN_CLASS_ID):
+                             class_name="paladin", class_id=PALADIN_CLASS_ID,
+                             equipment_skill_names=None):
     """Project source-backed, class-wide item proficiencies for one selected class."""
     if not class_name.isalpha() or not 1 <= class_id <= 12:
         raise ValueError("invalid class identity for equipment projection")
     class_mask = 1 << (class_id - 1)
+    equipment_skill_names = (EQUIPMENT_SKILL_LINE_NAMES if equipment_skill_names is None
+                             else set(equipment_skill_names))
     data_dir = Path(data_dir)
     main_manifest_path = data_dir / "manifest.json"
     main_manifest = json.loads(main_manifest_path.read_text(encoding="utf-8"))
@@ -178,9 +181,9 @@ def import_paladin_equipment(skill_line_csv, skill_race_class_info_csv, data_dir
     projected_skill_lines = {
         skill_id: info
         for skill_id, info in skill_lines.items()
-        if info["name"] in EQUIPMENT_SKILL_LINE_NAMES
+        if info["name"] in equipment_skill_names
     }
-    skills = [skill for skill in skills if skill["name"] in EQUIPMENT_SKILL_LINE_NAMES]
+    skills = [skill for skill in skills if skill["name"] in equipment_skill_names]
 
     output = {
         "schema_version": 2,

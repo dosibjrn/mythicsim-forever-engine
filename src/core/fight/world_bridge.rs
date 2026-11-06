@@ -207,17 +207,23 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     })
 }
 
+/// Identifies the real native effect and its caster without positional metadata swaps.
+/// The world bridge only transports events; it never invents combat damage.
+pub(crate) struct DamageSource {
+    pub(crate) action: String,
+    pub(crate) target_label: String,
+    pub(crate) caster_type: String,
+    pub(crate) caster_index: u32,
+    pub(crate) caster_label: String,
+}
+
 pub(crate) fn record_damage(
     time_ns: i64,
     damage: f64,
     crit: bool,
     landed: bool,
     periodic: bool,
-    action: String,
-    target_label: String,
-    caster_type: &str,
-    caster_index: u32,
-    caster_label: String,
+    source: DamageSource,
 ) {
     if !enabled() {
         return;
@@ -226,19 +232,7 @@ pub(crate) fn record_damage(
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        append_damage_event(
-            bridge,
-            time_ns,
-            damage,
-            crit,
-            landed,
-            periodic,
-            action,
-            target_label,
-            caster_type,
-            caster_index,
-            caster_label,
-        );
+        append_damage_event(bridge, time_ns, damage, crit, landed, periodic, source);
     });
 }
 
@@ -249,12 +243,15 @@ fn append_damage_event(
     crit: bool,
     landed: bool,
     periodic: bool,
-    action: String,
-    target_label: String,
-    caster_type: &str,
-    caster_index: u32,
-    caster_label: String,
+    source: DamageSource,
 ) {
+    let DamageSource {
+        action,
+        target_label,
+        caster_type,
+        caster_index,
+        caster_label,
+    } = source;
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
     bridge.event_ordinal += 1;
@@ -270,7 +267,7 @@ fn append_damage_event(
         native_target_index: 0,
         native_target_unit_index: 0,
         native_target_label: target_label,
-        native_caster_type: caster_type.to_owned(),
+        native_caster_type: caster_type,
         native_caster_unit_index: caster_index,
         native_caster_label: caster_label,
     });
@@ -512,26 +509,26 @@ mod persistent_next_target_tests {
 }
 
 #[cfg(test)]
+fn test_damage_source(action: &str) -> DamageSource {
+    DamageSource {
+        action: action.to_owned(),
+        target_label: "target".to_owned(),
+        caster_type: "player".to_owned(),
+        caster_index: 0,
+        caster_label: "Druid".to_owned(),
+    }
+}
+
+#[cfg(test)]
 mod disabled_bridge_tests {
-    use super::{enabled, record_damage};
+    use super::{enabled, record_damage, test_damage_source};
 
     #[test]
     fn disabled_bridge_ignores_damage_before_validation() {
         if enabled() {
             return;
         }
-        record_damage(
-            0,
-            f64::NAN,
-            false,
-            false,
-            false,
-            "disabled".to_owned(),
-            "target".to_owned(),
-            "player",
-            0,
-            "Druid".to_owned(),
-        );
+        record_damage(0, f64::NAN, false, false, false, test_damage_source("disabled"));
     }
 }
 
@@ -539,7 +536,7 @@ mod disabled_bridge_tests {
 mod iteration_teardown_tests {
     use super::{
         append_damage_event, assert_damage_acknowledgement, begin_iteration,
-        mark_iteration_finished, Bridge, BRIDGE,
+        mark_iteration_finished, test_damage_source, Bridge, BRIDGE,
     };
 
     fn bridge(iteration_finished: bool) -> Bridge {
@@ -573,11 +570,7 @@ mod iteration_teardown_tests {
                 false,
                 true,
                 false,
-                "cleanup-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                test_damage_source("cleanup-proc"),
             );
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.event_ordinal, 1);
@@ -622,11 +615,7 @@ mod iteration_teardown_tests {
                 false,
                 true,
                 false,
-                "combat-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                test_damage_source("combat-proc"),
             );
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
@@ -647,18 +636,14 @@ mod iteration_teardown_tests {
         state.last_health = Some(0.0);
         state.previous_ack_id = "a".repeat(64);
         append_damage_event(
-            &mut state,
-            10,
-            5.0,
-            false,
-            true,
-            false,
-            "late-proc".to_owned(),
-            "target".to_owned(),
-            "player",
-            0,
-            "Druid".to_owned(),
-        );
+                &mut state,
+                10,
+                5.0,
+                false,
+                true,
+                false,
+                test_damage_source("late-proc"),
+            );
     }
 
     #[test]
@@ -674,11 +659,7 @@ mod iteration_teardown_tests {
                 false,
                 true,
                 false,
-                "late-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                test_damage_source("late-proc"),
             );
         });
     }

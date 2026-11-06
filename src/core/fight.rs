@@ -5687,7 +5687,7 @@ impl<A: Agent> Fight<A> {
             // Go keeps one buffer: every iteration with debug, otherwise only the first.
             let logged = self.config.debug || (iteration == 0 && self.config.debug_first_iteration);
             self.log = logged.then(Vec::new);
-            if world_bridge::enabled() { world_bridge::begin_iteration(iteration as u32); }
+            if world_bridge::enabled() { world_bridge::begin_iteration(iteration); }
             self.run_once();
             if let Some(lines) = self.log.take() {
                 logs.extend(lines);
@@ -6870,7 +6870,7 @@ mod tests {
         let now = fight.now;
         let cap = fight.end_of_combat;
         assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        let early = now.max(0) + 1_000_000;
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));

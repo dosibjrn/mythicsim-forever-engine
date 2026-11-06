@@ -238,6 +238,44 @@ fn base_stats(class: &str, race: &str) -> Option<Stats> {
     Some(out)
 }
 
+/// Source-backed level-20 Warlock base resources with a transparent Troll race projection.
+/// The historical Classic SQL has no Troll/Warlock row. Only the racial primary-stat
+/// delta is projected from this exact native engine's Troll and Orc L60 tables;
+/// the Orc L20 primaries and class L20 base resources come from pinned CMaNGOS rows.
+/// This does not invent an independently certified Troll source row.
+fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
+    if level == constants::CHARACTER_LEVEL {
+        return base_stats(class, race);
+    }
+    if (class, race, level) != ("ClassWarlock", "RaceTroll", 20) {
+        return None;
+    }
+    let source: serde_json::Value =
+        serde_json::from_str(include_str!("../../data/warlock-l20-actor-source.json")).ok()?;
+    if source["class"].as_str()? != class
+        || source["race"].as_str()? != race
+        || source["level"].as_i64()? != i64::from(level)
+        || source["reference_race_l20"]["race"].as_str()? != "RaceOrc"
+    {
+        return None;
+    }
+    let mut troll = base_stats(class, race)?;
+    let orc = base_stats(class, "RaceOrc")?;
+    let source_orc = &source["reference_race_l20"];
+    for (key, stat) in [
+        ("strength", Stat::Strength),
+        ("agility", Stat::Agility),
+        ("stamina", Stat::Stamina),
+        ("intellect", Stat::Intellect),
+        ("spirit", Stat::Spirit),
+    ] {
+        troll[stat] = source_orc[key].as_f64()? + troll[stat] - orc[stat];
+    }
+    troll[Stat::Health] = source["class_base"]["health"].as_f64()?;
+    troll[Stat::Mana] = source["class_base"]["mana"].as_f64()?;
+    Some(troll)
+}
+
 impl Sim {
     pub(crate) fn character(&self, unit: UnitId) -> &Character {
         self.unit(unit).character.as_deref().expect("a player unit")
@@ -265,6 +303,19 @@ impl Sim {
         player: &Message,
         area_types: &[String],
     ) -> Result<UnitId, Refusal> {
+        self.new_character_at_level(party_index, player_index, player, area_types, None)
+    }
+
+    /// Explicit actor level is a native preparation input, not a protojson field.
+    /// Unsupported class/race/level combinations fail closed instead of using L60 stats.
+    pub(crate) fn new_character_at_level(
+        &mut self,
+        party_index: i32,
+        player_index: i32,
+        player: &Message,
+        area_types: &[String],
+        actor_level: Option<i32>,
+    ) -> Result<UnitId, Refusal> {
         if player.has("database") {
             return Err(Refusal::new(
                 "request",
@@ -275,7 +326,7 @@ impl Sim {
         let name = player.str("name").to_string();
         let mut unit = Unit::new(UnitType::Player, format!("{} (#{})", name, index + 1));
         unit.index = index;
-        unit.level = constants::CHARACTER_LEVEL;
+        unit.level = actor_level.unwrap_or(constants::CHARACTER_LEVEL);
         unit.reaction_time = Duration::from(player.i32("reaction_time_ms").max(10)) * MILLISECOND;
         unit.channel_clip_delay =
             (Duration::from(player.i32("channel_clip_delay_ms")) * MILLISECOND).max(0);
@@ -284,8 +335,12 @@ impl Sim {
         let race = player.enum_name("race");
         let class = player.enum_name("class");
         let equipment = items::equipment(player.message("equipment"), area_types)?;
-        let base_stats = base_stats(&class, &race)
-            .ok_or_else(|| Refusal::new("race", format!("no base stats for {race} {class}")))?;
+        let base_stats = base_stats_at_level(&class, &race, unit.level).ok_or_else(|| {
+            Refusal::new(
+                "actor_level_source",
+                format!("no selected native level {} base stats for {race} {class}", unit.level),
+            )
+        })?;
         unit.character = Some(Box::new(Character {
             name,
             race,
@@ -718,4 +773,28 @@ impl Sim {
 /// The pseudo stats a fresh player has.
 pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
     PseudoStats::new()
+}
+
+#[cfg(test)]
+mod warlock_l20_actor_source_tests {
+    use super::*;
+
+    #[test]
+    fn troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection() {
+        let actor = base_stats_at_level("ClassWarlock", "RaceTroll", 20).unwrap();
+        assert_eq!(actor[Stat::Health], 204.0);
+        assert_eq!(actor[Stat::Mana], 383.0);
+        assert_eq!(actor[Stat::Strength], 27.0);
+        assert_eq!(actor[Stat::Agility], 30.0);
+        assert_eq!(actor[Stat::Stamina], 33.0);
+        assert_eq!(actor[Stat::Intellect], 42.0);
+        assert_eq!(actor[Stat::Spirit], 47.0);
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 19).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 20).is_none());
+        assert!(base_stats_at_level("ClassMage", "RaceTroll", 20).is_none());
+        let old = base_stats("ClassWarlock", "RaceTroll").unwrap();
+        let unchanged = base_stats_at_level("ClassWarlock", "RaceTroll", 60).unwrap();
+        assert_eq!(old[Stat::Health], unchanged[Stat::Health]);
+        assert_eq!(old[Stat::Mana], unchanged[Stat::Mana]);
+    }
 }

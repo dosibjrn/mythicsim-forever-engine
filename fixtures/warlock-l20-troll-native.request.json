@@ -1,0 +1,96 @@
+{
+  "simOptions": {
+    "iterations": 1,
+    "randomSeed": "42",
+    "debugFirstIteration": true
+  },
+  "encounter": {
+    "duration": 12,
+    "targets": [
+      {
+        "level": 20,
+        "name": "Stationary L20 native APL smoke",
+        "stats": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "raid": {
+    "parties": [
+      {
+        "players": [
+          {
+            "name": "Warlock L20 Troll native",
+            "class": "ClassWarlock",
+            "race": "RaceTroll",
+            "talentsString": "0-0-0",
+            "distanceFromTarget": 25,
+            "equipment": {
+              "items": []
+            },
+            "warlock": {
+              "options": {
+                "classOptions": {}
+              }
+            },
+            "rotation": {
+              "type": "TypeAPL",
+              "priorityList": [
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 1088
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

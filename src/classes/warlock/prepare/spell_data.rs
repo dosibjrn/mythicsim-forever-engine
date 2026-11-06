@@ -143,3 +143,48 @@ pub(crate) fn spell_data() -> &'static SpellData {
         wrack: Ladder::ranked(&[1316697]),
     })
 }
+
+/// Select a rank for the *actual* prepared actor. A level-60 request retains
+/// the already frozen Go-reference rank, while a lower-level request uses only
+/// ranks present at that level in the pinned native spell data. No parallel
+/// spellbook or training rules are introduced here.
+pub(super) fn prepared_rank(
+    ladder: &Ladder,
+    sim: &crate::prepare::sim::Sim,
+    unit: crate::prepare::sim::UnitId,
+) -> Option<&'static crate::prepare::spelldata::Spell> {
+    let rank = if sim.unit(unit).level == 60 {
+        ladder.highest()
+    } else {
+        ladder.highest_for_level(sim.unit(unit).level, sim.rules)
+    };
+    (!rank.is_nil()).then_some(rank)
+}
+
+#[cfg(test)]
+mod level_actor_tests {
+    use super::*;
+    use crate::prepare::sim::{Sim, Unit, UnitType};
+
+    #[test]
+    fn lower_level_actor_does_not_register_high_level_warlock_actions() {
+        let mut sim = Sim::new();
+        let mut actor = Unit::new(UnitType::Player, "Warlock".to_string());
+        actor.level = 20;
+        let id = sim.add_unit(actor);
+        let spells = spell_data();
+        assert!(prepared_rank(&spells.death_coil, &sim, id).is_none());
+        assert!(prepared_rank(&spells.soul_fire, &sim, id).is_none());
+        assert!(prepared_rank(&spells.bane_of_agony, &sim, id).is_some());
+
+        sim.unit_mut(id).level = 60;
+        assert_eq!(
+            prepared_rank(&spells.death_coil, &sim, id).unwrap().id,
+            spells.death_coil.highest().id
+        );
+        assert_eq!(
+            prepared_rank(&spells.bane_of_agony, &sim, id).unwrap().id,
+            spells.bane_of_agony.highest().id
+        );
+    }
+}

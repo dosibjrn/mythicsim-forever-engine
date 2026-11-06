@@ -79,7 +79,7 @@ impl Class {
     fn has_native_item_eligibility(self) -> bool {
         matches!(
             self,
-            Self::Priest | Self::Mage | Self::Shaman | Self::Paladin | Self::Rogue | Self::Druid
+            Self::Priest | Self::Mage | Self::Shaman | Self::Paladin | Self::Rogue | Self::Druid | Self::Warlock
         )
     }
 }
@@ -391,6 +391,7 @@ mod tests {
             Class::Paladin,
             Class::Rogue,
             Class::Druid,
+            Class::Warlock,
         ] {
             let result = get_options(20, class).unwrap();
             assert!(!result.items.is_empty(), "{}", class.as_str());
@@ -404,7 +405,7 @@ mod tests {
 
     #[test]
     fn other_classes_have_source_facts_but_no_invented_proficiencies() {
-        for class in [Class::Hunter, Class::Warlock, Class::Warrior] {
+        for class in [Class::Hunter, Class::Warrior] {
             let result = get_options(20, class).unwrap();
             assert!(!result.items.is_empty(), "{}", class.as_str());
             assert!(!result.coverage.item_eligibility_complete);
@@ -414,6 +415,27 @@ mod tests {
                     && item.native.is_none()
             }));
         }
+    }
+
+    #[test]
+    fn warlock_l20_uses_pinned_client_skills_and_item_sparse() {
+        let source = crate::data::warlock_equipment_skills().unwrap();
+        assert_eq!(source.min_level("Cloth"), Some(1));
+        assert_eq!(source.min_level("Daggers"), Some(1));
+        assert_eq!(source.min_level("Staves"), Some(1));
+        assert_eq!(source.min_level("Wands"), Some(1));
+        assert_eq!(source.min_level("Swords"), None);
+        assert_eq!(source.min_level("Leather"), None);
+
+        let options = get_options(20, Class::Warlock).unwrap();
+        assert!(options.coverage.item_eligibility_complete);
+        assert_eq!(options.coverage.native_item_status, "ok");
+        assert!(!options.items.is_empty());
+        assert!(options.items.iter().all(|row| row.eligibility == "native_eligible"
+            && row.unverified.is_none()
+            && row.native.as_ref().is_some_and(|item| item.required_level <= 20)));
+        assert!(options.items.iter().any(|row| row.native.as_ref()
+            .is_some_and(|item| item.ranged_weapon_type == "RangedWeaponTypeWand")));
     }
 
     #[test]
