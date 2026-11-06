@@ -1,0 +1,47 @@
+name: Warlock L20 equipped Shoot native APL paid comparison
+
+on:
+  push:
+    branches:
+      - experiment/warlock-l20-wand-apl-native-20261106
+    paths:
+      - src/classes/warlock/prepare.rs
+      - tests/classes/warlock/prepare.rs
+      - tools/warlock_l20_wand_apl_paid.py
+      - .github/workflows/warlock-l20-wand-apl-paid.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-apl-paid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Prove equipped native Shoot registration
+        run: cargo test --locked warlock_wand_registers_native_shoot_for_apl_and_combat -- --nocapture
+      - name: Build exact source engine
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: cargo build --locked --bin forever-engine
+      - name: Actually simulate L20 Troll with six APL variants and equipped wand
+        run: |
+          python3 tools/warlock_l20_wand_apl_paid.py \
+            --binary target/debug/forever-engine \
+            --request fixtures/warlock-l20-troll-best-paid.request.json \
+            --out /tmp/warlock-l20-apl-paid \
+            --duration 30 --iterations 8
+      - name: Preserve real native prepared inputs, paid outputs and Shoot metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warlock-l20-equipped-shoot-apl-paid
+          path: /tmp/warlock-l20-apl-paid/
+          retention-days: 14
+          if-no-files-found: warn
