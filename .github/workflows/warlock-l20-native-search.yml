@@ -2,7 +2,9 @@ name: Warlock L20 genuine native build comparison
 
 on:
   push:
-    branches: [experiment/warlock-l20-real-build-search-20261106]
+    branches:
+      - experiment/warlock-l20-real-build-search-20261106
+      - work/work1-warlock-l20-native-item-options-20261106
     paths:
       - tools/warlock_l20_native_search.py
       - tools/test_warlock_l20_native_search.py
