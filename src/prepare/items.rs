@@ -619,7 +619,10 @@ fn native_skilled_item_eligible(
             _ => native_paladin_weapon_eligible(item, level, skills),
         },
         "ItemTypeRanged" => {
-            if matches!(
+            if item.ranged_weapon_type == "RangedWeaponTypeWand" && class_proto == "ClassWarlock" {
+                // The pinned Warlock SkillRaceClassInfo row grants Wands at level 1.
+                native_paladin_skill_eligible(skills, "Wands", level)
+            } else if matches!(
                 item.ranged_weapon_type.as_str(),
                 "RangedWeaponTypeIdol"
                     | "RangedWeaponTypeLibram"
@@ -688,6 +691,10 @@ fn native_item_class_eligible(
         return paladin_skills
             .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassDruid"));
     }
+    if class == "warlock" {
+        return paladin_skills
+            .is_some_and(|skills| native_skilled_item_eligible(item, level, skills, "ClassWarlock"));
+    }
 
     let slot = native_item_source_slot(item);
     if matches!(
@@ -739,6 +746,7 @@ fn native_item_options_with_required_levels(
         "paladin" | "classpaladin" => Some(("paladin", "ClassPaladin")),
         "rogue" | "classrogue" => Some(("rogue", "ClassRogue")),
         "druid" | "classdruid" => Some(("druid", "ClassDruid")),
+        "warlock" | "classwarlock" => Some(("warlock", "ClassWarlock")),
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
@@ -752,7 +760,7 @@ fn native_item_options_with_required_levels(
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
-            format!("native item-options currently supports priest, mage, shaman, paladin, rogue and druid, not {class}"),
+            format!("native item-options currently supports priest, mage, shaman, paladin, rogue, druid and warlock, not {class}"),
         ))
     } else if !(1..=60).contains(&level) {
         Some((
@@ -781,7 +789,7 @@ fn native_item_options_with_required_levels(
         slot: slot_input.clone(),
         source: if matches!(
             class_input.as_str(),
-            "shaman" | "paladin" | "rogue" | "druid"
+            "shaman" | "paladin" | "rogue" | "druid" | "warlock"
         ) {
             "mythicsim:data/items.jsonl+client:ItemSparse.RequiredLevel+SkillLine+SkillRaceClassInfo".to_string()
         } else {
@@ -824,12 +832,13 @@ fn native_item_options_with_required_levels(
     } else {
         None
     };
-    // Paladin, Rogue and Druid share the source schema but have independent
-    // pinned SkillRaceClassInfo class-mask projections. Never fall back.
-    let paladin_skills = if matches!(class, "paladin" | "rogue" | "druid") {
+    // Paladin, Rogue, Druid and Warlock reuse the schema, each with its own
+    // pinned class-mask projection. Missing source always refuses.
+    let paladin_skills = if matches!(class, "paladin" | "rogue" | "druid" | "warlock") {
         let source = match class {
             "rogue" => data::rogue_equipment_skills(),
             "druid" => data::druid_equipment_skills(),
+            "warlock" => data::warlock_equipment_skills(),
             _ => data::paladin_equipment_skills(),
         };
         match source {
@@ -868,7 +877,7 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin" | "mage" | "rogue" | "druid") {
+            if matches!(class, "shaman" | "paladin" | "mage" | "rogue" | "druid" | "warlock") {
                 // These P3 consumers select from the pinned client-build ItemSparse
                 // universe. A MythicSim-only row absent from this source is not
                 // an unresolved RequiredLevel for a playable client item.
