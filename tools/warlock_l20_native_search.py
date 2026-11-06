@@ -424,7 +424,7 @@ def main():
         k: summary[k] for k in (
             "native_option_items", "attempted", "paid", "refused")}), flush=True)
     print("WARLOCK_L20_NATIVE_BEST", json.dumps({
-        k: best[k] for k in ("label", "dps", "talents", "equipment", "actions")}), flush=True)
+        k: best[k] for k in ("label", "dps", "talents", "equipment", "apl", "actions")}), flush=True)
     print("WARLOCK_L20_NATIVE_TOP", json.dumps([
         {"label": x["label"], "dps": x["dps"]} for x in summary["top10"]
     ]), flush=True)
