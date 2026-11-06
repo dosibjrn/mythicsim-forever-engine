@@ -4427,6 +4427,25 @@ pub fn compile_condition<R>(condition: Option<&Value>, lookup: &Lookup<R>) -> Co
 mod tests {
     use super::*;
 
+    #[test]
+    fn world_target_health_is_not_player_health_or_an_unverified_next_target() {
+        assert_eq!(
+            parse_value(&serde_json::json!({"currentHealthPercent": {}})),
+            Ok(Value::CurrentHealthPercent)
+        );
+        assert_eq!(
+            parse_value(&serde_json::json!({"currentHealthPercent": {
+                "sourceUnit": {"type": "CurrentTarget"}
+            }})),
+            Ok(Value::WorldCurrentTargetHealthPercent)
+        );
+        // NextTarget HP needs a separate live multi-target world receipt.
+        // Reject it until that real source is present instead of guessing.
+        assert!(parse_value(&serde_json::json!({"currentHealthPercent": {
+            "sourceUnit": {"type": "NextTarget"}
+        }})).is_err());
+    }
+
     fn no_spell(_: &ActionId) -> Option<usize> {
         None
     }
