@@ -276,30 +276,6 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     Some(troll)
 }
 
-#[cfg(test)]
-mod warlock_l20_actor_source_tests {
-    use super::*;
-
-    #[test]
-    fn troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection() {
-        let actor = base_stats_at_level("ClassWarlock", "RaceTroll", 20).unwrap();
-        assert_eq!(actor[Stat::Health], 204.0);
-        assert_eq!(actor[Stat::Mana], 383.0);
-        assert_eq!(actor[Stat::Strength], 27.0);
-        assert_eq!(actor[Stat::Agility], 30.0);
-        assert_eq!(actor[Stat::Stamina], 33.0);
-        assert_eq!(actor[Stat::Intellect], 42.0);
-        assert_eq!(actor[Stat::Spirit], 47.0);
-        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 19).is_none());
-        assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 20).is_none());
-        assert!(base_stats_at_level("ClassMage", "RaceTroll", 20).is_none());
-        let old = base_stats("ClassWarlock", "RaceTroll").unwrap();
-        let unchanged = base_stats_at_level("ClassWarlock", "RaceTroll", 60).unwrap();
-        assert_eq!(old[Stat::Health], unchanged[Stat::Health]);
-        assert_eq!(old[Stat::Mana], unchanged[Stat::Mana]);
-    }
-}
-
 impl Sim {
     pub(crate) fn character(&self, unit: UnitId) -> &Character {
         self.unit(unit).character.as_deref().expect("a player unit")
@@ -797,4 +773,28 @@ impl Sim {
 /// The pseudo stats a fresh player has.
 pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
     PseudoStats::new()
+}
+
+#[cfg(test)]
+mod warlock_l20_actor_source_tests {
+    use super::*;
+
+    #[test]
+    fn troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection() {
+        let actor = base_stats_at_level("ClassWarlock", "RaceTroll", 20).unwrap();
+        assert_eq!(actor[Stat::Health], 204.0);
+        assert_eq!(actor[Stat::Mana], 383.0);
+        assert_eq!(actor[Stat::Strength], 27.0);
+        assert_eq!(actor[Stat::Agility], 30.0);
+        assert_eq!(actor[Stat::Stamina], 33.0);
+        assert_eq!(actor[Stat::Intellect], 42.0);
+        assert_eq!(actor[Stat::Spirit], 47.0);
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 19).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 20).is_none());
+        assert!(base_stats_at_level("ClassMage", "RaceTroll", 20).is_none());
+        let old = base_stats("ClassWarlock", "RaceTroll").unwrap();
+        let unchanged = base_stats_at_level("ClassWarlock", "RaceTroll", 60).unwrap();
+        assert_eq!(old[Stat::Health], unchanged[Stat::Health]);
+        assert_eq!(old[Stat::Mana], unchanged[Stat::Mana]);
+    }
 }
