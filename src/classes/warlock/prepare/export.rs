@@ -439,20 +439,38 @@ impl Warlock {
                 "wait_ns": nanos(100 * MILLISECOND),
             }));
         }
-        if self.pets.imp.is_some() {
-            // pets.go registerFireboltSpell: impFireboltEffect, unexported, mirrored here
-            let effect = imp_firebolt_effect();
-            let average = effect.average(CHARACTER_LEVEL);
+        if let Some(imp) = self.pets.imp {
+            // Client-ranked source data for lower-level pets; frozen Go rank
+            // 7 source at 60. Damage is still dealt by the canonical Rust core.
+            let level = sim.unit(imp).level;
+            let (average, variance) = if level == 60 {
+                let effect = imp_firebolt_effect();
+                (effect.average(level), effect.variance)
+            } else {
+                let rank = super::pets::native_pet_rank("firebolt", level)
+                    .expect("rank exists when Imp can be summoned");
+                let min = rank[2].as_f64().expect("source Firebolt minimum");
+                let max = rank[3].as_f64().expect("source Firebolt maximum");
+                let average = (min + max) / 2.0;
+                (average, if average == 0.0 { 0.0 } else { (max - min) / average })
+            };
             effects.push(json!({
                 "kind": "firebolt",
-                "min_damage": average * (1.0 - effect.variance / 2.0),
-                "max_damage": average * (1.0 + effect.variance / 2.0),
-                "average": average, "variance": effect.variance,
+                "min_damage": average * (1.0 - variance / 2.0),
+                "max_damage": average * (1.0 + variance / 2.0),
+                "average": average, "variance": variance,
             }));
         }
-        if self.pets.succubus.is_some() {
-            // pets.go registerLashOfPainSpell: a Go literal base
-            effects.push(json!({"kind": "lash_of_pain", "base_damage": 50.0}));
+        if let Some(succubus) = self.pets.succubus {
+            let level = sim.unit(succubus).level;
+            let base = if level == 60 {
+                50.0
+            } else {
+                super::pets::native_pet_rank("lash_of_pain", level)
+                    .and_then(|rank| rank[2].as_f64())
+                    .unwrap_or(0.0)
+            };
+            effects.push(json!({"kind": "lash_of_pain", "base_damage": base}));
         }
         // talents_demonology.go applyFelEnergy: the Voidwalker's sacrifice restores a share of
         // maximum mana every period, from a periodic action its permanent aura starts.

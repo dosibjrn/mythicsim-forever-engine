@@ -101,7 +101,9 @@ impl Sim {
         let label = format!("{} - {}", self.unit(owner).label, config.name);
         let mut unit = super::sim::Unit::new(UnitType::Pet, label);
         unit.index = pet_index;
-        unit.level = super::character::constants::CHARACTER_LEVEL;
+        // A summoned pet fights at its actual owner's level in L1–60 world chains.
+        // The Go reference's fixed 60 was only correct for L60 raid preparation.
+        unit.level = self.unit(owner).level;
         unit.reaction_time = self.unit(owner).reaction_time;
         unit.start_distance_from_target = distance;
         unit.distance_from_target = distance;
