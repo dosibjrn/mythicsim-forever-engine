@@ -1,0 +1,40 @@
+name: Warlock L20 genuine native build comparison
+
+on:
+  push:
+    branches: [experiment/warlock-l20-real-build-search-20261106]
+    paths:
+      - tools/warlock_l20_native_search.py
+      - tools/test_warlock_l20_native_search.py
+      - .github/workflows/warlock-l20-native-search.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-level20-build-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify APL option-source construction
+        run: python3 -m unittest discover -s tools -p 'test_warlock_l20_native_search.py' -v
+      - name: Build the exact checked-out Rust engine
+        run: cargo build --locked --bin forever-engine
+      - name: Score actual level-20 Warlock gear, talents and APL variations
+        run: |
+          set -euo pipefail
+          python3 tools/warlock_l20_native_search.py \
+            --binary target/debug/forever-engine \
+            --request fixtures/warlock-l20-troll-native.request.json \
+            --out /tmp/warlock-l20-search \
+            --duration 30 --iterations 8
+      - name: Preserve full exact-native build comparisons and best request
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: warlock-l20-real-native-build-search
+          path: /tmp/warlock-l20-search/
+          if-no-files-found: warn
+          retention-days: 14
