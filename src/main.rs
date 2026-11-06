@@ -1,8 +1,8 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
-    native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
+    native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
     PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
@@ -105,14 +105,14 @@ fn prepare_request(
     let prepared = std::panic::catch_unwind(|| {
         prepare_json_with_actor_level(request, scenario, rules, actor_level)
     })
-        .unwrap_or_else(|panic| {
-            let reason = panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
-                .unwrap_or_else(|| "preparation panicked".to_string());
-            Err(PrepareError::Fault(reason))
-        });
+    .unwrap_or_else(|panic| {
+        let reason = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
+            .unwrap_or_else(|| "preparation panicked".to_string());
+        Err(PrepareError::Fault(reason))
+    });
     prepared.map_err(|err| {
         let (code, reason) = match &err {
             PrepareError::Refused(refusal) => (refusal.code.to_string(), refusal.reason.clone()),
@@ -430,7 +430,9 @@ fn run() -> Result<(), Failure> {
             "--actor-level" => {
                 index += 1;
                 let value = args.get(index).ok_or("--actor-level requires a value")?;
-                let level: i32 = value.parse().map_err(|_| "--actor-level must be an integer")?;
+                let level: i32 = value
+                    .parse()
+                    .map_err(|_| "--actor-level must be an integer")?;
                 if actor_level.replace(level).is_some() {
                     return Err("duplicate --actor-level".into());
                 }
@@ -479,11 +481,17 @@ fn run() -> Result<(), Failure> {
         let request = request_file.ok_or("prepare requires --request")?;
         if infile.is_some() || trace || gate {
             return Err(
-                "prepare takes --request, --actor-level, --scenario, --outfile and --go-rules".into(),
+                "prepare takes --request, --actor-level, --scenario, --outfile and --go-rules"
+                    .into(),
             );
         }
         let input = fs::read(request).map_err(|err| err.to_string())?;
-        let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
+        let prepared = prepare_request(
+            &input,
+            scenario.as_deref().unwrap_or("rust"),
+            rules,
+            actor_level,
+        )?;
         let output = serde_json::to_string_pretty(&prepared).map_err(|err| err.to_string())?;
         if let Some(path) = outfile {
             write_atomically(&path, &(output + "\n"))?;
@@ -503,7 +511,12 @@ fn run() -> Result<(), Failure> {
                 return Err("--request replaces --infile and is for sim and prepare".into());
             }
             let input = fs::read(request).map_err(|err| err.to_string())?;
-            let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
+            let prepared = prepare_request(
+                &input,
+                scenario.as_deref().unwrap_or("rust"),
+                rules,
+                actor_level,
+            )?;
             Some(serde_json::to_vec(&prepared).map_err(|err| err.to_string())?)
         }
         None => None,
