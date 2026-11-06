@@ -71,7 +71,8 @@ fn damage_rows() -> &'static HashMap<i32, &'static Row> {
 
 /// Go `attachDamageEffects` for one spell: the roll of the client row, `{average, variance}`.
 pub(super) fn damage_effect(sim: &Sim, spell: SpellId) -> Option<Value> {
-    let action = &sim.spell(spell).action_id;
+    let registered = sim.spell(spell);
+    let action = &registered.action_id;
     if action.spell_id == 0 || action.tag != 0 {
         return None;
     }
@@ -80,7 +81,10 @@ pub(super) fn damage_effect(sim: &Sim, spell: SpellId) -> Option<Value> {
     if effect.is_nil() {
         return None;
     }
-    Some(json!({"average": effect.average(CHARACTER_LEVEL), "variance": effect.variance}))
+    // The source row is the same; only its level-dependent numeric projection
+    // changes. A genuine level-20 actor must not receive level-60 direct damage.
+    let actor_level = sim.unit(registered.unit).level;
+    Some(json!({"average": effect.average(actor_level), "variance": effect.variance}))
 }
 
 /// The spellbook positions of spells whose class mask is in a set.
@@ -776,3 +780,37 @@ fn curse_of_recklessness_effect(
 
 #[allow(dead_code)]
 fn _ladder(_: &Ladder) {}
+
+#[cfg(test)]
+mod actor_level_damage_tests {
+    use super::*;
+    use crate::prepare::sim::{Unit, UnitType};
+    use crate::prepare::spell::SpellConfig;
+
+    #[test]
+    fn native_warlock_direct_damage_uses_registered_caster_level() {
+        let mut sim = Sim::new();
+        let mut caster = Unit::new(UnitType::Player, "Troll Warlock".into());
+        caster.level = 20;
+        let caster_id = sim.add_unit(caster);
+        let spell_id = sim.register_spell(
+            caster_id,
+            SpellConfig {
+                action_id: ActionId {
+                    spell_id: 1088,
+                    ..ActionId::default()
+                },
+                ..SpellConfig::default()
+            },
+        );
+        let source = damage_rows().get(&1088).expect("native Shadow Bolt source");
+        let effect = source.damage_effect();
+        let level20 = damage_effect(&sim, spell_id).expect("native L20 projection");
+        assert_eq!(level20["average"], json!(effect.average(20)));
+        assert_eq!(level20["variance"], json!(effect.variance));
+
+        sim.unit_mut(caster_id).level = 60;
+        let level60 = damage_effect(&sim, spell_id).expect("unchanged native L60 projection");
+        assert_eq!(level60["average"], json!(effect.average(60)));
+    }
+}
