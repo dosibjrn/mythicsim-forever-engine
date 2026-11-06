@@ -238,30 +238,36 @@ fn base_stats(class: &str, race: &str) -> Option<Stats> {
     Some(out)
 }
 
-/// Source-backed level-20 Warlock base resources with a transparent Troll race projection.
-/// The historical Classic SQL has no Troll/Warlock row. Only the racial primary-stat
-/// delta is projected from this exact native engine's Troll and Orc L60 tables;
-/// the Orc L20 primaries and class L20 base resources come from pinned CMaNGOS rows.
-/// This does not invent an independently certified Troll source row.
+/// Source-backed L20/L30 Warlock base resources with transparent Troll race projection.
+/// Historical Classic SQL supplies the level-specific Orc primaries and class HP/mana;
+/// native engine Troll-minus-Orc L60 primary deltas supply the racial projection.
+/// No fabricated direct Troll row or unsupported class/level fallback.
 fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     if level == constants::CHARACTER_LEVEL {
         return base_stats(class, race);
     }
-    if (class, race, level) != ("ClassWarlock", "RaceTroll", 20) {
-        return None;
-    }
-    let source: serde_json::Value =
-        serde_json::from_str(include_str!("../../data/warlock-l20-actor-source.json")).ok()?;
+    let (source_text, reference_key) = match (class, race, level) {
+        ("ClassWarlock", "RaceTroll", 20) => (
+            include_str!("../../data/warlock-l20-actor-source.json"),
+            "reference_race_l20"
+        ),
+        ("ClassWarlock", "RaceTroll", 30) => (
+            include_str!("../../data/warlock-l30-actor-source.json"),
+            "reference_race_l30"
+        ),
+        _ => return None,
+    };
+    let source: serde_json::Value = serde_json::from_str(source_text).ok()?;
     if source["class"].as_str()? != class
         || source["race"].as_str()? != race
         || source["level"].as_i64()? != i64::from(level)
-        || source["reference_race_l20"]["race"].as_str()? != "RaceOrc"
+        || source[reference_key]["race"].as_str()? != "RaceOrc"
     {
         return None;
     }
     let mut troll = base_stats(class, race)?;
     let orc = base_stats(class, "RaceOrc")?;
-    let source_orc = &source["reference_race_l20"];
+    let source_orc = &source[reference_key];
     for (key, stat) in [
         ("strength", Stat::Strength),
         ("agility", Stat::Agility),
@@ -790,11 +796,27 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(actor[Stat::Intellect], 42.0);
         assert_eq!(actor[Stat::Spirit], 47.0);
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 19).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 29).is_none());
         assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 20).is_none());
         assert!(base_stats_at_level("ClassMage", "RaceTroll", 20).is_none());
         let old = base_stats("ClassWarlock", "RaceTroll").unwrap();
         let unchanged = base_stats_at_level("ClassWarlock", "RaceTroll", 60).unwrap();
         assert_eq!(old[Stat::Health], unchanged[Stat::Health]);
         assert_eq!(old[Stat::Mana], unchanged[Stat::Mana]);
+    }
+
+    #[test]
+    fn sourced_l30_troll_warlock_uses_actual_class_resources_and_l30_orc_projection() {
+        let actor = base_stats_at_level("ClassWarlock", "RaceTroll", 30).unwrap();
+        assert_eq!(actor[Stat::Health], 379.0);
+        assert_eq!(actor[Stat::Mana], 638.0);
+        assert_eq!(actor[Stat::Strength], 31.0);
+        assert_eq!(actor[Stat::Agility], 35.0);
+        assert_eq!(actor[Stat::Stamina], 41.0);
+        assert_eq!(actor[Stat::Intellect], 57.0);
+        assert_eq!(actor[Stat::Spirit], 61.0);
+        assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 30).is_none());
+        assert!(base_stats_at_level("ClassMage", "RaceTroll", 30).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 31).is_none());
     }
 }
