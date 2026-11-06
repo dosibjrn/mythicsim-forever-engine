@@ -401,10 +401,18 @@ impl Warlock {
                 "wait_ns": nanos(100 * MILLISECOND),
             }));
         }
-        if self.pets.imp.is_some() {
-            // pets.go registerFireboltSpell: impFireboltEffect, unexported, mirrored here
-            let effect = imp_firebolt_effect();
-            let average = effect.average(CHARACTER_LEVEL);
+        if let Some(imp) = self.pets.imp {
+            // Frozen Go/Forever rank-7 damage stays unchanged at L60.
+            // Lower-level pets read the actual registered client rank's damage.
+            let level = sim.unit(imp).level;
+            let fallback = imp_firebolt_effect();
+            let row = data.imp_firebolt.highest_for_level(level, sim.rules);
+            let effect = if level == 60 || row.is_nil() {
+                &fallback
+            } else {
+                row.damage_effect()
+            };
+            let average = effect.average(level);
             effects.push(json!({
                 "kind": "firebolt",
                 "min_damage": average * (1.0 - effect.variance / 2.0),
@@ -412,9 +420,15 @@ impl Warlock {
                 "average": average, "variance": effect.variance,
             }));
         }
-        if self.pets.succubus.is_some() {
-            // pets.go registerLashOfPainSpell: a Go literal base
-            effects.push(json!({"kind": "lash_of_pain", "base_damage": 50.0}));
+        if let Some(succubus) = self.pets.succubus {
+            let level = sim.unit(succubus).level;
+            let base = if level == 60 {
+                50.0 // Frozen Go rank-6 value.
+            } else {
+                let row = data.succubus_lash_of_pain.highest_for_level(level, sim.rules);
+                if row.is_nil() { 0.0 } else { row.damage_effect().average(level) }
+            };
+            effects.push(json!({"kind": "lash_of_pain", "base_damage": base}));
         }
         // talents_demonology.go applyFelEnergy: the Voidwalker's sacrifice restores a share of
         // maximum mana every period, from a periodic action its permanent aura starts.
