@@ -491,7 +491,9 @@ fn native_item_matches_slot(item: &Item, source_slot: &str, requested_slot: &str
         "one_hand" | "two_hand" => source_slot == requested_slot,
         "offhand" | "off_hand" => source_slot == "off_hand",
         "wand" => source_slot == "ranged" && item.ranged_weapon_type == "RangedWeaponTypeWand",
-        "ranged" => source_slot == "ranged" && item.ranged_weapon_type != "RangedWeaponTypeWand",
+        // Wands occupy the native ranged equipment slot; `wand` is only a
+        // narrower query alias, not a reason to omit them from `ranged`.
+        "ranged" => source_slot == "ranged",
         "thrown" => source_slot == "thrown",
         "trinket" | "relic" => source_slot == requested_slot,
         "head" | "neck" | "shoulder" | "back" | "chest" | "wrist" | "hands" | "waist" | "legs"
@@ -1284,6 +1286,25 @@ mod native_item_options_contract_tests {
             item.required_level <= 30
                 && item.required_level_origin == "client_ItemSparse.RequiredLevel"
         }));
+    }
+
+    #[test]
+    fn warlock_l20_ranged_slot_exposes_the_same_native_wands_as_wand_alias() {
+        let ranged = native_item_options("warlock", 20, "unrestricted", "ranged");
+        let wands = native_item_options("warlock", 20, "unrestricted", "wand");
+        assert_eq!(ranged.status, "ok", "{:?}", ranged.refusal);
+        assert_eq!(wands.status, "ok", "{:?}", wands.refusal);
+
+        let ranged_wands: Vec<_> = ranged
+            .items
+            .iter()
+            .filter(|item| item.ranged_weapon_type == "RangedWeaponTypeWand")
+            .map(|item| item.item_id)
+            .collect();
+        let explicit_wands: Vec<_> = wands.items.iter().map(|item| item.item_id).collect();
+        assert!(!explicit_wands.is_empty(), "native Warlock wand source must be populated");
+        assert_eq!(ranged_wands, explicit_wands);
+        assert!(ranged.items.iter().all(|item| item.slot == "ranged"));
     }
 
     #[test]
