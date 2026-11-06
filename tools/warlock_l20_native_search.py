@@ -237,21 +237,38 @@ def native_gear_refinement_proposals(equipped_request, slot_index, source_item_i
         yield item_id, proposal
 
 
+def configured_request(request, *, duration, iterations):
+    """Align a source-native candidate with the same paid search scenario.
+
+    Preserve the full supplied equipment/talents/APL; Rust prepare and sim
+    determine whether that candidate is executable and how much it scores.
+    """
+    aligned = copy.deepcopy(request)
+    aligned["simOptions"].update({
+        "iterations": iterations, "randomSeed": "4242",
+        "debugFirstIteration": False,
+    })
+    aligned["encounter"]["duration"] = duration
+    return aligned
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--request", type=Path, required=True)
+    parser.add_argument("--incumbent-request", type=Path,
+                        help="Previously paid full native build to improve, never an assumed score")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--duration", type=int, default=30)
     parser.add_argument("--iterations", type=int, default=8)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    base = json.loads(args.request.read_text())
+    base = configured_request(json.loads(args.request.read_text()),
+                              duration=args.duration, iterations=args.iterations)
     player(base)["equipment"] = {"items": [{"id": 0} for _ in range(17)]}
-    base["simOptions"].update({
-        "iterations": args.iterations, "randomSeed": "4242", "debugFirstIteration": False,
-    })
-    base["encounter"]["duration"] = args.duration
+    incumbent = (configured_request(json.loads(args.incumbent_request.read_text()),
+                                    duration=args.duration, iterations=args.iterations)
+                 if args.incumbent_request else None)
 
     option_data = invoke([str(args.binary), "options", "--class", "warlock", "--level", "20"])
     if (option_data["class"] != "warlock" or option_data["level"] != 20
@@ -275,9 +292,10 @@ def main():
     seen = set()
     paid_cache = {}
     best = None
+    best_request = None
 
     def score(label, request):
-        nonlocal total_attempts, best
+        nonlocal total_attempts, best, best_request
         key = json.dumps(request, sort_keys=True)
         if key in seen:
             # Reusing an already paid request must reuse its genuine native
@@ -306,6 +324,7 @@ def main():
             paid_cache[key] = row
             if best is None or row["dps"] > best["dps"]:
                 best = row
+                best_request = copy.deepcopy(request)
                 (args.out / "best_request.json").write_text(json.dumps(request, indent=2) + "\n")
                 (args.out / "best_native_output.json").write_text(json.dumps(paid, indent=2) + "\n")
             print("PAID", label, "dps", round(row["dps"], 4),
@@ -323,6 +342,11 @@ def main():
     # Native get_options is the only spell candidate source. Discover real
     # castable and damaging actions by submitting each to Rust rather than
     # maintaining a parallel Python spell proficiency table.
+    if incumbent is not None:
+        # Never carry an old numeric score across source revisions, actor or
+        # scenario changes. Pay the whole incumbent through the selected Rust.
+        if score("equipped_incumbent", incumbent) is None:
+            raise SystemExit("The source-native incumbent refused; no paid warm start")
     baseline = copy.deepcopy(base)
     score("source_baseline_apl", baseline)
     for source in source_spells:
@@ -397,8 +421,10 @@ def main():
     # Keep the highest-paid candidate rather than trusting item-level ranking.
     if best is None:
         raise SystemExit("No executable level-20 Warlock candidate; see refusals")
-    working = copy.deepcopy(base)
-    player(working)["rotation"]["priorityList"] = copy.deepcopy(best["apl"])
+    # The old loop discarded all equipment and talent choices from the
+    # already-paid winner, restarting gear coordinates from naked. Retain the
+    # exact paid incumbent across all axes before testing native slot upgrades.
+    working = copy.deepcopy(best_request)
     # Compare each item to the *current, actually paid* equipped build. The
     # previous loop accepted the best item even when every item lost DPS to
     # naked gear, damaging the build used for joint talent/APL search.
