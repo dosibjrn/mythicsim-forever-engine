@@ -1,0 +1,857 @@
+{
+  "schema_version": 1,
+  "class": "ClassWarlock",
+  "race": "RaceTroll",
+  "reference_race": "RaceOrc",
+  "source_scope": "classic_derived_troll_race_projection_not_direct_troll_row",
+  "derivation": "Import class-level health/mana and Orc Warlock primaries for every L1-60 from pinned Classic SQL; native Troll-minus-Orc reference-race primary deltas applied at prepare. These are Classic-proxy values, not a claimed observed WoW Forever player.",
+  "provenance": {
+    "source_provider": "cmangos/mangos-classic",
+    "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+    "class_level_file": "sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql",
+    "reference_race_file": "sql/archive/0.8/4537_player_levelstats.sql",
+    "race_deltas": "this Rust engine data/go-tables.json ClassWarlock RaceTroll minus RaceOrc"
+  },
+  "levels": [
+    {
+      "level": 1,
+      "class_base": {
+        "health": 23,
+        "mana": 59
+      },
+      "reference_race": {
+        "strength": 23,
+        "agility": 17,
+        "stamina": 23,
+        "intellect": 19,
+        "spirit": 25
+      }
+    },
+    {
+      "level": 2,
+      "class_base": {
+        "health": 28,
+        "mana": 98
+      },
+      "reference_race": {
+        "strength": 23,
+        "agility": 17,
+        "stamina": 24,
+        "intellect": 20,
+        "spirit": 26
+      }
+    },
+    {
+      "level": 3,
+      "class_base": {
+        "health": 43,
+        "mana": 107
+      },
+      "reference_race": {
+        "strength": 24,
+        "agility": 18,
+        "stamina": 24,
+        "intellect": 21,
+        "spirit": 27
+      }
+    },
+    {
+      "level": 4,
+      "class_base": {
+        "health": 48,
+        "mana": 117
+      },
+      "reference_race": {
+        "strength": 24,
+        "agility": 18,
+        "stamina": 25,
+        "intellect": 23,
+        "spirit": 28
+      }
+    },
+    {
+      "level": 5,
+      "class_base": {
+        "health": 63,
+        "mana": 128
+      },
+      "reference_race": {
+        "strength": 24,
+        "agility": 18,
+        "stamina": 25,
+        "intellect": 24,
+        "spirit": 30
+      }
+    },
+    {
+      "level": 6,
+      "class_base": {
+        "health": 68,
+        "mana": 140
+      },
+      "reference_race": {
+        "strength": 24,
+        "agility": 19,
+        "stamina": 26,
+        "intellect": 25,
+        "spirit": 31
+      }
+    },
+    {
+      "level": 7,
+      "class_base": {
+        "health": 83,
+        "mana": 153
+      },
+      "reference_race": {
+        "strength": 25,
+        "agility": 19,
+        "stamina": 26,
+        "intellect": 26,
+        "spirit": 32
+      }
+    },
+    {
+      "level": 8,
+      "class_base": {
+        "health": 88,
+        "mana": 167
+      },
+      "reference_race": {
+        "strength": 25,
+        "agility": 20,
+        "stamina": 27,
+        "intellect": 27,
+        "spirit": 33
+      }
+    },
+    {
+      "level": 9,
+      "class_base": {
+        "health": 103,
+        "mana": 182
+      },
+      "reference_race": {
+        "strength": 25,
+        "agility": 20,
+        "stamina": 27,
+        "intellect": 29,
+        "spirit": 34
+      }
+    },
+    {
+      "level": 10,
+      "class_base": {
+        "health": 108,
+        "mana": 198
+      },
+      "reference_race": {
+        "strength": 26,
+        "agility": 20,
+        "stamina": 28,
+        "intellect": 30,
+        "spirit": 36
+      }
+    },
+    {
+      "level": 11,
+      "class_base": {
+        "health": 123,
+        "mana": 200
+      },
+      "reference_race": {
+        "strength": 26,
+        "agility": 21,
+        "stamina": 29,
+        "intellect": 31,
+        "spirit": 37
+      }
+    },
+    {
+      "level": 12,
+      "class_base": {
+        "health": 128,
+        "mana": 218
+      },
+      "reference_race": {
+        "strength": 26,
+        "agility": 21,
+        "stamina": 29,
+        "intellect": 33,
+        "spirit": 38
+      }
+    },
+    {
+      "level": 13,
+      "class_base": {
+        "health": 143,
+        "mana": 237
+      },
+      "reference_race": {
+        "strength": 27,
+        "agility": 22,
+        "stamina": 30,
+        "intellect": 34,
+        "spirit": 39
+      }
+    },
+    {
+      "level": 14,
+      "class_base": {
+        "health": 148,
+        "mana": 257
+      },
+      "reference_race": {
+        "strength": 27,
+        "agility": 22,
+        "stamina": 31,
+        "intellect": 35,
+        "spirit": 41
+      }
+    },
+    {
+      "level": 15,
+      "class_base": {
+        "health": 153,
+        "mana": 278
+      },
+      "reference_race": {
+        "strength": 27,
+        "agility": 23,
+        "stamina": 31,
+        "intellect": 37,
+        "spirit": 42
+      }
+    },
+    {
+      "level": 16,
+      "class_base": {
+        "health": 168,
+        "mana": 300
+      },
+      "reference_race": {
+        "strength": 28,
+        "agility": 23,
+        "stamina": 32,
+        "intellect": 38,
+        "spirit": 43
+      }
+    },
+    {
+      "level": 17,
+      "class_base": {
+        "health": 173,
+        "mana": 308
+      },
+      "reference_race": {
+        "strength": 28,
+        "agility": 23,
+        "stamina": 32,
+        "intellect": 39,
+        "spirit": 45
+      }
+    },
+    {
+      "level": 18,
+      "class_base": {
+        "health": 189,
+        "mana": 332
+      },
+      "reference_race": {
+        "strength": 28,
+        "agility": 24,
+        "stamina": 33,
+        "intellect": 41,
+        "spirit": 46
+      }
+    },
+    {
+      "level": 19,
+      "class_base": {
+        "health": 196,
+        "mana": 357
+      },
+      "reference_race": {
+        "strength": 29,
+        "agility": 24,
+        "stamina": 34,
+        "intellect": 42,
+        "spirit": 47
+      }
+    },
+    {
+      "level": 20,
+      "class_base": {
+        "health": 204,
+        "mana": 383
+      },
+      "reference_race": {
+        "strength": 29,
+        "agility": 25,
+        "stamina": 34,
+        "intellect": 43,
+        "spirit": 49
+      }
+    },
+    {
+      "level": 21,
+      "class_base": {
+        "health": 223,
+        "mana": 395
+      },
+      "reference_race": {
+        "strength": 29,
+        "agility": 25,
+        "stamina": 35,
+        "intellect": 45,
+        "spirit": 50
+      }
+    },
+    {
+      "level": 22,
+      "class_base": {
+        "health": 233,
+        "mana": 423
+      },
+      "reference_race": {
+        "strength": 30,
+        "agility": 26,
+        "stamina": 36,
+        "intellect": 46,
+        "spirit": 51
+      }
+    },
+    {
+      "level": 23,
+      "class_base": {
+        "health": 244,
+        "mana": 452
+      },
+      "reference_race": {
+        "strength": 30,
+        "agility": 26,
+        "stamina": 37,
+        "intellect": 48,
+        "spirit": 53
+      }
+    },
+    {
+      "level": 24,
+      "class_base": {
+        "health": 266,
+        "mana": 467
+      },
+      "reference_race": {
+        "strength": 30,
+        "agility": 27,
+        "stamina": 37,
+        "intellect": 49,
+        "spirit": 54
+      }
+    },
+    {
+      "level": 25,
+      "class_base": {
+        "health": 279,
+        "mana": 498
+      },
+      "reference_race": {
+        "strength": 31,
+        "agility": 27,
+        "stamina": 38,
+        "intellect": 51,
+        "spirit": 56
+      }
+    },
+    {
+      "level": 26,
+      "class_base": {
+        "health": 293,
+        "mana": 530
+      },
+      "reference_race": {
+        "strength": 31,
+        "agility": 28,
+        "stamina": 39,
+        "intellect": 52,
+        "spirit": 57
+      }
+    },
+    {
+      "level": 27,
+      "class_base": {
+        "health": 318,
+        "mana": 548
+      },
+      "reference_race": {
+        "strength": 32,
+        "agility": 28,
+        "stamina": 39,
+        "intellect": 54,
+        "spirit": 59
+      }
+    },
+    {
+      "level": 28,
+      "class_base": {
+        "health": 334,
+        "mana": 582
+      },
+      "reference_race": {
+        "strength": 32,
+        "agility": 29,
+        "stamina": 40,
+        "intellect": 55,
+        "spirit": 60
+      }
+    },
+    {
+      "level": 29,
+      "class_base": {
+        "health": 351,
+        "mana": 602
+      },
+      "reference_race": {
+        "strength": 32,
+        "agility": 29,
+        "stamina": 41,
+        "intellect": 57,
+        "spirit": 62
+      }
+    },
+    {
+      "level": 30,
+      "class_base": {
+        "health": 379,
+        "mana": 638
+      },
+      "reference_race": {
+        "strength": 33,
+        "agility": 30,
+        "stamina": 42,
+        "intellect": 58,
+        "spirit": 63
+      }
+    },
+    {
+      "level": 31,
+      "class_base": {
+        "health": 398,
+        "mana": 674
+      },
+      "reference_race": {
+        "strength": 33,
+        "agility": 30,
+        "stamina": 42,
+        "intellect": 60,
+        "spirit": 65
+      }
+    },
+    {
+      "level": 32,
+      "class_base": {
+        "health": 418,
+        "mana": 695
+      },
+      "reference_race": {
+        "strength": 34,
+        "agility": 31,
+        "stamina": 43,
+        "intellect": 61,
+        "spirit": 66
+      }
+    },
+    {
+      "level": 33,
+      "class_base": {
+        "health": 439,
+        "mana": 731
+      },
+      "reference_race": {
+        "strength": 34,
+        "agility": 31,
+        "stamina": 44,
+        "intellect": 63,
+        "spirit": 68
+      }
+    },
+    {
+      "level": 34,
+      "class_base": {
+        "health": 471,
+        "mana": 752
+      },
+      "reference_race": {
+        "strength": 35,
+        "agility": 32,
+        "stamina": 45,
+        "intellect": 64,
+        "spirit": 69
+      }
+    },
+    {
+      "level": 35,
+      "class_base": {
+        "health": 494,
+        "mana": 788
+      },
+      "reference_race": {
+        "strength": 35,
+        "agility": 32,
+        "stamina": 45,
+        "intellect": 66,
+        "spirit": 71
+      }
+    },
+    {
+      "level": 36,
+      "class_base": {
+        "health": 518,
+        "mana": 809
+      },
+      "reference_race": {
+        "strength": 36,
+        "agility": 33,
+        "stamina": 46,
+        "intellect": 68,
+        "spirit": 72
+      }
+    },
+    {
+      "level": 37,
+      "class_base": {
+        "health": 543,
+        "mana": 830
+      },
+      "reference_race": {
+        "strength": 36,
+        "agility": 34,
+        "stamina": 47,
+        "intellect": 69,
+        "spirit": 74
+      }
+    },
+    {
+      "level": 38,
+      "class_base": {
+        "health": 569,
+        "mana": 866
+      },
+      "reference_race": {
+        "strength": 36,
+        "agility": 34,
+        "stamina": 48,
+        "intellect": 71,
+        "spirit": 76
+      }
+    },
+    {
+      "level": 39,
+      "class_base": {
+        "health": 606,
+        "mana": 887
+      },
+      "reference_race": {
+        "strength": 37,
+        "agility": 35,
+        "stamina": 49,
+        "intellect": 72,
+        "spirit": 77
+      }
+    },
+    {
+      "level": 40,
+      "class_base": {
+        "health": 634,
+        "mana": 923
+      },
+      "reference_race": {
+        "strength": 37,
+        "agility": 35,
+        "stamina": 50,
+        "intellect": 74,
+        "spirit": 79
+      }
+    },
+    {
+      "level": 41,
+      "class_base": {
+        "health": 663,
+        "mana": 944
+      },
+      "reference_race": {
+        "strength": 38,
+        "agility": 36,
+        "stamina": 50,
+        "intellect": 76,
+        "spirit": 80
+      }
+    },
+    {
+      "level": 42,
+      "class_base": {
+        "health": 693,
+        "mana": 965
+      },
+      "reference_race": {
+        "strength": 38,
+        "agility": 36,
+        "stamina": 51,
+        "intellect": 77,
+        "spirit": 82
+      }
+    },
+    {
+      "level": 43,
+      "class_base": {
+        "health": 724,
+        "mana": 1001
+      },
+      "reference_race": {
+        "strength": 39,
+        "agility": 37,
+        "stamina": 52,
+        "intellect": 79,
+        "spirit": 84
+      }
+    },
+    {
+      "level": 44,
+      "class_base": {
+        "health": 756,
+        "mana": 1022
+      },
+      "reference_race": {
+        "strength": 39,
+        "agility": 38,
+        "stamina": 53,
+        "intellect": 81,
+        "spirit": 85
+      }
+    },
+    {
+      "level": 45,
+      "class_base": {
+        "health": 799,
+        "mana": 1043
+      },
+      "reference_race": {
+        "strength": 40,
+        "agility": 38,
+        "stamina": 54,
+        "intellect": 83,
+        "spirit": 87
+      }
+    },
+    {
+      "level": 46,
+      "class_base": {
+        "health": 823,
+        "mana": 1064
+      },
+      "reference_race": {
+        "strength": 40,
+        "agility": 39,
+        "stamina": 55,
+        "intellect": 84,
+        "spirit": 89
+      }
+    },
+    {
+      "level": 47,
+      "class_base": {
+        "health": 868,
+        "mana": 1100
+      },
+      "reference_race": {
+        "strength": 41,
+        "agility": 39,
+        "stamina": 56,
+        "intellect": 86,
+        "spirit": 91
+      }
+    },
+    {
+      "level": 48,
+      "class_base": {
+        "health": 904,
+        "mana": 1121
+      },
+      "reference_race": {
+        "strength": 41,
+        "agility": 40,
+        "stamina": 56,
+        "intellect": 88,
+        "spirit": 92
+      }
+    },
+    {
+      "level": 49,
+      "class_base": {
+        "health": 941,
+        "mana": 1142
+      },
+      "reference_race": {
+        "strength": 42,
+        "agility": 41,
+        "stamina": 57,
+        "intellect": 90,
+        "spirit": 94
+      }
+    },
+    {
+      "level": 50,
+      "class_base": {
+        "health": 979,
+        "mana": 1163
+      },
+      "reference_race": {
+        "strength": 42,
+        "agility": 41,
+        "stamina": 58,
+        "intellect": 91,
+        "spirit": 96
+      }
+    },
+    {
+      "level": 51,
+      "class_base": {
+        "health": 1018,
+        "mana": 1184
+      },
+      "reference_race": {
+        "strength": 43,
+        "agility": 42,
+        "stamina": 59,
+        "intellect": 93,
+        "spirit": 98
+      }
+    },
+    {
+      "level": 52,
+      "class_base": {
+        "health": 1058,
+        "mana": 1205
+      },
+      "reference_race": {
+        "strength": 43,
+        "agility": 43,
+        "stamina": 60,
+        "intellect": 95,
+        "spirit": 99
+      }
+    },
+    {
+      "level": 53,
+      "class_base": {
+        "health": 1089,
+        "mana": 1226
+      },
+      "reference_race": {
+        "strength": 44,
+        "agility": 43,
+        "stamina": 61,
+        "intellect": 97,
+        "spirit": 101
+      }
+    },
+    {
+      "level": 54,
+      "class_base": {
+        "health": 1131,
+        "mana": 1247
+      },
+      "reference_race": {
+        "strength": 45,
+        "agility": 44,
+        "stamina": 62,
+        "intellect": 99,
+        "spirit": 103
+      }
+    },
+    {
+      "level": 55,
+      "class_base": {
+        "health": 1184,
+        "mana": 1268
+      },
+      "reference_race": {
+        "strength": 45,
+        "agility": 45,
+        "stamina": 63,
+        "intellect": 101,
+        "spirit": 105
+      }
+    },
+    {
+      "level": 56,
+      "class_base": {
+        "health": 1228,
+        "mana": 1289
+      },
+      "reference_race": {
+        "strength": 46,
+        "agility": 45,
+        "stamina": 64,
+        "intellect": 102,
+        "spirit": 107
+      }
+    },
+    {
+      "level": 57,
+      "class_base": {
+        "health": 1273,
+        "mana": 1310
+      },
+      "reference_race": {
+        "strength": 46,
+        "agility": 46,
+        "stamina": 65,
+        "intellect": 104,
+        "spirit": 109
+      }
+    },
+    {
+      "level": 58,
+      "class_base": {
+        "health": 1319,
+        "mana": 1331
+      },
+      "reference_race": {
+        "strength": 47,
+        "agility": 47,
+        "stamina": 66,
+        "intellect": 106,
+        "spirit": 110
+      }
+    },
+    {
+      "level": 59,
+      "class_base": {
+        "health": 1366,
+        "mana": 1352
+      },
+      "reference_race": {
+        "strength": 47,
+        "agility": 47,
+        "stamina": 67,
+        "intellect": 108,
+        "spirit": 112
+      }
+    },
+    {
+      "level": 60,
+      "class_base": {
+        "health": 1414,
+        "mana": 1373
+      },
+      "reference_race": {
+        "strength": 48,
+        "agility": 48,
+        "stamina": 68,
+        "intellect": 110,
+        "spirit": 114
+      }
+    }
+  ]
+}
