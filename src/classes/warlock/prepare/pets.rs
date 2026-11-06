@@ -3,6 +3,9 @@
 //! only runs in a fight.
 
 use std::rc::Rc;
+use std::sync::OnceLock;
+
+use serde_json::Value;
 
 use crate::prepare::attack::{AutoAttackOptions, Weapon};
 use crate::prepare::pet::PetConfig;
@@ -13,6 +16,7 @@ use crate::prepare::spell::{
 use crate::prepare::stats::{Stat, Stats};
 
 use super::masks;
+use super::spell_data::{prepared_rank, spell_data};
 use super::spells::spell_action;
 use super::Warlock;
 
@@ -46,8 +50,40 @@ impl Summon {
         }
     }
 
-    /// Go `petBaseStats`: level 60 pet stats, from our Forever sim.
-    fn base_stats(self) -> Stats {
+    /// A lower-level demon uses the sourced Classic pet-level rows. These are explicitly
+    /// Classic proxies (not observed Forever numbers), and stay inside Rust mechanics.
+    /// For level 60 retain frozen original Forever/Go reference stats unmodified.
+    fn level_row(self, level: i32) -> Option<&'static Vec<Value>> {
+        static DATA: OnceLock<Value> = OnceLock::new();
+        let data = DATA.get_or_init(|| serde_json::from_str(
+            include_str!("../../../../data/classic-warlock-pet-level-sources.json"))
+            .expect("sourced Classic pet levels must parse"));
+        data["pets"][self.name()][level.to_string()].as_array()
+    }
+
+    fn base_stats(self, level: i32) -> Stats {
+        if level != 60 {
+            let row = self.level_row(level)
+                .expect("missing sourced Classic pet level row");
+            let number = |index: usize| row[index].as_f64()
+                .expect("sourced Classic pet stat must be numeric");
+            // The SQL row is [HP, mana, armor, melee_min, melee_max, AP,
+            // strength, agility, stamina, intellect, spirit]. Health derives
+            // from stamina in the engine; do not double-add final source HP.
+            let mut stats = Stats::from_pairs(&[
+                (Stat::Armor, number(2)),
+                (Stat::Strength, number(6)),
+                (Stat::Agility, number(7)),
+                (Stat::Stamina, number(8)),
+                (Stat::Intellect, number(9)),
+                (Stat::Spirit, number(10)),
+                (Stat::Mana, number(1)),
+            ]);
+            if self == Summon::Succubus {
+                stats[Stat::SpellCritPercent] = 6.2;
+            }
+            return stats;
+        }
         match self {
             Summon::Imp => Stats::from_pairs(&[
                 (Stat::Strength, 122.0),
@@ -79,8 +115,18 @@ impl Summon {
         }
     }
 
-    /// Go `petAutoAttacks`: the demon's melee damage range; the Imp has none.
-    fn auto_attack(self) -> Option<(f64, f64)> {
+    /// Melee ranges come from the same pet level row below 60; retain
+    /// frozen Go-reference/Forever ranges at 60.
+    fn auto_attack(self, level: i32) -> Option<(f64, f64)> {
+        if self == Summon::Imp {
+            return None;
+        }
+        if level != 60 {
+            let row = self.level_row(level)?;
+            let min = row[3].as_f64()?;
+            let max = row[4].as_f64()?;
+            return (max > min && max > 0.0).then_some((min, max));
+        }
         match self {
             Summon::Imp => None,
             Summon::Voidwalker => Some((31.0, 46.0)),
@@ -161,7 +207,7 @@ impl Warlock {
         let pet = sim.new_pet(PetConfig {
             name: summon.name().to_string(),
             owner,
-            base_stats: summon.base_stats(),
+            base_stats: summon.base_stats(sim.unit(owner).level),
             stat_inheritance: Rc::new(pet_stat_inheritance),
             enabled_on_start,
             is_guardian: false,
@@ -197,7 +243,7 @@ impl Warlock {
                 crit(&tables.crit_per_int_max_level, "ClassWarrior"),
             );
 
-            if let Some((min, max)) = summon.auto_attack() {
+            if let Some((min, max)) = summon.auto_attack(sim.unit(owner).level) {
                 sim.enable_auto_attacks(
                     pet,
                     AutoAttackOptions {
@@ -246,20 +292,24 @@ impl Warlock {
     /// 2.4 sec after the last; 430 would round up to 2.5. Improved Imp rides on its talent as a
     /// SpellMod.
     fn register_firebolt_spell(&mut self, sim: &mut Sim, pet: UnitId) {
+        let Some(rank) = prepared_rank(&spell_data().imp_firebolt, sim, pet) else {
+            return;
+        };
+        let mana_cost = rank.cost() as i32;
         if let Some(state) = self.pets.state_mut(pet) {
-            state.min_mana = 115.0;
+            state.min_mana = f64::from(mana_cost);
         }
         let timer = sim.new_timer(pet);
         let spell = sim.register_spell(
             pet,
             SpellConfig {
-                action_id: spell_action(11763),
+                action_id: spell_action(rank.id),
                 spell_school: school::FIRE,
                 defense_type: DefenseType::Magic,
                 proc_mask: ProcMask::SPELL_DAMAGE,
                 class_spell_mask: masks::IMP_FIRE_BOLT,
                 cost: CostOptions {
-                    mana_flat_cost: 115,
+                    mana_flat_cost: mana_cost,
                     ..CostOptions::default()
                 },
                 cast: CastConfig {
@@ -289,20 +339,24 @@ impl Warlock {
     /// Lash of Pain carries our client-verified beta 1.60.1 values (rank 6). Improved Sayaad
     /// rides on its talent as a SpellMod.
     fn register_lash_of_pain_spell(&mut self, sim: &mut Sim, pet: UnitId) {
+        let Some(rank) = prepared_rank(&spell_data().succubus_lash_of_pain, sim, pet) else {
+            return;
+        };
+        let mana_cost = rank.cost() as i32;
         if let Some(state) = self.pets.state_mut(pet) {
-            state.min_mana = 160.0;
+            state.min_mana = f64::from(mana_cost);
         }
         let timer = sim.new_timer(pet);
         let spell = sim.register_spell(
             pet,
             SpellConfig {
-                action_id: spell_action(11780),
+                action_id: spell_action(rank.id),
                 spell_school: school::SHADOW,
                 defense_type: DefenseType::Magic,
                 proc_mask: ProcMask::SPELL_DAMAGE,
                 class_spell_mask: masks::SUCCUBUS_LASH_OF_PAIN,
                 cost: CostOptions {
-                    mana_flat_cost: 160,
+                    mana_flat_cost: mana_cost,
                     ..CostOptions::default()
                 },
                 cast: CastConfig {
