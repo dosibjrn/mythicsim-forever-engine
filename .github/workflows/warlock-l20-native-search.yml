@@ -9,6 +9,7 @@ on:
       - tools/warlock_l20_native_search.py
       - tools/test_warlock_l20_native_search.py
       - .github/workflows/warlock-l20-native-search.yml
+      - fixtures/warlock-l20-troll-best-paid.request.json
   workflow_dispatch:
 
 permissions:
@@ -24,6 +25,36 @@ jobs:
         run: python3 -m unittest discover -s tools -p 'test_warlock_l20_native_search.py' -v
       - name: Build the exact checked-out Rust engine
         run: cargo build --locked --bin forever-engine
+      - name: Replay committed optimized 17-slot Troll L20 with native balanced combat
+        shell: bash
+        run: |
+          set -euo pipefail
+          request=fixtures/warlock-l20-troll-best-paid.request.json
+          target/debug/forever-engine prepare --request "$request" --actor-level 20 --outfile /tmp/warlock-l20-best-prepared.json
+          target/debug/forever-engine sim --infile /tmp/warlock-l20-best-prepared.json --rng-mode balanced --outfile /tmp/warlock-l20-best-paid.json
+          python3 - <<'PY'
+          import json, math
+          from pathlib import Path
+          request = json.loads(Path("fixtures/warlock-l20-troll-best-paid.request.json").read_text())
+          actor = request["raid"]["parties"][0]["players"][0]
+          prepared = json.loads(Path("/tmp/warlock-l20-best-prepared.json").read_text())["player"]
+          paid = json.loads(Path("/tmp/warlock-l20-best-paid.json").read_text())
+          assert actor["class"] == prepared["class"] == "ClassWarlock"
+          assert actor["race"] == prepared["race"] == "RaceTroll"
+          assert prepared["level"] == 20
+          assert len(actor["equipment"]["items"]) == 17
+          assert all(item["id"] > 0 for item in actor["equipment"]["items"])
+          body = paid["result"]
+          dps = body["raidMetrics"]["parties"][0]["players"][0]["dps"]["avg"]
+          assert isinstance(dps, (int, float)) and math.isfinite(dps)
+          print("WARLOCK_L20_EQUIPPED_NATIVE_REPLAY", json.dumps({
+              "dps": dps, "iterations": body["iterationsDone"],
+              "duration_s": body["firstIterationDuration"],
+              "source_revision": paid.get("source_revision"),
+              "request_sha256": paid.get("request_sha256"),
+              "equipped_ids": [item["id"] for item in actor["equipment"]["items"]]
+          }))
+          PY
       - name: Score actual level-20 Warlock gear, talents and APL variations
         run: |
           set -euo pipefail
