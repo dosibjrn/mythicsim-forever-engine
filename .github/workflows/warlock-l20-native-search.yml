@@ -61,6 +61,7 @@ jobs:
           python3 tools/warlock_l20_native_search.py \
             --binary target/debug/forever-engine \
             --request fixtures/warlock-l20-troll-native.request.json \
+            --incumbent-request fixtures/warlock-l20-troll-best-paid.request.json \
             --out /tmp/warlock-l20-search \
             --duration 30 --iterations 8
       - name: Preserve full exact-native build comparisons and best request
