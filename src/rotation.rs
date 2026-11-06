@@ -2357,9 +2357,9 @@ fn parse_value(value: &Json) -> Result<Value, Vec<String>> {
             only(&["sourceUnit"])?;
             match config.get("sourceUnit") {
                 None => Ok(Value::CurrentHealthPercent),
-                Some(source) => match parse_value_unit_ref(Some(source), UnitRef::Player)? {
-                    UnitRef::Player => Ok(Value::CurrentHealthPercent),
-                    UnitRef::CurrentTarget => Ok(Value::WorldCurrentTargetHealthPercent),
+                Some(source) => match parse_value_unit_ref(Some(source), UnitRef::Player) {
+                    Ok(UnitRef::Player) => Ok(Value::CurrentHealthPercent),
+                    Ok(UnitRef::CurrentTarget) => Ok(Value::WorldCurrentTargetHealthPercent),
                     _ => Err(vec![unsupported_unit(name, "sourceUnit", Some(source))]),
                 },
             }
