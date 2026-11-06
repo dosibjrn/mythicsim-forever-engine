@@ -1302,7 +1302,10 @@ mod native_item_options_contract_tests {
             .map(|item| item.item_id)
             .collect();
         let explicit_wands: Vec<_> = wands.items.iter().map(|item| item.item_id).collect();
-        assert!(!explicit_wands.is_empty(), "native Warlock wand source must be populated");
+        assert!(
+            !explicit_wands.is_empty(),
+            "native Warlock wand source must be populated"
+        );
         assert_eq!(ranged_wands, explicit_wands);
         assert!(ranged.items.iter().all(|item| item.slot == "ranged"));
     }
