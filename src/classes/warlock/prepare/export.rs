@@ -18,7 +18,7 @@ use crate::prepare::spell::{school, DefenseType};
 use crate::prepare::spelldata::{Ladder, Spell as Row};
 use crate::prepare::stats::{SchoolIndex, Stat};
 
-use super::spell_data::spell_data;
+use super::spell_data::{prepared_rank, spell_data};
 use super::{masks, Warlock};
 
 fn nanos(d: Duration) -> i64 {
@@ -110,12 +110,12 @@ fn proc_trigger_spells(sim: &Sim, unit: UnitId, mask: i64) -> Vec<usize> {
 }
 
 /// Go `periodicRank`.
-fn periodic_rank(row: &Row) -> Map<String, Value> {
+fn periodic_rank(row: &Row, level: i32) -> Map<String, Value> {
     let mut map = Map::new();
     map.insert("spell_id".into(), json!(row.id));
     map.insert(
         "tick_base".into(),
-        json!(row.periodic_effect().average(CHARACTER_LEVEL)),
+        json!(row.periodic_effect().average(level)),
     );
     map.insert(
         "tick_can_crit".into(),
@@ -125,11 +125,11 @@ fn periodic_rank(row: &Row) -> Map<String, Value> {
 }
 
 /// `warlockTick`: the periodic tick `periodicTickOutcome` picks; a physical crit is not exported.
-fn warlock_tick(row: &Row, unrepresented: &mut Vec<String>) -> Map<String, Value> {
+fn warlock_tick(row: &Row, level: i32, unrepresented: &mut Vec<String>) -> Map<String, Value> {
     if row.periodic_can_crit() && row.defense_type_core() != DefenseType::Magic {
         unrepresented.push(format!("spell {} ticks with a physical crit roll", row.id));
     }
-    periodic_rank(row)
+    periodic_rank(row, level)
 }
 
 fn with_kind(kind: &str, mut fields: Map<String, Value>) -> Value {
@@ -183,6 +183,7 @@ impl Warlock {
     ) -> Vec<Value> {
         let sim = &env.sim;
         let unit = env.player;
+        let level = sim.unit(unit).level;
         let data = spell_data();
         let talents = &self.talents;
         let target = env.encounter.targets[0];
@@ -193,20 +194,27 @@ impl Warlock {
         // immolate.go, corruption.go: a snapshot dot of the client's periodic effect.
         effects.push(with_kind(
             "immolate",
-            warlock_tick(data.immolate.highest_for(env.rules), unrepresented),
+            warlock_tick(
+                if level == CHARACTER_LEVEL { data.immolate.highest_for(env.rules) }
+                else { data.immolate.highest_for_level(level, env.rules) },
+                level, unrepresented),
         ));
         effects.push(with_kind(
             "corruption",
-            warlock_tick(data.corruption.highest_for(env.rules), unrepresented),
+            warlock_tick(
+                if level == CHARACTER_LEVEL { data.corruption.highest_for(env.rules) }
+                else { data.corruption.highest_for_level(level, env.rules) },
+                level, unrepresented),
         ));
         // doom.go: one snapshot tick a minute on, on the bane slot.
-        effects.push(with_kind(
-            "bane_of_doom",
-            warlock_tick(data.bane_of_doom.highest(), unrepresented),
-        ));
+        if let Some(row) = prepared_rank(&data.bane_of_doom, sim, unit) {
+            effects.push(with_kind("bane_of_doom", warlock_tick(row, level, unrepresented)));
+        }
         // drain_life.go: a channeled dot scaled by Soul Siphon, which counts every registered
         // Affliction aura on the target (warlock.go AfflictionCount), and healing for each tick.
-        let mut drain = warlock_tick(data.drain_life.highest(), unrepresented);
+        let mut drain = warlock_tick(
+            data.drain_life.highest_for_level(level, env.rules), level, unrepresented
+        );
         let mut soul_siphon = 1.0;
         let soul_siphon_points = talents.i32("soul_siphon");
         if soul_siphon_points > 0 {
@@ -224,8 +232,8 @@ impl Warlock {
         effects.push(with_kind("drain_life", drain));
         if talents.bool("wrack") {
             // wrack.go: a channel scaled by Soul Siphon and a bonus on two dots' ticks
-            let row = data.wrack.highest();
-            let mut wrack = warlock_tick(row, unrepresented);
+            let row = data.wrack.highest_for_level(level, env.rules);
+            let mut wrack = warlock_tick(row, level, unrepresented);
             wrack.insert("soul_siphon".into(), json!(soul_siphon));
             wrack.insert("dot_bonus".into(), json!(1.0 + row.effect_n(2).percent()));
             wrack.insert(
@@ -240,23 +248,25 @@ impl Warlock {
         }
         // hellfire.go: each tick rolls the periodic effect's average on every target, then burns
         // the warlock; the area hits crit unless the client row of the triggered spell cannot.
-        let hellfire = data.hellfire.highest();
+        if let Some(hellfire) = prepared_rank(&data.hellfire, sim, unit) {
         effects.push(json!({
             "kind": "hellfire", "spell_id": hellfire.id,
-            "tick_base": hellfire.effect(dbcenums::A_PERIODIC_DAMAGE, 0).average(CHARACTER_LEVEL),
+            "tick_base": hellfire.effect(dbcenums::A_PERIODIC_DAMAGE, 0).average(level),
             "tick_can_crit": !hellfire
                 .effect(dbcenums::A_PERIODIC_TRIGGER_SPELL, 0)
                 .trigger()
                 .cannot_crit(),
         }));
+        }
         // rain_of_fire.go: the cast hits every target without damage, then the channel casts the
         // triggered tick of its rank every period.
-        let rain = data.rain_of_fire.highest();
+        if let Some(rain) = prepared_rank(&data.rain_of_fire, sim, unit) {
         let rain_tick = data.rain_of_fire_triggered.rank(rain.rank_number());
         effects.push(json!({
             "kind": "rain_of_fire", "spell_id": rain.id, "tick_spell_id": rain_tick.id,
-            "tick_base": rain_tick.damage_effect().average(CHARACTER_LEVEL),
+            "tick_base": rain_tick.damage_effect().average(level),
         }));
+        }
         if talents.bool("bane_of_havoc") {
             // talents_destruction.go applyBaneOfHavoc
             let row = data.bane_of_havoc.highest();
@@ -271,14 +281,16 @@ impl Warlock {
         // travel, and a heal of the damage through its tagged healing spell on the warlock.
         // Go notes dynamic healing taken modifiers on the warlock; Rust registers none.
         let pseudo = &sim.unit(unit).pseudo_stats;
+        if let Some(death_coil) = prepared_rank(&data.death_coil, sim, unit) {
         effects.push(json!({
             "kind": "death_coil",
-            "base_damage": data.death_coil.highest().effect_n(1).average(CHARACTER_LEVEL),
+            "base_damage": death_coil.effect_n(1).average(level),
             "healing_dealt_multiplier": pseudo.healing_dealt_multiplier,
             "healing_taken_multiplier": pseudo.healing_taken_multiplier,
             "table_healing_dealt_multiplier": env.attack_table(unit, unit).healing_dealt_multiplier,
             "healing_power": sim.stat(unit, Stat::HealingPower) + pseudo.bonus_healing_taken,
         }));
+        }
         if talents.bool("incinerate") {
             // incinerate.go: the client roll, raised on a burning target
             effects.push(json!({
@@ -288,7 +300,7 @@ impl Warlock {
         }
         if talents.bool("siphon_life") {
             // siphon_life.go: Corruption's shape, healing for each tick
-            let mut siphon = warlock_tick(data.siphon_life.highest(), unrepresented);
+            let mut siphon = warlock_tick(data.siphon_life.highest_for_level(level, env.rules), level, unrepresented);
             // The ticks crit though the client row lacks periodic-can-crit (community #782).
             siphon.insert("tick_can_crit".into(), json!(true));
             siphon.insert(
@@ -299,7 +311,7 @@ impl Warlock {
         }
         // agony.go: the snapshot pays half the tick and every fourth tick adds that half back,
         // Go literals.
-        let mut agony = warlock_tick(data.bane_of_agony.highest(), unrepresented);
+        let mut agony = warlock_tick(data.bane_of_agony.highest_for_level(level, env.rules), level, unrepresented);
         agony.insert("ramp_share".into(), json!(0.5));
         agony.insert("ramp_every_ticks".into(), json!(4));
         if talents.bool("amplify_curse") {
@@ -331,10 +343,10 @@ impl Warlock {
             ));
         }
         // lifetap.go: (base + Spirit) * (1 + Improved Life Tap) health into as much mana.
-        let life_tap = data.life_tap.highest();
+        let life_tap = data.life_tap.highest_for_level(level, env.rules);
         let mut tap = json!({
             "kind": "life_tap", "spell_id": life_tap.id,
-            "base_amount": life_tap.effect_n(1).average(CHARACTER_LEVEL),
+            "base_amount": life_tap.effect_n(1).average(level),
             "mana_multiplier": 1.0 + data.improved_life_tap.fraction_at(talents.i32("improved_life_tap")),
             // The client flags every rank No Threat: the mana adds no threat, the demon's share
             // neither.
@@ -352,7 +364,7 @@ impl Warlock {
         if talents.bool("conflagrate") {
             // conflagrate.go
             effects.push(json!({
-                "kind": "conflagrate", "spell_id": data.conflagrate.highest().id,
+                "kind": "conflagrate", "spell_id": data.conflagrate.highest_for_level(level, env.rules).id,
                 "keep_immolate_chance": data
                     .shadow_and_flame
                     .effect_at(2)
