@@ -57,7 +57,21 @@ jobs:
           import json
           from pathlib import Path
           result=json.loads(Path('/tmp/warlock-l20-paid.json').read_text())
-          print('WARLOCK_L20_NATIVE_PAID_RESULT',json.dumps(result)[:3500],flush=True)
+          body=result['result']
+          players=body['raidMetrics']['parties'][0]['players']
+          player=players[0]
+          dps=player.get('dps',{}).get('avg')
+          print('WARLOCK_L20_NATIVE_PAID_METRICS',json.dumps({
+              'player_dps':dps,
+              'iterations':body['iterationsDone'],
+              'duration_s':body['firstIterationDuration'],
+              'request_sha256':result['request_sha256'],
+              'source_revision':result['source_revision'],
+              'client_build':result['identity']['client_build'],
+          },sort_keys=True),flush=True)
+          assert body['iterationsDone']==1
+          assert isinstance(dps,(int,float)) and dps>0, ('NO_REAL_NATIVE_DAMAGE',dps)
+          print('WARLOCK_L20_NATIVE_PAID_LOG',body.get('logs','')[:2000],flush=True)
           PY
       - name: Preserve authentic request, prepared actor and paid output
         if: always()
