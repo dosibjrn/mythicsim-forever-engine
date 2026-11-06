@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "class": "ClassWarlock",
+  "race": "RaceTroll",
+  "level": 30,
+  "class_base": {
+    "health": 379,
+    "mana": 638
+  },
+  "reference_race_l30": {
+    "race": "RaceOrc",
+    "strength": 33,
+    "agility": 30,
+    "stamina": 42,
+    "intellect": 58,
+    "spirit": 63
+  },
+  "provenance": {
+    "class_level": {
+      "provider": "cmangos/mangos-classic",
+      "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+      "file": "sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql",
+      "row": "(9,30,379,638)"
+    },
+    "primary": {
+      "provider": "cmangos/mangos-classic",
+      "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+      "file": "sql/archive/0.8/4537_player_levelstats.sql",
+      "row": "(2,9,30,599,1182,33,30,42,58,63)"
+    },
+    "racial_deltas": {
+      "provider": "mythicsim-rust",
+      "file": "data/go-tables.json",
+      "path": "base_stats.ClassWarlock.RaceTroll - base_stats.ClassWarlock.RaceOrc"
+    }
+  },
+  "derivation": "Projected Troll L30 primaries = sourced Orc Warlock L30 primaries + native Troll-minus-Orc L60 primary stat differences. L30 class base health/mana come from the pinned Classic SQL. No direct Troll/Warlock L30 row exists in that source; projection is labeled rather than represented as observed.",
+  "source_scope": "classic_derived_troll_race_projection_not_direct_level30_row"
+}
