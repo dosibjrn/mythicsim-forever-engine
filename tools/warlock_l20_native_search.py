@@ -24,12 +24,8 @@ SLOTS = {
     "trinket": (12, 13), "one_hand": (14,), "main_hand": (14,),
     "two_hand": (14,), "off_hand": (15,), "ranged": (16,),
 }
-CASTS = (
-    ("shadow_bolt", 1088), ("corruption", 6222),
-    ("immolate", 1094), ("agony", 1014),
-    ("drain_life", 689), ("searing_pain", 5676),
-    ("life_tap", 1455),
-)
+# Source spell candidates are discovered from Rust get_options(), not a
+# Warlock-specific Python ability table or a fixed list of known spell IDs.
 
 
 def invoke(command, *, timeout=30):
@@ -122,8 +118,66 @@ def talent_candidates(options):
     return candidates
 
 
-def cast_apl(spell_id):
-    return [{"action": {"castSpell": {"spellId": {"spellId": spell_id}}}}]
+def native_spell_candidates(options: dict, request: dict) -> list[dict]:
+    """Collect possible APL actions exclusively from Rust get_options spell rows.
+
+    Class-family discovery may contain triggers/passives/unlearned actions.
+    We never proclaim them legal: Rust alone decides which ones execute.
+    Prefer the highest available rank per source spell name, and also include
+    any preexisting source APL spell identity for a reproducible baseline.
+    """
+    by_name = {}
+    for source in options.get("spells", []):
+        spell_id = source.get("spell_id")
+        level = source.get("minimum_level")
+        name = source.get("name")
+        if (type(spell_id) is not int or spell_id <= 0
+                or not isinstance(name, str) or not name.strip()
+                or (level is not None and (type(level) is not int or level > options["level"]))):
+            continue
+        label = name.strip().casefold()
+        old = by_name.get(label)
+        if old is None or (level or 0, spell_id) > (old.get("minimum_level") or 0, old["spell_id"]):
+            by_name[label] = source
+    spells = sorted(by_name.values(), key=lambda x: (
+        -(x.get("minimum_level") or 0), x["spell_id"]))
+    used_ids = {row["spell_id"] for row in spells}
+    for entry in player(request).get("rotation", {}).get("priorityList", []):
+        identity = ((entry.get("action") or {}).get("castSpell") or {}).get("spellId") or {}
+        spell_id = identity.get("spellId")
+        if type(spell_id) is int and spell_id not in used_ids:
+            spells.insert(0, {"spell_id": spell_id, "name": "source_apl_" + str(spell_id),
+                              "minimum_level": None, "source": "existing_source_request"})
+            used_ids.add(spell_id)
+    return spells
+
+
+def cast_apl(spell_id, *, guard=None):
+    """Use MythicSim's native APL condition schema, never emulate a spell."""
+    entry = {"action": {"castSpell": {"spellId": {"spellId": spell_id}}}}
+    if guard == "dot_missing":
+        entry["action"]["condition"] = {"not": {"val": {
+            "dotIsActive": {"spellId": {"spellId": spell_id}}}}}
+    elif guard == "aura_missing":
+        entry["action"]["condition"] = {"not": {"val": {
+            "auraIsActive": {"auraId": {"spellId": spell_id},
+                             "sourceUnit": {"type": "CurrentTarget"}}}}}
+    elif guard is not None:
+        raise ValueError("Unknown native APL guard " + str(guard))
+    return entry
+
+
+def mana_conditioned_apl(spell_id, percent: int):
+    entry = cast_apl(spell_id)
+    entry["action"]["condition"] = {"cmp": {
+        "lhs": {"currentManaPercent": {}}, "op": "OpLt",
+        "rhs": {"const": {"val": str(percent) + "%"}}}}
+    return entry
+
+
+def multi_apl(spells: list[tuple[int, str | None]]) -> list[dict]:
+    """Generate ordered APL priorities with optional Rust-evaluated guards."""
+    return [cast_apl(spell_id, guard=guard) for spell_id, guard in spells]
 
 
 def summarize(native, request):
@@ -175,6 +229,14 @@ def main():
 
     pools = ranked_items(option_data)
     talents = talent_candidates(option_data)
+    source_spells = native_spell_candidates(option_data, base)
+    (args.out / "rust_spell_candidates.json").write_text(
+        json.dumps(source_spells, indent=2) + "\n")
+    print("WARLOCK_L20_RUST_SPELL_OPTIONS", json.dumps([
+        {"name": row["name"], "spell_id": row["spell_id"],
+         "minimum_level": row.get("minimum_level")}
+        for row in source_spells
+    ]), flush=True)
     total_attempts = 0
     accepted = []
     refused = []
@@ -222,14 +284,78 @@ def main():
             print("REFUSED", label, reason[-130:], flush=True)
             return None
 
-    # First measure actual registered spell actions, with all other axes fixed.
+    # Native get_options is the only spell candidate source. Discover real
+    # castable and damaging actions by submitting each to Rust rather than
+    # maintaining a parallel Python spell proficiency table.
     baseline = copy.deepcopy(base)
-    player(baseline)["rotation"]["priorityList"] = cast_apl(1088)
-    score("baseline_shadow_bolt", baseline)
-    for label, sid in CASTS:
+    score("source_baseline_apl", baseline)
+    for source in source_spells:
+        sid = source["spell_id"]
         proposal = copy.deepcopy(base)
-        player(proposal)["rotation"]["priorityList"] = cast_apl(sid)
-        score("rotation_" + label, proposal)
+        player(proposal)["rotation"]["priorityList"] = [cast_apl(sid)]
+        score("spell_" + str(sid), proposal)
+
+    positive_actions = {}
+    for row in accepted:
+        entries = row.get("apl") or []
+        if len(entries) != 1:
+            continue
+        sid = ((entries[0].get("action") or {}).get("castSpell") or {}).get("spellId", {}).get("spellId")
+        if type(sid) is not int or row["dps"] <= 0:
+            continue
+        if not any(a.get("casts", 0) > 0 and a.get("id", {}).get("spellId") == sid
+                   for a in row["actions"]):
+            continue
+        if sid not in positive_actions or row["dps"] > positive_actions[sid]:
+            positive_actions[sid] = row["dps"]
+    # Actual native-paid single-action winners form the mutation frontier.
+    # This is candidate ranking, not a claim that untested spell IDs are illegal.
+    action_ids = sorted(positive_actions, key=lambda sid: -positive_actions[sid])[:8]
+    print("WARLOCK_L20_NATIVE_CASTABLE_FRONTIER", json.dumps([
+        {"spell_id": sid, "measured_dps": positive_actions[sid]}
+        for sid in action_ids]), flush=True)
+
+    # Every pair is an APL priority order, not two independent simulations.
+    # Test unconditional, dot-maintenance and aura-maintenance behavior.
+    for lead in action_ids:
+        for fallback in action_ids:
+            if lead == fallback:
+                continue
+            for condition in ("dot_missing", "aura_missing", None):
+                proposal = copy.deepcopy(base)
+                player(proposal)["rotation"]["priorityList"] = multi_apl([
+                    (lead, condition), (fallback, None)])
+                score("apl_pair_" + str(lead) + "_" + str(fallback) + "_" +
+                      str(condition), proposal)
+
+    # Three-step priorities: two native conditional spell maintenance actions
+    # followed by a native-paid filler. Rust determines whether guards work.
+    main_fillers = action_ids[:3]
+    for filler in main_fillers:
+        for i, lead in enumerate(action_ids[:6]):
+            for second in action_ids[:6][i+1:]:
+                if filler in (lead, second):
+                    continue
+                proposal = copy.deepcopy(base)
+                player(proposal)["rotation"]["priorityList"] = multi_apl([
+                    (lead, "dot_missing"), (second, "dot_missing"),
+                    (filler, None)])
+                score("apl_triple_" + str(lead) + "_" + str(second) +
+                      "_" + str(filler), proposal)
+
+    # Resource actions are discovered by Rust, and their mana policy is just
+    # a generic native currentManaPercent condition. Test only source entries
+    # that Rust identifies by the source spell name; never infer learnability.
+    resource_spells = [row["spell_id"] for row in source_spells
+                       if "life tap" in row["name"].casefold()]
+    for resource in resource_spells[:2]:
+        for threshold in (20, 40, 60):
+            for filler in action_ids[:4]:
+                proposal = copy.deepcopy(base)
+                player(proposal)["rotation"]["priorityList"] = [
+                    mana_conditioned_apl(resource, threshold), cast_apl(filler)]
+                score("apl_mana_" + str(resource) + "_" + str(threshold) +
+                      "_" + str(filler), proposal)
 
     # Observe native equipment effects. Every candidate still goes to Rust.
     # Keep the highest-paid candidate rather than trusting item-level ranking.
@@ -254,23 +380,37 @@ def main():
         player(trial)["talentsString"] = encoded
         score("talent_" + label, trial)
 
-    # Joint re-scoring of real gear and talent builds with each native APL action.
-    # Score each full request, not a sum of Python item/talent/spell weights.
+    # Joint re-scoring must include *full source-derived priority lists*,
+    # not collapse back to a fixed one-spell APL. Re-test the strongest actual
+    # paid priorities with each of the strongest source-derived talent builds.
     paid_talents = list(dict.fromkeys(
         row["talents"] for row in sorted(accepted, key=lambda x: -x["dps"])
         if row["talents"] is not None))[:3]
+    paid_apls = []
+    paid_apl_keys = set()
+    for row in sorted(accepted, key=lambda x: -x["dps"]):
+        apl = row["apl"]
+        key = json.dumps(apl, sort_keys=True)
+        if key not in paid_apl_keys:
+            paid_apl_keys.add(key)
+            paid_apls.append(apl)
+        if len(paid_apls) == 15:
+            break
     for encoded in paid_talents:
-        for label, sid in CASTS:
+        for index, apl in enumerate(paid_apls):
             trial = copy.deepcopy(working)
             player(trial)["talentsString"] = encoded
-            player(trial)["rotation"]["priorityList"] = cast_apl(sid)
-            score("joint_" + label + "_" + encoded[:22], trial)
+            player(trial)["rotation"]["priorityList"] = copy.deepcopy(apl)
+            score("joint_apl_" + str(index) + "_" + encoded[:22], trial)
 
     summary = {
         "source": "selected_native_get_options_and_paid_rust",
         "level": 20, "class": "ClassWarlock", "race": "RaceTroll",
         "duration_s": args.duration, "balanced_iterations": args.iterations,
         "native_option_items": len(option_data["items"]),
+        "native_spell_options": len(source_spells),
+        "native_executable_action_frontier": action_ids,
+        "joint_apl_variants": len(paid_apls),
         "native_equipment_positions_with_options": len(pools),
         "candidate_talent_allocations": talents,
         "attempted": total_attempts, "paid": len(accepted),
