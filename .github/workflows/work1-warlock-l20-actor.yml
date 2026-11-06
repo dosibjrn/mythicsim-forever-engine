@@ -13,6 +13,8 @@ on:
       - src/main.rs
       - src/lib.rs
       - data/warlock-l20-actor-source.json
+      - data/manifest.json
+      - tools/rust_data.py
       - fixtures/warlock-l20-troll-native.request.json
       - tests/warlock_l20_native_registration.rs
   workflow_dispatch:
@@ -26,6 +28,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check native data manifest (including L20 actor and Wands)
+        run: python3 tools/rust_data.py check
       - name: Test native level-specific character and preserved L60 path
         shell: bash
         run: |
