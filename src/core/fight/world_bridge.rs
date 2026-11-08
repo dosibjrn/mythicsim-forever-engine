@@ -7,6 +7,7 @@ use serde::Serialize;
 
 // Native 2D geometry: parity-tested against the existing gsim scenario.
 // External JSON bridge remains authoritative until full event/runtime parity.
+#[allow(dead_code)] // Geometry is staged: no in-process backend may claim parity yet.
 mod spatial;
 use serde_json::{json, Value};
 
