@@ -2584,12 +2584,23 @@ pub(crate) fn prepared_coverage(
         let mut limited: BTreeSet<(String, &'static str)> = BTreeSet::new();
         for spell in reachable {
             let id = spell.action_id.clone().unwrap_or_default().to_string();
-            match spell_capability(spell, prepared, gate) {
-                Some(kind) if prepared.effects.iter().any(|effect| effect.kind() == kind) => {
-                    required.insert(kind);
-                }
-                _ => {
-                    unknown.insert(id.clone());
+            // Native prepared Shoot is NOT an effect-gated class spell. The
+            // existing Rust fight runtime executes it directly as
+            // SpellBehavior::MeleeAuto(Hand::Ranged) when the actual equipped
+            // wand enables auto_swing_ranged. Never report it as an unknown
+            // spell solely because it has no class Effect::kind() record.
+            let native_shoot = prepared.melee.auto_swing_ranged
+                && spell.action_id.as_ref().is_some_and(
+                    |action| action.other_id == "OtherActionShoot"
+                );
+            if !native_shoot {
+                match spell_capability(spell, prepared, gate) {
+                    Some(kind) if prepared.effects.iter().any(|effect| effect.kind() == kind) => {
+                        required.insert(kind);
+                    }
+                    _ => {
+                        unknown.insert(id.clone());
+                    }
                 }
             }
             // Go newHardcastAction: a tank's hardcast drops its avoidance, whose rolls the exporter
