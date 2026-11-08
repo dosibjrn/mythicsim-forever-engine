@@ -1,10 +1,10 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
-    native_two_world_targets_with_recovery, native_two_world_targets_with_decisions_recovery,
-    prepare_json_with, prepared_refusals, simulate,
-    simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
-    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
+    prepare_json_with, prepared_refusals, simulate, simulate_prepared, simulate_prepared_gated,
+    validate_prepared, Gated, OptionsClass, PrepareError, PreparedError, Refusal, Request, RngMode,
+    Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -324,12 +324,20 @@ fn run() -> Result<(), Failure> {
                 "--recovery-policy" if args[8] == "decisions" => true,
                 _ => return Err("invalid native-world-pulls recovery policy".into()),
             }
-        } else { false };
+        } else {
+            false
+        };
         let recovery_seconds = if !decisions {
             if args.len() == 9 {
-                args[8].parse::<u32>().map_err(|_| "invalid recovery seconds")?
-            } else { 12 }
-        } else { 0 };
+                args[8]
+                    .parse::<u32>()
+                    .map_err(|_| "invalid recovery seconds")?
+            } else {
+                12
+            }
+        } else {
+            0
+        };
         if !decisions && !(1..=120).contains(&recovery_seconds) {
             return Err("native-world-pulls requires --recovery-seconds 1..120".into());
         }
@@ -337,13 +345,22 @@ fn run() -> Result<(), Failure> {
             if args[9] != "--health-threshold" || args[11] != "--mana-threshold" {
                 return Err("expected --health-threshold F --mana-threshold F".into());
             }
-            let hp = args[10].parse::<f64>().map_err(|_| "invalid health threshold")?;
-            let mana = args[12].parse::<f64>().map_err(|_| "invalid mana threshold")?;
+            let hp = args[10]
+                .parse::<f64>()
+                .map_err(|_| "invalid health threshold")?;
+            let mana = args[12]
+                .parse::<f64>()
+                .map_err(|_| "invalid mana threshold")?;
             (hp, mana)
-        } else { (0.5, 0.1) };
-        if decisions && !(health_threshold.is_finite() && mana_threshold.is_finite()
-            && (0.0..=1.0).contains(&health_threshold)
-            && (0.0..=1.0).contains(&mana_threshold)) {
+        } else {
+            (0.5, 0.1)
+        };
+        if decisions
+            && !(health_threshold.is_finite()
+                && mana_threshold.is_finite()
+                && (0.0..=1.0).contains(&health_threshold)
+                && (0.0..=1.0).contains(&mana_threshold))
+        {
             return Err("native-world-pulls Decisions threshold must be 0..1".into());
         }
         if args.len() == 13 && !decisions {
@@ -361,11 +378,16 @@ fn run() -> Result<(), Failure> {
         let mode = RngMode::parse_cli(&args[6])?;
         let report = if decisions {
             native_two_world_targets_with_decisions_recovery(
-                &prepared, target_count, mode, health_threshold, mana_threshold)
+                &prepared,
+                target_count,
+                mode,
+                health_threshold,
+                mana_threshold,
+            )
         } else {
-            native_two_world_targets_with_recovery(
-                &prepared, target_count, mode, recovery_seconds)
-        }.map_err(|err| err.to_string())?;
+            native_two_world_targets_with_recovery(&prepared, target_count, mode, recovery_seconds)
+        }
+        .map_err(|err| err.to_string())?;
         println!(
             "{}",
             serde_json::json!({
