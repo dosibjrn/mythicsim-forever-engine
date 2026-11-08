@@ -4,6 +4,10 @@
 //! scheduler resumes. This is a bounded multi-fight diagnostic, NOT P7 acceptance.
 use std::{cell::RefCell, io::{self, BufRead, Write}};
 use serde::Serialize;
+
+// Native 2D geometry: parity-tested against the existing gsim scenario.
+// External JSON bridge remains authoritative until full event/runtime parity.
+mod spatial;
 use serde_json::{json, Value};
 
 const TICK_NS: i64 = 100_000_000;
