@@ -35,7 +35,7 @@ pub(super) struct SpacedWorld {
 impl SpacedWorld {
     /// Identical ring sorting and tie rules as the gsim scenario source.
     pub fn new(target_count: usize) -> Result<Self, &'static str> {
-        if target_count == 0 || target_count > 100 {
+        if !(1..=100).contains(&target_count) {
             return Err("NATIVE_SPATIAL_TARGET_COUNT_INVALID");
         }
         let mut positions = vec![Point { x: 0.0, y: 0.0 }];
