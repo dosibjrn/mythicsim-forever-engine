@@ -56,7 +56,7 @@ mod thunderfury;
 mod whelp;
 
 use std::collections::{BTreeMap, HashMap};
-use leveling_recovery::{split_world_regeneration_receipt, WorldRecoveryReceipt, WorldRecoveryStrategy};
+use leveling_recovery::{paid_between_pull_clock, split_world_regeneration_receipt, WorldRecoveryReceipt, WorldRecoveryStrategy};
 
 pub(crate) use aura::{AuraBehavior, AuraRef, Tracker};
 pub(crate) use damage::{
@@ -6015,19 +6015,19 @@ impl<A: Agent> Fight<A> {
                 *previous = spell.casts;
             }
         }
-        // Count only native scheduler regeneration actually paid on the
-        // retained actor between ACKed world kills. Time alone, an assumed
-        // refill or a completed movement schedule is not regeneration proof.
-        let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
-            window["native_passive_recovery_ns"]
-                .as_i64().is_some_and(|ns| ns > 0)
-                && window["native_passive_recovery_ticks"]
-                    .as_u64().is_some_and(|ticks| ticks > 0)
-        });
+        // This boolean reports paid *clock time* between distinct native world
+        // kills, not whether a scheduled 2-second passive tick fired in EVERY
+        // gap. A real 100-mob Decisions run can spend 520s eating yet have a
+        // short movement-only gap with zero passive ticks. Such a gap is not
+        // uncharged time. Tick/gain receipts remain independent evidence.
+        let native_recovery_time_paid = paid_between_pull_clock(&windows);
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
-            "paid_recovery": native_passive_recovery_paid,
+            "paid_recovery": native_recovery_time_paid,
+            // Explicit handshake: older Rust pins required passive regen ticks
+            // in every gap, although paid time can contain zero such events.
+            "paid_recovery_semantics": "native_clock_elapsed_v2",
             "world_targets_killed": target_count,
             "recovery_mode": match strategy {
                 WorldRecoveryStrategy::Fixed(_) => "fixed_passive",

@@ -1,0 +1,28 @@
+name: Native paid world recovery without per-gap passive tick requirement
+
+on:
+  push:
+    branches: [work/warlock-native-paid-recovery-clock-20261109]
+  pull_request:
+    paths:
+      - src/core/fight.rs
+      - src/core/fight/leveling_recovery.rs
+      - .github/workflows/native-paid-clock-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paid-clock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Test native clock with zero passive regen ticks
+        run: cargo test --locked zero_passive_ticks_during_paid_gap_does_not_fail_world_recovery
+      - name: Test combat/rest resource split
+        run: cargo test --locked regen_receipts_exclude_between_pull_regen_from_combat
+      - name: Compile source-native engine
+        run: cargo check --locked --all-targets

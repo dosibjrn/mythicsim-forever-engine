@@ -70,6 +70,18 @@ pub(crate) fn needs_full_recovery(
         || (maximum_mana > 0.0 && mana < maximum_mana * mana_fraction)
 }
 
+/// A between-pull gap is charged when the retained Rust actor actually
+/// advances its native clock. Passive regeneration ticks are event-driven,
+/// and legitimately may be zero during a short paid walk or food/water gap.
+/// Never turn "zero passive ticks" into an uncharged/invalid world result.
+pub(crate) fn paid_between_pull_clock(windows: &[serde_json::Value]) -> bool {
+    windows.len() >= 2 && windows.iter().skip(1).all(|window| {
+        window["native_passive_recovery_ns"]
+            .as_i64().is_some_and(|ns| ns > 0)
+            && window["native_passive_recovery_ticks"].as_u64().is_some()
+    })
+}
+
 /// Native regen metrics are cumulative on a retained actor. A split at the
 /// actual post-rest combat boundary prevents treating food/travel regen as DPS
 /// or sustain achieved while fighting the next mob.
@@ -249,6 +261,27 @@ mod tests {
         assert!(!needs_full_recovery(600.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(499.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(600.0, 1000.0, 99.0, 1000.0, 0.5, 0.1));
+    }
+
+    #[test]
+    fn zero_passive_ticks_during_paid_gap_does_not_fail_world_recovery() {
+        let windows = vec![
+            serde_json::json!({"native_passive_recovery_ns":0,
+                              "native_passive_recovery_ticks":0}),
+            serde_json::json!({"native_passive_recovery_ns":300_000_000,
+                              "native_passive_recovery_ticks":0,
+                              "food_seconds":0.3,"food_health_gain":6.0}),
+            serde_json::json!({"native_passive_recovery_ns":2_000_000_000,
+                              "native_passive_recovery_ticks":1}),
+        ];
+        assert!(paid_between_pull_clock(&windows));
+        let mut unpaid = windows.clone();
+        unpaid[1]["native_passive_recovery_ns"] = serde_json::json!(0);
+        assert!(!paid_between_pull_clock(&unpaid));
+        let mut invalid = windows.clone();
+        invalid[1]["native_passive_recovery_ticks"] = serde_json::Value::Null;
+        assert!(!paid_between_pull_clock(&invalid));
+        assert!(!paid_between_pull_clock(&windows[..1]));
     }
 
     #[test]
