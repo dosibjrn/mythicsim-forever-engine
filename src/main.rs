@@ -1,7 +1,8 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
-    native_two_world_targets_with_recovery, prepare_json_with, prepared_refusals, simulate,
+    native_two_world_targets_with_recovery, native_two_world_targets_with_decisions_recovery,
+    prepare_json_with, prepared_refusals, simulate,
     simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
     PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
@@ -310,25 +311,43 @@ fn run() -> Result<(), Failure> {
     }
 
     if args[0] == "native-world-pulls" {
-        if !(args.len() == 7 || args.len() == 9)
+        if !(args.len() == 7 || args.len() == 9 || args.len() == 13)
             || args[1] != "--infile"
             || args[3] != "--targets"
             || args[5] != "--rng-mode"
-            || (args.len() == 9 && args[7] != "--recovery-seconds")
         {
-            return Err(
-                "native-world-pulls requires --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 1..120]".into(),
-            );
+            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 1..120 | --recovery-policy decisions [--health-threshold 0..1 --mana-threshold 0..1]]".into());
         }
-        let recovery_seconds = if args.len() == 9 {
-            args[8]
-                .parse::<u32>()
-                .map_err(|_| "native-world-pulls recovery seconds must be an integer")?
-        } else {
-            12
-        };
-        if !(1..=120).contains(&recovery_seconds) {
+        let decisions = if args.len() == 9 || args.len() == 13 {
+            match args[7].as_str() {
+                "--recovery-seconds" if args.len() == 9 => false,
+                "--recovery-policy" if args[8] == "decisions" => true,
+                _ => return Err("invalid native-world-pulls recovery policy".into()),
+            }
+        } else { false };
+        let recovery_seconds = if !decisions {
+            if args.len() == 9 {
+                args[8].parse::<u32>().map_err(|_| "invalid recovery seconds")?
+            } else { 12 }
+        } else { 0 };
+        if !decisions && !(1..=120).contains(&recovery_seconds) {
             return Err("native-world-pulls requires --recovery-seconds 1..120".into());
+        }
+        let (health_threshold, mana_threshold) = if decisions && args.len() == 13 {
+            if args[9] != "--health-threshold" || args[11] != "--mana-threshold" {
+                return Err("expected --health-threshold F --mana-threshold F".into());
+            }
+            let hp = args[10].parse::<f64>().map_err(|_| "invalid health threshold")?;
+            let mana = args[12].parse::<f64>().map_err(|_| "invalid mana threshold")?;
+            (hp, mana)
+        } else { (0.5, 0.1) };
+        if decisions && !(health_threshold.is_finite() && mana_threshold.is_finite()
+            && (0.0..=1.0).contains(&health_threshold)
+            && (0.0..=1.0).contains(&mana_threshold)) {
+            return Err("native-world-pulls Decisions threshold must be 0..1".into());
+        }
+        if args.len() == 13 && !decisions {
+            return Err("extra arguments require --recovery-policy decisions".into());
         }
         let target_count = args[4]
             .parse::<usize>()
@@ -340,9 +359,13 @@ fn run() -> Result<(), Failure> {
         let prepared =
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
-        let report =
-            native_two_world_targets_with_recovery(&prepared, target_count, mode, recovery_seconds)
-                .map_err(|err| err.to_string())?;
+        let report = if decisions {
+            native_two_world_targets_with_decisions_recovery(
+                &prepared, target_count, mode, health_threshold, mana_threshold)
+        } else {
+            native_two_world_targets_with_recovery(
+                &prepared, target_count, mode, recovery_seconds)
+        }.map_err(|err| err.to_string())?;
         println!(
             "{}",
             serde_json::json!({
