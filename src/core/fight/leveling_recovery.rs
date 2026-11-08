@@ -70,6 +70,38 @@ pub(crate) fn needs_full_recovery(
         || (maximum_mana > 0.0 && mana < maximum_mana * mana_fraction)
 }
 
+/// Native regen metrics are cumulative on a retained actor. A split at the
+/// actual post-rest combat boundary prevents treating food/travel regen as DPS
+/// or sustain achieved while fighting the next mob.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WorldRegenerationSplit {
+    pub(crate) recovery_gain: f64,
+    pub(crate) recovery_events: i32,
+    pub(crate) combat_gain: f64,
+    pub(crate) combat_events: i32,
+}
+
+pub(crate) fn split_world_regeneration_receipt(
+    previous_gain: f64, combat_start_gain: f64, kill_gain: f64,
+    previous_events: i32, combat_start_events: i32, kill_events: i32,
+) -> Result<WorldRegenerationSplit, &'static str> {
+    if !previous_gain.is_finite() || !combat_start_gain.is_finite()
+        || !kill_gain.is_finite()
+        || combat_start_gain < previous_gain - 1e-8
+        || kill_gain < combat_start_gain - 1e-8
+        || combat_start_events < previous_events
+        || kill_events < combat_start_events
+    {
+        return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
+    }
+    Ok(WorldRegenerationSplit {
+        recovery_gain: (combat_start_gain - previous_gain).max(0.0),
+        recovery_events: combat_start_events - previous_events,
+        combat_gain: (kill_gain - combat_start_gain).max(0.0),
+        combat_events: kill_events - combat_start_events,
+    })
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 pub(crate) struct WorldRecoveryReceipt {
     pub(crate) passive_ticks: usize,
@@ -217,6 +249,30 @@ mod tests {
         assert!(!needs_full_recovery(600.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(499.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(600.0, 1000.0, 99.0, 1000.0, 0.5, 0.1));
+    }
+
+    #[test]
+    fn regen_receipts_exclude_between_pull_regen_from_combat() {
+        // The 30 units and 3 events from rest cannot be reused as combat
+        // sustain in the native 3-mob feature screen.
+        let split = split_world_regeneration_receipt(
+            40.0, 70.0, 90.0, 2, 5, 7
+        ).unwrap();
+        assert_eq!(split.recovery_gain, 30.0);
+        assert_eq!(split.recovery_events, 3);
+        assert_eq!(split.combat_gain, 20.0);
+        assert_eq!(split.combat_events, 2);
+        assert_eq!(split.recovery_gain + split.combat_gain, 50.0);
+        assert_eq!(split.recovery_events + split.combat_events, 5);
+
+        let first = split_world_regeneration_receipt(0.0, 0.0, 12.0, 0, 0, 1)
+            .unwrap();
+        assert_eq!(first.recovery_gain, 0.0);
+        assert_eq!(first.combat_gain, 12.0);
+        assert!(split_world_regeneration_receipt(10.0, 9.0, 13.0, 1, 2, 3)
+            .is_err());
+        assert!(split_world_regeneration_receipt(10.0, 12.0, 13.0, 1, 3, 2)
+            .is_err());
     }
 
     #[test]

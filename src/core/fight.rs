@@ -56,7 +56,7 @@ mod thunderfury;
 mod whelp;
 
 use std::collections::{BTreeMap, HashMap};
-use leveling_recovery::{WorldRecoveryReceipt, WorldRecoveryStrategy};
+use leveling_recovery::{split_world_regeneration_receipt, WorldRecoveryReceipt, WorldRecoveryStrategy};
 
 pub(crate) use aura::{AuraBehavior, AuraRef, Tracker};
 pub(crate) use damage::{
@@ -5874,6 +5874,21 @@ impl<A: Agent> Fight<A> {
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
                 self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
+            // Snapshot only AFTER paid travel/food/water. Subtracting the last
+            // kill's cumulative metrics would incorrectly call resting regen
+            // "in-combat" regen and pollute 3-mob optimizer features.
+            let combat_started_at_ns = self.now;
+            let combat_start_health = self.player.health;
+            let combat_start_mana = self.player.mana;
+            let combat_start_health_damage = -self.resources[self.damage_taken_health].gain;
+            let combat_start_mana_regen_gain =
+                self.resources[self.mana_regen_casting].actual_gain
+                + self.resources[self.mana_regen_not_casting].actual_gain;
+            let combat_start_mana_regen_events =
+                self.resources[self.mana_regen_casting].events
+                + self.resources[self.mana_regen_not_casting].events;
+            let combat_start_mana_spent = self.player.mana_spent;
+            let combat_start_mana_gained = self.player.mana_gained;
             while self.step() {}
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
@@ -5888,22 +5903,25 @@ impl<A: Agent> Fight<A> {
             {
                 return Err("RUST_WORLD_HEALTH_DAMAGE_RECEIPT_NONMONOTONIC");
             }
-            // Existing source-native 2-second mana ticks own these gains.
-            // These events include in-combat ticks, NOT paid between-pull rest.
+            // The source-native two-second ticks own both travel/rest and
+            // in-combat gains; report them separately via the start snapshot.
             let mana_regen_gain = self.resources[self.mana_regen_casting].actual_gain
                 + self.resources[self.mana_regen_not_casting].actual_gain;
             let mana_regen_events = self.resources[self.mana_regen_casting].events
                 + self.resources[self.mana_regen_not_casting].events;
-            if !mana_regen_gain.is_finite()
-                || mana_regen_gain < previous_mana_regen_gain - 1e-8
-                || mana_regen_events < previous_mana_regen_events
-            {
-                return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
-            }
+            let regen = split_world_regeneration_receipt(
+                previous_mana_regen_gain, combat_start_mana_regen_gain,
+                mana_regen_gain, previous_mana_regen_events,
+                combat_start_mana_regen_events, mana_regen_events,
+            )?;
             let spent = self.player.mana_spent - previous_mana_spent;
             let gained = self.player.mana_gained - previous_mana_gained;
+            let combat_mana_spent = self.player.mana_spent - combat_start_mana_spent;
+            let combat_mana_gained = self.player.mana_gained - combat_start_mana_gained;
             if !spent.is_finite() || !gained.is_finite()
+                || !combat_mana_spent.is_finite() || !combat_mana_gained.is_finite()
                 || spent < -1e-8 || gained < -1e-8
+                || combat_mana_spent < -1e-8 || combat_mana_gained < -1e-8
             {
                 return Err("RUST_WORLD_MANA_CAST_RECEIPT_NONMONOTONIC");
             }
@@ -5911,7 +5929,11 @@ impl<A: Agent> Fight<A> {
             // *availability* alone must never be reported as cooldown *usage*.
             let health_gain = self.player.health - previous_native_health
                 + (health_damage - previous_health_damage);
-            if !health_gain.is_finite() || health_gain < -1e-6 {
+            let combat_health_gain = self.player.health - combat_start_health
+                + (health_damage - combat_start_health_damage);
+            if !health_gain.is_finite() || health_gain < -1e-6
+                || !combat_health_gain.is_finite() || combat_health_gain < -1e-6
+            {
                 return Err("RUST_WORLD_HEALTH_GAIN_BUDGET_INVALID");
             }
             let cooldown_states: Vec<_> = self.spells.iter()
@@ -5949,9 +5971,18 @@ impl<A: Agent> Fight<A> {
                 }).collect();
             windows.push(serde_json::json!({
                 "native_spell_cast_receipts": cast_receipts,
+                // Historical cumulative-since-last-kill fields include recovery.
                 "native_mana_spent": spent.max(0.0),
                 "native_mana_gained": gained.max(0.0),
                 "native_health_actual_gain": health_gain.max(0.0),
+                // True fight-only features, excluding travel and food/water.
+                "native_combat_start_ns": combat_started_at_ns,
+                "native_combat_duration_ns": self.now - combat_started_at_ns,
+                "native_combat_start_actor_health": combat_start_health,
+                "native_combat_start_actor_mana": combat_start_mana,
+                "native_combat_mana_spent": combat_mana_spent.max(0.0),
+                "native_combat_mana_gained": combat_mana_gained.max(0.0),
+                "native_combat_health_actual_gain": combat_health_gain.max(0.0),
                 "native_long_cooldown_states": cooldown_states,
                 "index": index,
                 "native_kill_ns": self.now,
@@ -5960,10 +5991,10 @@ impl<A: Agent> Fight<A> {
                 "actor_health": self.player.health,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
-                "native_combat_mana_regen_actual_gain":
-                    (mana_regen_gain - previous_mana_regen_gain).max(0.0),
-                "native_combat_mana_regen_events":
-                    mana_regen_events - previous_mana_regen_events,
+                "native_recovery_mana_regen_actual_gain": regen.recovery_gain,
+                "native_recovery_mana_regen_events": regen.recovery_events,
+                "native_combat_mana_regen_actual_gain": regen.combat_gain,
+                "native_combat_mana_regen_events": regen.combat_events,
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
                 "food_seconds": decisions_receipt.food_ns as f64 / 1e9,
