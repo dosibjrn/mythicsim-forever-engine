@@ -61,6 +61,8 @@ jobs:
         run: cargo test --locked shaman_
       - name: Run Paladin native item-options regression tests
         run: cargo test --locked paladin_
+      - name: Test native between-pull versus combat resource receipts
+        run: cargo test --locked regen_receipts_exclude_between_pull_regen_from_combat
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps --document-private-items
         env:
