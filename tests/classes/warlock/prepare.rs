@@ -231,3 +231,39 @@ fn a_demons_melee_hit_is_eight_seventeenths_of_its_masters_spell_hit() {
     assert_eq!(melee_term(&forever), Some(8.0 / 17.0));
     assert_eq!(melee_term(&go), Some(1.0));
 }
+
+
+/// Warlock wand auto Shoot must be a native prepared APL action at L30.
+#[test]
+fn warlock_wand_registers_native_shoot_for_apl_and_combat() {
+    use serde_json::json;
+    let request=fs::read(directory().join("affliction-imp.request.json")).unwrap();
+    let mut source: Value=serde_json::from_slice(&request).unwrap();
+    let player=&mut source["raid"]["parties"][0]["players"][0];
+    let mut gear=vec![json!({});17];
+    gear[16]=json!({"id":5211}); // Dusk Wand, source item
+    player["equipment"]["items"]=json!(gear);
+    player["rotation"]["priorityList"]=json!([
+        {"action":{"castSpell":{"spellId":{"otherId":"OtherActionShoot"}}}}
+    ]);
+    let prepared=forever_engine::prepare_json_with_actor_level(
+        &serde_json::to_vec(&source).unwrap(), "warlock_l30_wand_shoot",
+        forever_engine::Rules::Forever, Some(30)
+    ).unwrap();
+    assert_eq!(prepared["player"]["level"],30);
+    assert_eq!(prepared["melee"]["auto_swing_ranged"],true);
+    assert_eq!(prepared["melee"]["auto_swing_melee"],false);
+    assert!(prepared["melee"]["ranged"]["swing_speed"].as_f64().unwrap()>0.);
+    assert!(prepared["player"]["spells"].as_array().unwrap().iter().any(
+        |spell|spell["action_id"]["other_id"]=="OtherActionShoot"
+    ),"Shoot must be a native prepared action");
+    source["raid"]["parties"][0]["players"][0]["equipment"]["items"][16]=json!({});
+    let empty=forever_engine::prepare_json_with_actor_level(
+        &serde_json::to_vec(&source).unwrap(), "warlock_l30_no_wand",
+        forever_engine::Rules::Forever,Some(30)
+    ).unwrap();
+    assert_eq!(empty["melee"]["auto_swing_ranged"],false);
+    assert!(!empty["player"]["spells"].as_array().unwrap().iter().any(
+        |spell|spell["action_id"]["other_id"]=="OtherActionShoot"
+    ));
+}
