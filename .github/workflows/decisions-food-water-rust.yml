@@ -1,0 +1,22 @@
+name: Native Decisions food-water recovery
+on:
+  push:
+    branches: [work/decisions-food-water-native-world-20261108]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-recovery:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Compile native Rust engine
+        run: cargo check --locked --all-targets
+      - name: Test decisions food/water source parity
+        run: cargo test --locked leveling_recovery -- --nocapture
+      - name: Confirm command is built
+        run: cargo build --locked --bin forever-engine
