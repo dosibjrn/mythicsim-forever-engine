@@ -5903,8 +5903,8 @@ impl<A: Agent> Fight<A> {
             {
                 return Err("RUST_WORLD_HEALTH_DAMAGE_RECEIPT_NONMONOTONIC");
             }
-            // Existing source-native 2-second mana ticks own these gains.
-            // These events include in-combat ticks, NOT paid between-pull rest.
+            // The source-native two-second ticks own both travel/rest and
+            // in-combat gains; report them separately via the start snapshot.
             let mana_regen_gain = self.resources[self.mana_regen_casting].actual_gain
                 + self.resources[self.mana_regen_not_casting].actual_gain;
             let mana_regen_events = self.resources[self.mana_regen_casting].events
