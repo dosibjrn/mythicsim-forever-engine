@@ -51,6 +51,28 @@ pub(crate) fn native_two_world_targets_with_recovery(
     }
 }
 
+/// The original Decisions threshold policy, executed on the native retained actor.
+pub(crate) fn native_two_world_targets_with_decisions_recovery(
+    prepared: &crate::contracts::prepared_v2::PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    health_fraction: f64,
+    mana_fraction: f64,
+) -> Result<serde_json::Value, String> {
+    match prepared.player.class.as_str() {
+        "ClassMage" => mage::agent::MageAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassDruid" => druid::agent::DruidAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassWarlock" => warlock::agent::WarlockAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassShaman" => shaman::agent::ShamanAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassPaladin" => paladin::agent::PaladinAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassPriest" => priest::agent::PriestAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassRogue" => rogue::agent::RogueAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassWarrior" => warrior::agent::WarriorAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        "ClassHunter" => hunter::agent::HunterAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_decisions_recovery(target_count, health_fraction, mana_fraction).map_err(str::to_string),
+        other => Err(format!("class {other} has no native fight agent")),
+    }
+}
+
 /// Run the same native actor through two source-backed combat windows.
 /// This is a bounded diagnostic, not a live-2D or leveling gate.
 pub(crate) fn native_two_pull_windows(
