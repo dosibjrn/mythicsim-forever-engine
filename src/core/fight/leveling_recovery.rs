@@ -51,7 +51,7 @@ const WATER: [VendorTier; 6] = [
 ];
 
 fn tier(rows: &[VendorTier], level: i32) -> Option<VendorTier> {
-    rows.iter().copied().filter(|tier| tier.required_level <= level).last()
+    rows.iter().copied().rfind(|tier| tier.required_level <= level)
 }
 
 pub(crate) fn food_tier(level: i32) -> Option<VendorTier> {
