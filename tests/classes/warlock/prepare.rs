@@ -240,6 +240,8 @@ fn warlock_wand_registers_native_shoot_for_apl_and_combat() {
     let request=fs::read(directory().join("affliction-imp.request.json")).unwrap();
     let mut source: Value=serde_json::from_slice(&request).unwrap();
     let player=&mut source["raid"]["parties"][0]["players"][0];
+    // The selected native L30 base-stats source is Troll Warlock.
+    player["race"]=json!("RaceTroll");
     let mut gear=vec![json!({});17];
     gear[16]=json!({"id":5211}); // Dusk Wand, source item
     player["equipment"]["items"]=json!(gear);
