@@ -13,6 +13,7 @@ mod talents;
 mod weapon_stones;
 
 use crate::contracts::request::Message;
+use crate::prepare::attack::{AutoAttackOptions, Weapon};
 use crate::prepare::agent::{fill_talents, ClassSpellName, PrepAgent};
 use crate::prepare::env::Environment;
 use crate::prepare::sim::{AuraId, Sim, SpellId, UnitId};
@@ -207,6 +208,23 @@ pub(crate) fn new_warlock(
     .map_err(|err| Refusal::new("talents", err))?;
 
     sim.enable_mana_bar(unit);
+
+    // Shoot is a shared ranged auto attack, never a Warlock spell rank.
+    // A native equipped wand enables OtherActionShoot; no wand means no
+    // phantom Shoot. The existing Rust attack engine owns hit/interrupts.
+    let wand = sim.ranged_weapon(unit)
+        .filter(|item| item.ranged_weapon_type == "RangedWeaponTypeWand")
+        .map(|item| Weapon::from_item(item, sim.unit(unit).pseudo_stats.bonus_ranged_dps));
+    if let Some(ranged) = wand {
+        sim.enable_auto_attacks(
+            unit,
+            AutoAttackOptions {
+                ranged,
+                auto_swing_ranged: true,
+                ..AutoAttackOptions::default()
+            },
+        );
+    }
     sim.unit_mut(unit)
         .sdm
         .add_stat_dependency(Stat::Strength, Stat::AttackPower, 1.0);
