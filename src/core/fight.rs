@@ -6025,6 +6025,9 @@ impl<A: Agent> Fight<A> {
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_recovery_time_paid,
+            // Explicit handshake: older Rust pins required passive regen ticks
+            // in every gap, although paid time can contain zero such events.
+            "paid_recovery_semantics": "native_clock_elapsed_v2",
             "world_targets_killed": target_count,
             "recovery_mode": match strategy {
                 WorldRecoveryStrategy::Fixed(_) => "fixed_passive",
