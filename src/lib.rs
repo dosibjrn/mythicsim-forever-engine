@@ -29,7 +29,7 @@ pub use contracts::{Caster, Request, Spell, Target};
 pub use engine::prepared::{
     check as check_prepared, coverage as prepared_coverage, refusals as prepared_refusals,
     native_two_world_targets, native_two_world_targets_with_recovery,
-    native_two_pull_windows,
+    native_two_world_targets_with_decisions_recovery, native_two_pull_windows,
     simulate as simulate_prepared, simulate_gated as simulate_prepared_gated,
     validate as validate_prepared, EngineIdentity, Gated, PreparedError, PreparedReport, Refusal,
     CLIENT_BUILD, REFUSAL_CODES,
