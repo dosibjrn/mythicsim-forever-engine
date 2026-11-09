@@ -5889,6 +5889,10 @@ impl<A: Agent> Fight<A> {
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
             "recovery_seconds_per_gap": recovery_seconds,
+            // Counts are captured only after the gsim world ACK confirms each
+            // native damage event. Preserve them across the retained actor's
+            // distinct targets and return the measured action mix to gsim.
+            "source_action_counts": world_bridge::take_source_action_counts(),
             "windows": windows,
         });
         self.cleanup();
