@@ -52,7 +52,10 @@ jobs:
           assert all(len(p['target_xy_yards']) == len(p['actor_xy_yards']) == 2 for p in spatial)
           assert all(p['distance_yards'] >= 0 for p in spatial), spatial
           assert any(w['native_spatial_travel_ns'] > 0 for w in r['windows'][1:]), r
-          assert all(w['native_spatial_moving_samples'] > 0 for w in r['windows'][1:]), r
+          # An in-range mob needs no walk. Every actual paid walk, including
+          # sub-100ms legs, must still be seen as moving on the native clock.
+          assert all(w['native_spatial_moving_samples'] > 0
+                     for w in r['windows'][1:] if w['native_spatial_travel_ns'] > 0), r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
           print('WORK1_NATIVE_INPROCESS_EIGHT_TARGETS',
                 {'kills': r['world_targets_killed'],
@@ -71,7 +74,10 @@ jobs:
           assert len(r['windows']) == 100, r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
           assert sum(w['native_spatial_travel_ns'] for w in r['windows']) > 0, r
-          assert all(w['native_spatial_moving_samples'] > 0 for w in r['windows'][1:]), r
+          # An in-range mob needs no walk. Every actual paid walk, including
+          # sub-100ms legs, must still be seen as moving on the native clock.
+          assert all(w['native_spatial_moving_samples'] > 0
+                     for w in r['windows'][1:] if w['native_spatial_travel_ns'] > 0), r
           print('WORK1_NATIVE_INPROCESS_HUNDRED_TARGETS',
                 {'kills': r['world_targets_killed'],
                  'last_kill_ns': r['windows'][-1]['native_kill_ns'],
