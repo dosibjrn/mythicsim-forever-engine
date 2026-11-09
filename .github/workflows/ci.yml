@@ -55,12 +55,31 @@ jobs:
           assert any(item["weapon_type"] == "WeaponTypeMace" for item in result["items"]), result
           print("PALADIN_L20_NATIVE_ITEM_OPTIONS", len(result["items"]))
           PY
+      - name: Query native Priest L20 item options
+        run: |
+          cargo run --locked -- item-options --class priest --level 20 --spec unrestricted --slot all > /tmp/priest-item-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("/tmp/priest-item-options.json").read_text())
+          expected_status = "partial_level_unknown" if result["unverified_candidate_count"] else "ok"
+          assert result["status"] == expected_status, result
+          assert result["required_level_supported"], result
+          assert result["items"], result
+          assert all(item["required_level"] <= 20 for item in result["items"]), result
+          assert all(item["required_level_origin"] == "client_ItemSparse.RequiredLevel" for item in result["items"]), result
+          print("PRIEST_L20_NATIVE_ITEM_OPTIONS", len(result["items"]), "unverified_excluded", result["unverified_candidate_count"])
+          PY
       - name: Check formatting of changed Rust modules
-        run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs src/main.rs
+        run: rustfmt --check --edition 2021 src/data.rs src/prepare/items.rs src/main.rs src/prepare/character.rs src/classes/priest/prepare.rs src/contracts/request/schema.rs src/core/fight.rs src/core/fight/world_bridge.rs
       - name: Run Shaman native item-options regression tests
         run: cargo test --locked shaman_
       - name: Run Paladin native item-options regression tests
         run: cargo test --locked paladin_
+      - name: Run Priest L20 actor and 2D telemetry regression tests
+        run: |
+          cargo test --locked level_contract_tests
+          cargo test --locked source_action_counts
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo doc --locked --no-deps --document-private-items
         env:
@@ -100,4 +119,6 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Verify native Priest L20 prepare and combat request
+        run: cargo test --locked --test cli priest_l20_native_actor_prepares_and_casts_rank_one_smite
       - run: cargo test --locked
