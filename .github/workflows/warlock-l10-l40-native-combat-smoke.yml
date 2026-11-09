@@ -1,0 +1,107 @@
+name: Warlock L10-40 real native combat per-level source sweep
+on:
+  push:
+    branches: [work/warlock-10-40-sourced-native-20261109]
+    paths:
+      - .github/workflows/warlock-l10-l40-native-combat-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paid-native-per-level:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile actual selected Rust engine
+        run: cargo build --locked --bin forever-engine
+      - name: Run separate real balanced native Warlock combat L10 through L40
+        run: |
+          mkdir -p warlock-native-combat-l10-l40
+          python3 - <<'PY'
+          import copy, json, math, subprocess
+          from pathlib import Path
+
+          root = Path("warlock-native-combat-l10-l40")
+          src = json.loads(Path("fixtures/warlock-l20-troll-native.request.json").read_text())
+          rows = []
+          for level in range(10, 41):
+              request = copy.deepcopy(src)
+              actor = request["raid"]["parties"][0]["players"][0]
+              actor.pop("level", None)
+              actor["name"] = f"Troll Warlock native level {level}"
+              actor["talentsString"] = "0-0-0"
+              # The Rust native Warlock source registers rank-1 Shadow Bolt
+              # (spell 686) by level 10; never use the fixture's L20 rank 1088.
+              actor["rotation"]["priorityList"] = [{
+                  "action": {"castSpell": {"spellId": {"spellId": 686}}}
+              }]
+              request["encounter"]["targets"][0]["level"] = level
+              case = root / f"L{level:02d}"
+              case.mkdir(exist_ok=True)
+              path = case / "source_request.json"
+              prepared = case / "native_prepared.json"
+              result_path = case / "native_result.json"
+              path.write_text(json.dumps(request, indent=2) + "\n")
+              prep = subprocess.run([
+                  "target/debug/forever-engine", "prepare",
+                  "--request", str(path), "--actor-level", str(level),
+                  "--outfile", str(prepared)
+              ], capture_output=True, text=True, timeout=40)
+              row = {"level": level, "prepared": prep.returncode == 0,
+                     "sim_completed": False,
+                     "prep_error": (prep.stderr or prep.stdout)[-1500:] if prep.returncode else None}
+              if prep.returncode == 0:
+                  native = json.loads(prepared.read_text())["player"]
+                  row["native_level"] = native.get("level")
+                  row["native_class"] = native.get("class")
+                  if native.get("level") == level and native.get("class") == "ClassWarlock":
+                      sim = subprocess.run([
+                          "target/debug/forever-engine", "sim",
+                          "--infile", str(prepared), "--rng-mode", "balanced",
+                          "--outfile", str(result_path)
+                      ], capture_output=True, text=True, timeout=60)
+                      row["sim_exit"] = sim.returncode
+                      row["sim_error"] = (sim.stderr or sim.stdout)[-1500:] if sim.returncode else None
+                      if sim.returncode == 0:
+                          try:
+                              paid = json.loads(result_path.read_text())["result"]
+                              player = paid["raidMetrics"]["parties"][0]["players"][0]
+                              dps = player["dps"]["avg"]
+                              row["iterations"] = paid["iterationsDone"]
+                              row["dps"] = dps
+                              row["sim_completed"] = (paid["iterationsDone"] == 1
+                                  and isinstance(dps, (float, int)) and math.isfinite(dps))
+                          except (ValueError, KeyError, IndexError, TypeError) as exc:
+                              row["sim_error"] = f"INVALID_NATIVE_RESULT: {exc}"
+              rows.append(row)
+              print("REAL_RUST_WARLOCK_LEVEL_COMBAT", json.dumps(row, sort_keys=True),
+                    flush=True)
+          report = {
+              "kind": "31_independent_source_native_balanced_combat_sweeps",
+              "class": "ClassWarlock", "race": "RaceTroll",
+              "levels": [10, 40],
+              "continuous_leveling_route_executed": False,
+              "mob_chain_count": 0,
+              "prepared": sum(r["prepared"] and r.get("native_level") == r["level"]
+                              for r in rows),
+              "native_combat_completed": sum(r["sim_completed"] for r in rows),
+              "results": rows
+          }
+          (root / "summary.json").write_text(json.dumps(report, indent=2)+"\n")
+          print("REAL_NATIVE_WARLOCK_L10_40_SWEEP", json.dumps({
+              k: report[k] for k in ("prepared", "native_combat_completed",
+                                     "continuous_leveling_route_executed")}), flush=True)
+          assert report["native_combat_completed"] == 31, (
+              "Preserved all independent native refusals/results; inspect artifact")
+          PY
+      - name: Preserve actual source requests, native results and refusals
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warlock-l10-l40-real-native-combat-${{ github.run_id }}
+          path: warlock-native-combat-l10-l40/
+          if-no-files-found: warn
+          retention-days: 7
