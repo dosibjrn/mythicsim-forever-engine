@@ -93,6 +93,9 @@ jobs:
           import copy, json, subprocess
           from pathlib import Path
           folder=Path("warlock-l21-source")
+          # A failed talent proposal may exit before creating its output directory.
+          # This fallback must still run the native-accepted gear search.
+          folder.mkdir(parents=True, exist_ok=True)
           original=folder/"proposal.json"
           if original.exists():
               refused=json.loads(original.read_text())
