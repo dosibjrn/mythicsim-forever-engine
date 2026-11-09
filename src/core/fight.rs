@@ -5834,7 +5834,14 @@ impl<A: Agent> Fight<A> {
             let mut native_recovery_ticks = 0;
             let mut native_recovery_elapsed_ns = 0;
             let mut native_spatial_travel_ns = 0;
+            // Source-native retained actor resources are sampled on both
+            // sides of the between-target interval. These are actual paid
+            // native deltas, not assumed food/water or a full resource refill.
+            let mut native_recovery_health_delta = 0.0_f64;
+            let mut native_recovery_mana_delta = 0.0_f64;
             if index != 0 {
+                let health_before_recovery = self.player.health;
+                let mana_before_recovery = self.player.mana;
                 // Pay for rest on the same native clock and actor, without
                 // resetting resources, cooldowns, auras or the event queue.
                 // Only native scheduled passive regeneration is processed
@@ -5875,11 +5882,18 @@ impl<A: Agent> Fight<A> {
                 }
                 native_recovery_ticks += self.recover_native_world_actor_until(next_at)?;
                 native_recovery_elapsed_ns = next_at - killed_at;
+                native_recovery_health_delta = self.player.health - health_before_recovery;
+                native_recovery_mana_delta = self.player.mana - mana_before_recovery;
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
                 self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
+            // The precise pre-combat state lets the route/search consumer
+            // compare a chosen recovery policy without replaying WoW regen in
+            // Python or confusing the prior kill state with the next pull.
+            let native_actor_health_at_pull = self.player.health;
+            let native_actor_mana_at_pull = self.player.mana;
             self.advance_living_native_world_actor()?;
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
@@ -5964,6 +5978,10 @@ impl<A: Agent> Fight<A> {
                 "native_damage": total_damage - previous_damage,
                 "actor_mana": self.player.mana,
                 "actor_health": self.player.health,
+                "native_actor_health_at_pull": native_actor_health_at_pull,
+                "native_actor_mana_at_pull": native_actor_mana_at_pull,
+                "native_recovery_health_delta": native_recovery_health_delta,
+                "native_recovery_mana_delta": native_recovery_mana_delta,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
                 "native_combat_mana_regen_actual_gain":
