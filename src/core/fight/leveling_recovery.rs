@@ -19,6 +19,25 @@ pub(crate) enum WorldRecoveryStrategy {
     Decisions { health_fraction: f64, mana_fraction: f64 },
 }
 
+impl WorldRecoveryStrategy {
+    /// Scenario input validation, before any paid native/world execution.
+    /// The same thresholds are checked defensively by the recovery executor.
+    pub(crate) fn validate(self) -> Result<(), &'static str> {
+        match self {
+            Self::Fixed(seconds) if !(1..=120).contains(&seconds) =>
+                Err("RUST_WORLD_RECOVERY_SECONDS_INVALID"),
+            Self::Decisions { health_fraction, mana_fraction }
+                if !health_fraction.is_finite()
+                    || !mana_fraction.is_finite()
+                    || !(0.0..=1.0).contains(&health_fraction)
+                    || !(0.0..=1.0).contains(&mana_fraction) =>
+                Err("RUST_WORLD_DECISIONS_THRESHOLDS_INVALID"),
+            _ => Ok(()),
+        }
+    }
+}
+
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct VendorTier {
     pub(crate) required_level: i32,
@@ -200,6 +219,27 @@ impl<A: Agent> Fight<A> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_world_recovery_scenario_is_refused_before_first_combat() {
+        assert_eq!(WorldRecoveryStrategy::Fixed(0).validate(),
+            Err("RUST_WORLD_RECOVERY_SECONDS_INVALID"));
+        assert_eq!(WorldRecoveryStrategy::Fixed(121).validate(),
+            Err("RUST_WORLD_RECOVERY_SECONDS_INVALID"));
+        for fraction in [-1.0, 1.1, f64::NAN, f64::INFINITY] {
+            assert_eq!(WorldRecoveryStrategy::Decisions {
+                health_fraction: fraction, mana_fraction: 0.5,
+            }.validate(), Err("RUST_WORLD_DECISIONS_THRESHOLDS_INVALID"));
+            assert_eq!(WorldRecoveryStrategy::Decisions {
+                health_fraction: 0.5, mana_fraction: fraction,
+            }.validate(), Err("RUST_WORLD_DECISIONS_THRESHOLDS_INVALID"));
+        }
+        assert!(WorldRecoveryStrategy::Fixed(1).validate().is_ok());
+        assert!(WorldRecoveryStrategy::Fixed(120).validate().is_ok());
+        assert!(WorldRecoveryStrategy::Decisions {
+            health_fraction: 0.0, mana_fraction: 1.0,
+        }.validate().is_ok());
+    }
 
     #[test]
     fn vendor_levels_are_the_same_as_decisions() {

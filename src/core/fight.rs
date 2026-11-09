@@ -5838,11 +5838,9 @@ impl<A: Agent> Fight<A> {
         target_count: usize,
         strategy: WorldRecoveryStrategy,
     ) -> Result<serde_json::Value, &'static str> {
-        if let WorldRecoveryStrategy::Fixed(recovery_seconds) = strategy {
-            if !(1..=120).contains(&recovery_seconds) {
-                return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
-            }
-        }
+        // Reject bad scenarios before initializing the world, reseeding RNG,
+        // or paying the first native combat window.
+        strategy.validate()?;
         if !world_bridge::enabled() {
             return Err("RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM");
         }
