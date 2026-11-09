@@ -220,6 +220,38 @@ jobs:
               "checkpoint_certified": False,
           }, sort_keys=True), flush=True)
           PY
+      - name: Verify native-hostile Decisions travel without unneeded vendor refill
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import runpy
+          from pathlib import Path
+          world = runpy.run_path("forever/integrations/mythicsim-rust/live_two_world_pulls.py",
+                                 run_name="work1_no_refill_smoke")
+          report = world["run"](
+              Path("target/debug/forever-engine"),
+              Path("/tmp/warlock-l20-hostile-prepared.json"),
+              mob_health=100, target_count=2,
+              recovery_policy="decisions",
+              health_threshold=0.0, mana_threshold=0.0)
+          assert report["world_targets_killed"] == 2, report
+          assert report["actual_2d_ack"] is True, report
+          assert report["native_hostile_target_prepared"] is True, report
+          assert report["paid_recovery"] is True, report
+          rows = report["native_windows"]
+          assert len(rows) == 2 and rows[1]["native_passive_recovery_ns"] > 0, rows
+          assert rows[1]["decisions_full_recovery"] is False, rows
+          assert rows[1]["food_seconds"] == 0 and rows[1]["water_seconds"] == 0, rows
+          assert sum(w["native_hostile_swing_casts"] for w in rows) > 0, rows
+          print("WARLOCK_L20_PAID_TRAVEL_WITHOUT_VENDOR_REFILL", json.dumps({
+              "paid_recovery": report["paid_recovery"],
+              "travel_ns": rows[1]["native_passive_recovery_ns"],
+              "hostile_swing_casts": sum(w["native_hostile_swing_casts"] for w in rows),
+              "gate_pass_claimed": False,
+          }, sort_keys=True), flush=True)
+          PY
       - name: Preserve authentic request, prepared actor and paid output
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
