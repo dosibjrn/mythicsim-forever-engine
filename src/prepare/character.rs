@@ -452,10 +452,11 @@ impl Sim {
         let cached = self.compute_equip_stats(id);
         let actor_level = self.unit(id).level;
         if actor_level != constants::CHARACTER_LEVEL && has_level_dependent_rating_stats(&cached) {
+            let actor_class = self.character(id).class.as_str();
             return Err(Refusal::new(
                 "level",
                 format!(
-                    "player level {actor_level} {class} loadout contains combat-rating stats but no level-{actor_level} rating conversion source is available"
+                    "player level {actor_level} {actor_class} loadout contains combat-rating stats but no level-{actor_level} rating conversion source is available"
                 ),
             ));
         }
