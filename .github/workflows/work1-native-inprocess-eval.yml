@@ -66,6 +66,12 @@ jobs:
                       + w['native_combat_mana_regen_events']), w
               assert w['native_recovery_mana_regen_actual_gain'] >= 0, w
               assert w['native_combat_mana_regen_actual_gain'] >= 0, w
+              # Item-mana receipts must come from executed native scheduler
+              # actions, not inferred food/drink or passive mana gain.
+              assert isinstance(w['native_scheduled_item_mana_ticks'], int), w
+              assert w['native_scheduled_item_mana_ticks'] >= 0, w
+              assert math.isfinite(w['native_scheduled_item_mana_actual_gain']), w
+              assert w['native_scheduled_item_mana_actual_gain'] >= 0, w
           assert r['windows'][0]['native_recovery_health_delta'] == 0.0, r
           assert r['windows'][0]['native_recovery_mana_delta'] == 0.0, r
           for previous, current in zip(r['windows'], r['windows'][1:]):
@@ -118,6 +124,12 @@ jobs:
                       + w['native_combat_mana_regen_events']), w
               assert w['native_recovery_mana_regen_actual_gain'] >= 0, w
               assert w['native_combat_mana_regen_actual_gain'] >= 0, w
+              # Item-mana receipts must come from executed native scheduler
+              # actions, not inferred food/drink or passive mana gain.
+              assert isinstance(w['native_scheduled_item_mana_ticks'], int), w
+              assert w['native_scheduled_item_mana_ticks'] >= 0, w
+              assert math.isfinite(w['native_scheduled_item_mana_actual_gain']), w
+              assert w['native_scheduled_item_mana_actual_gain'] >= 0, w
           for previous, current in zip(windows, windows[1:]):
               assert math.isclose(
                   current['native_actor_health_at_pull'],
@@ -169,6 +181,12 @@ jobs:
                       + w['native_combat_mana_regen_events']), w
               assert w['native_recovery_mana_regen_actual_gain'] >= 0, w
               assert w['native_combat_mana_regen_actual_gain'] >= 0, w
+              # Item-mana receipts must come from executed native scheduler
+              # actions, not inferred food/drink or passive mana gain.
+              assert isinstance(w['native_scheduled_item_mana_ticks'], int), w
+              assert w['native_scheduled_item_mana_ticks'] >= 0, w
+              assert math.isfinite(w['native_scheduled_item_mana_actual_gain']), w
+              assert w['native_scheduled_item_mana_actual_gain'] >= 0, w
           for previous, current in zip(r['windows'], r['windows'][1:]):
               assert math.isclose(
                   current['native_actor_health_at_pull'],
