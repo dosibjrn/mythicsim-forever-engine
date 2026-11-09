@@ -3,6 +3,7 @@ on:
   push:
     branches: [work/warlock-10-40-sourced-native-20261109]
     paths:
+      - src/classes/warlock/prepare/export.rs
       - .github/workflows/warlock-l10-l40-native-combat-smoke.yml
   workflow_dispatch:
 
