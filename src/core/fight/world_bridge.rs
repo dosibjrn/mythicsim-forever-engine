@@ -80,10 +80,20 @@ pub(crate) fn begin_iteration(iteration: u32) {
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        assert!(iteration == 0 || iteration == bridge.iteration + 1,
-            "RUST_WORLD_ITERATION_NOT_SEQUENTIAL");
-        assert!(iteration == 0 || bridge.iteration_finished,
-            "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED");
+        // Iteration zero is only an initial start, never a way to erase an
+        // already acknowledged world tick or its native source-action counts.
+        if iteration == 0 {
+            assert!(
+                bridge.iteration == 0 && bridge.sequence == 0
+                    && bridge.last_tick_ns == -1 && bridge.previous_ack_id.is_empty(),
+                "RUST_WORLD_RESTART_AFTER_ACK"
+            );
+        } else {
+            assert!(iteration == bridge.iteration + 1,
+                "RUST_WORLD_ITERATION_NOT_SEQUENTIAL");
+            assert!(bridge.iteration_finished,
+                "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED");
+        }
         assert!(bridge.pending.is_empty(), "RUST_WORLD_UNFLUSHED_EVENTS");
         SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
         bridge.iteration = iteration;
@@ -711,6 +721,31 @@ mod iteration_teardown_tests {
                 test_damage_source("late-proc"),
             );
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_RESTART_AFTER_ACK")]
+    fn restarting_iteration_zero_cannot_erase_acknowledged_source_counts() {
+        // Simulate a completed world exchange, with source action provenance
+        // already accumulated for the same native stochastic iteration.
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
+        record_acknowledged_source_actions(&[super::DamageEvent {
+            event_id: "native-effect-1".to_owned(),
+            native_time_ns: 5,
+            damage: 5.0,
+            source_action_id: "corruption-tick".to_owned(),
+            rank: 0,
+            landed: true,
+            crit: false,
+            periodic: true,
+            native_target_index: 0,
+            native_target_unit_index: 0,
+            native_target_label: "target".to_owned(),
+            native_caster_type: "player".to_owned(),
+            native_caster_unit_index: 0,
+            native_caster_label: "Warlock".to_owned(),
+        }]);
+        begin_iteration(0);
     }
 
     #[test]
