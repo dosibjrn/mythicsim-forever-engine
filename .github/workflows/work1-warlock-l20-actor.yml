@@ -113,6 +113,21 @@ jobs:
           assert valid is not None and forged is not None, "MISSING_GSIM_NATIVE_RECEIPTS"
           assert valid["world_targets_killed"] == 2, valid
           assert valid["native_damage_events"] >= 2, valid
+          # These are real per-kill, world-ACK-confirmed native action counts,
+          # not inferred APL intent or a duplicate Python damage model.
+          windows = valid["native_windows"]
+          assert len(windows) == 2, windows
+          action_counts = [w["native_acknowledged_source_action_counts"]
+                           for w in windows]
+          assert all(isinstance(counts, dict)
+                     and sum(counts.values()) > 0
+                     and all(isinstance(n, int) and n > 0
+                             for n in counts.values())
+                     for counts in action_counts), action_counts
+          assert sum(sum(counts.values()) for counts in action_counts) == (
+              valid["native_damage_events"]), (action_counts, valid)
+          print("WARLOCK_L20_NATIVE_PER_KILL_ACK_ACTIONS",
+                json.dumps(action_counts, sort_keys=True), flush=True)
           assert valid["continuous_native_actor"] is True, valid
           assert valid["actual_2d_ack"] is True, valid
           assert valid["minimum_native_actor_health"] > 0, valid
