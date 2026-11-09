@@ -346,11 +346,17 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_
     native_two_world_targets_with_recovery(prepared, target_count, rng_mode, 12)
 }
 
+/// The native Fixed(0) policy means an immediate next pull without paid passive rest.
+/// Keep the prepared entry point aligned with the CLI and native actor recovery.
+fn valid_native_world_recovery_seconds(seconds: u32) -> bool {
+    seconds <= 120
+}
+
 /// One selected source-native actor and monotonic gsim ACKs; diagnostic only.
 pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode, recovery_seconds: u32)
     -> Result<serde_json::Value, PreparedError>
 {
-    if !(1..=120).contains(&recovery_seconds) {
+    if !valid_native_world_recovery_seconds(recovery_seconds) {
         return Err(PreparedError::Invalid("RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned()));
     }
     check(prepared)?;
@@ -443,4 +449,18 @@ fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Pre
         presentation,
         extra_attack_strikes,
     })
+}
+
+#[cfg(test)]
+mod world_recovery_boundary_tests {
+    use super::valid_native_world_recovery_seconds;
+
+    #[test]
+    fn immediate_next_pull_zero_rest_reaches_native_world_execution() {
+        assert!(valid_native_world_recovery_seconds(0));
+        assert!(valid_native_world_recovery_seconds(1));
+        assert!(valid_native_world_recovery_seconds(120));
+        assert!(!valid_native_world_recovery_seconds(121));
+        assert!(!valid_native_world_recovery_seconds(u32::MAX));
+    }
 }
