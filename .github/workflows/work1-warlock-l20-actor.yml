@@ -10,6 +10,9 @@ on:
       - src/prepare/env.rs
       - src/core/fight/world_bridge.rs
       - src/core/fight.rs
+      - src/core/fight/leveling_recovery.rs
+      - src/classes.rs
+      - src/engine/prepared.rs
       - src/engine/coverage.rs
       - src/classes/warlock/**
       - src/main.rs
@@ -40,6 +43,7 @@ jobs:
           cargo test --locked restarting_iteration_zero_cannot_erase_acknowledged_source_counts -- --nocapture
           cargo test --locked retained_world_chain_preserves_and_drains_acknowledged_source_actions -- --nocapture
           cargo test --locked world_bridge -- --nocapture
+          cargo test --locked leveling_recovery -- --nocapture
           cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
           cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
           cargo test --locked native_warlock_direct_damage_uses_registered_caster_level -- --nocapture
@@ -138,6 +142,39 @@ jobs:
               "world_ticks": valid["world_ticks"],
               "elapsed_seconds": valid["world_elapsed_seconds"],
               "forged_ack_rejected": forged["forged_ack_rejected"],
+              "checkpoint_certified": False,
+          }, sort_keys=True), flush=True)
+          PY
+      - name: Verify Decisions recovery on retained L20 actor and 2D world ACK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import runpy
+          from pathlib import Path
+          bridge = runpy.run_path("forever/integrations/mythicsim-rust/live_two_world_pulls.py",
+                                  run_name="work1_decisions_smoke")
+          report = bridge["run"](Path("target/debug/forever-engine"),
+                                 Path("/tmp/warlock-l20-prepared.json"),
+                                 mob_health=100, target_count=2,
+                                 recovery_policy="decisions",
+                                 health_threshold=1.0, mana_threshold=1.0)
+          assert report["world_targets_killed"] == 2, report
+          assert report["native_recovery_mode"] == "decisions_food_water", report
+          rows = report["native_windows"]
+          assert len(rows) == 2 and report["actual_2d_ack"] is True, report
+          assert rows[1]["native_passive_recovery_ns"] > 0, rows
+          assert rows[1]["decisions_full_recovery"] is True, rows
+          assert rows[1]["food_health_gain"] > 0 or rows[1]["water_mana_gain"] > 0, rows
+          assert all(sum(w["native_acknowledged_source_action_counts"].values()) > 0
+                     for w in rows), rows
+          print("WARLOCK_L20_DECISIONS_NATIVE_WORLD", json.dumps({
+              "kills": len(rows), "food_seconds": rows[1]["food_seconds"],
+              "water_seconds": rows[1]["water_seconds"],
+              "food_health_gain": rows[1]["food_health_gain"],
+              "water_mana_gain": rows[1]["water_mana_gain"],
+              "recovery_ns": rows[1]["native_passive_recovery_ns"],
               "checkpoint_certified": False,
           }, sort_keys=True), flush=True)
           PY

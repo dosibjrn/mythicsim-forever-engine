@@ -38,6 +38,7 @@ pub(crate) mod healer_gear;
 pub(crate) mod healing;
 pub(crate) mod heals;
 pub(crate) mod health_regen;
+mod leveling_recovery;
 mod log;
 pub(crate) mod melee;
 pub(crate) mod metrics;
@@ -55,6 +56,7 @@ mod thunderfury;
 mod whelp;
 
 use std::collections::{BTreeMap, HashMap};
+use leveling_recovery::{WorldRecoveryReceipt, WorldRecoveryStrategy};
 
 pub(crate) use aura::{AuraBehavior, AuraRef, Tracker};
 pub(crate) use damage::{
@@ -5776,8 +5778,30 @@ impl<A: Agent> Fight<A> {
         target_count: usize,
         recovery_seconds: u32,
     ) -> Result<serde_json::Value, &'static str> {
-        if !(1..=120).contains(&recovery_seconds) {
-            return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
+        self.native_two_world_targets_with_strategy(
+            target_count, WorldRecoveryStrategy::Fixed(recovery_seconds))
+    }
+
+    /// Full ordinary vendor food/water when real carried resource thresholds
+    /// require it. This preserves the old Decisions recovery policy without
+    /// running a second Python recovery simulator.
+    pub(crate) fn native_two_world_targets_with_decisions_recovery(
+        &mut self, target_count: usize,
+        health_fraction: f64, mana_fraction: f64,
+    ) -> Result<serde_json::Value, &'static str> {
+        self.native_two_world_targets_with_strategy(target_count,
+            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction })
+    }
+
+    fn native_two_world_targets_with_strategy(
+        &mut self,
+        target_count: usize,
+        strategy: WorldRecoveryStrategy,
+    ) -> Result<serde_json::Value, &'static str> {
+        if let WorldRecoveryStrategy::Fixed(recovery_seconds) = strategy {
+            if !(1..=120).contains(&recovery_seconds) {
+                return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
+            }
         }
         if !world_bridge::enabled() {
             return Err("RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM");
@@ -5794,12 +5818,18 @@ impl<A: Agent> Fight<A> {
         self.log = None;
         world_bridge::begin_iteration(0);
         self.prepare_first_native_pull();
+        let food_water_metrics = if matches!(strategy, WorldRecoveryStrategy::Decisions { .. }) {
+            Some(self.register_world_food_water_metrics())
+        } else {
+            None
+        };
         let mut windows = Vec::with_capacity(target_count);
         let mut previous_damage = 0.0;
         let mut previous_health_damage = 0.0_f64;
         let mut previous_health_damage_events = 0;
         let mut previous_mana_regen_gain = 0.0_f64;
         let mut previous_mana_regen_events = 0_i32;
+
         // Preserve the complete ACKed action mix while also exposing each
         // distinct target's real native damage actions to chain optimizers.
         let mut acknowledged_source_action_totals =
@@ -5808,24 +5838,35 @@ impl<A: Agent> Fight<A> {
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
             let mut native_recovery_elapsed_ns = 0;
+            let mut decisions_receipt = WorldRecoveryReceipt::default();
             if index != 0 {
-                // Pay for rest on the same native clock and actor, without
-                // resetting resources, cooldowns, auras or the event queue.
-                // Only native scheduled passive regeneration is processed
-                // while the previous 2D target is dead.
+                // Retain the Rust actor, resources and all native queue state.
+                // Start next 2D target's range feed before paid travel/rest.
                 let killed_at = self.now;
-                let next_at = killed_at
-                    .checked_add(i64::from(recovery_seconds) * crate::core::time::NS_PER_SECOND)
-                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
-                // The new target is selected before the paid travel/rest
-                // interval, so every 2D movement step can be observed by the
-                // native boundary while attacks remain paused.
                 let world_started_at = killed_at
                     .checked_add(1_000_000)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
                 world_bridge::begin_next_target(world_started_at)?;
-                native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
-                native_recovery_elapsed_ns = next_at - killed_at;
+                let next_at = match strategy {
+                    WorldRecoveryStrategy::Fixed(seconds) => {
+                        let until = killed_at
+                            .checked_add(i64::from(seconds) * crate::core::time::NS_PER_SECOND)
+                            .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                        native_recovery_ticks = self.recover_native_world_actor_until(until)?;
+                        native_recovery_elapsed_ns = until - killed_at;
+                        until
+                    }
+                    WorldRecoveryStrategy::Decisions {
+                        health_fraction, mana_fraction
+                    } => {
+                        let (food, water) = food_water_metrics.expect("Decisions source metrics");
+                        decisions_receipt = self.recover_native_world_actor_decisions(
+                            health_fraction, mana_fraction, food, water)?;
+                        native_recovery_ticks = decisions_receipt.passive_ticks;
+                        native_recovery_elapsed_ns = decisions_receipt.elapsed_ns;
+                        self.now
+                    }
+                };
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
@@ -5886,6 +5927,11 @@ impl<A: Agent> Fight<A> {
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
                 "native_acknowledged_source_action_counts": native_source_action_counts,
+                "food_seconds": decisions_receipt.food_ns as f64 / 1e9,
+                "water_seconds": decisions_receipt.water_ns as f64 / 1e9,
+                "food_health_gain": decisions_receipt.food_health_gain,
+                "water_mana_gain": decisions_receipt.water_mana_gain,
+                "decisions_full_recovery": decisions_receipt.full_recovery,
             }));
             previous_damage = total_damage;
             previous_health_damage = health_damage;
@@ -5907,7 +5953,22 @@ impl<A: Agent> Fight<A> {
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
-            "recovery_seconds_per_gap": recovery_seconds,
+            "recovery_mode": match strategy {
+                WorldRecoveryStrategy::Fixed(_) => "fixed_passive",
+                WorldRecoveryStrategy::Decisions { .. } => "decisions_food_water",
+            },
+            "recovery_seconds_per_gap": match strategy {
+                WorldRecoveryStrategy::Fixed(seconds) => Some(seconds),
+                WorldRecoveryStrategy::Decisions { .. } => None,
+            },
+            "thresholds": match strategy {
+                WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction } =>
+                    Some(serde_json::json!({
+                        "health_fraction": health_fraction,
+                        "mana_fraction": mana_fraction,
+                    })),
+                WorldRecoveryStrategy::Fixed(_) => None,
+            },
             // Preserve the original aggregate receipt while every window now
             // carries source actions charged only after that target's real ACK.
             "source_action_counts": acknowledged_source_action_totals,
