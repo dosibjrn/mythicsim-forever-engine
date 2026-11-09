@@ -58,6 +58,21 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked warlock_l20_uses_pinned_client_skills_and_item_sparse -- --nocapture
+          cargo test --locked native_warlock_pet_candidates_are_actual_registered_proto_choices -- --nocapture
+          cargo run --locked -- options --class warlock --level 20 >/tmp/warlock-l20-unified-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('/tmp/warlock-l20-unified-options.json').read_text())
+          assert result['class'] == 'warlock' and result['level'] == 20
+          pets = result['pets']
+          assert len(pets) >= 4, pets
+          assert all(p['eligibility'] == 'native_prepare_and_combat_required' and
+                     p['source'] == 'native_warlock_executor_and_proto_enum'
+                     for p in pets), pets
+          assert 'pet_choices_require_native_execution_not_level_unlock_certification' in result['coverage']['notes']
+          print('WARLOCK_L20_NATIVE_PET_PROPOSALS', [p['summon'] for p in pets], flush=True)
+          PY
           cargo run --locked -- item-options --class warlock --level 20 --spec unrestricted --slot all >/tmp/warlock-l20-options.json
           python3 - <<'PY'
           import json
@@ -78,6 +93,7 @@ jobs:
           name: work1-warlock-l20-native-items
           path: |
             /tmp/warlock-l20-options.json
+            /tmp/warlock-l20-unified-options.json
             data/warlock-equipment-skills.json
             data/warlock-equipment-skills.manifest.json
           if-no-files-found: warn
