@@ -84,46 +84,65 @@ jobs:
             --source fixtures/warlock-l20-troll-best-paid.request.json \
             --from-level 20 --to-level 21 \
             --out warlock-l21-source
-      - name: Preserve refused talent proposals and try paid-capable L20 build at L21 with one unspent point
+      - name: Preserve source refusal and select Rust-preparable L21 items without invented rating conversions
         if: steps.adjacent.outcome == 'failure'
         run: |
           python3 - <<'PY'
-          import json, subprocess
+          import copy, json, subprocess
           from pathlib import Path
           folder=Path("warlock-l21-source")
-          p=folder/"proposal.json"
-          if p.exists():
-              refused=json.loads(p.read_text())
-              print("ACTUAL_NATIVE_TALENT_PROPOSAL_REFUSALS",json.dumps(refused,sort_keys=True),flush=True)
-          else:
-              print("NATIVE_PROPOSAL_NO_RECEIPT",flush=True)
+          original=folder/"proposal.json"
+          if original.exists():
+              refused=json.loads(original.read_text())
+              explanations=[r["reason"] for r in refused.get("native_refusals",[])]
+              print("NATIVE_PROPOSAL_REFUSAL",json.dumps({
+                  "status":refused.get("status"),"attempted":len(explanations),
+                  "distinct_reasons":sorted(set(explanations))[:10]}),flush=True)
           source=json.loads(Path("fixtures/warlock-l20-troll-best-paid.request.json").read_text())
           actor=source["raid"]["parties"][0]["players"][0]
           actor["level"]=21
           source["encounter"]["targets"][0]["level"]=21
+          items=list(actor["equipment"]["items"])
+          actor["equipment"]["items"]=[{"id":0} for _ in items]
           request=folder/"source_request.json"
           prepared=folder/"l21_frozen_l20.prepared.json"
-          request.write_text(json.dumps(source,indent=2)+"\n")
-          proc=subprocess.run(["target/debug/forever-engine","prepare",
-              "--request",str(request),"--actor-level","21","--outfile",str(prepared)],
-              capture_output=True,text=True)
-          print("FROZEN_L20_BUILD_L21_NATIVE_PREPARE",json.dumps({
-              "returncode":proc.returncode,"output":(proc.stderr or proc.stdout)[-2000:],
+          def native_prepare():
+              request.write_text(json.dumps(source,indent=2)+"\n")
+              return subprocess.run(["target/debug/forever-engine","prepare",
+                      "--request",str(request),"--actor-level","21",
+                      "--outfile",str(prepared)],capture_output=True,text=True)
+          empty=native_prepare()
+          if empty.returncode:
+              raise RuntimeError("Rust does not prepare L21 even without equipment: "+
+                                 (empty.stderr or empty.stdout)[-1500:])
+          kept,excluded=[],[]
+          for index,item in enumerate(items):
+              actor["equipment"]["items"][index]=copy.deepcopy(item)
+              attempt=native_prepare()
+              if attempt.returncode:
+                  actor["equipment"]["items"][index]={"id":0}
+                  excluded.append({"slot":index,"id":item.get("id"),
+                      "native_refusal":(attempt.stderr or attempt.stdout)[-700:]})
+              else:
+                  kept.append({"slot":index,"id":item.get("id")})
+          result=native_prepare()
+          if result.returncode:
+              raise RuntimeError("Native final safe-item build refused: "+
+                                 (result.stderr or result.stdout)[-1500:])
+          player=json.loads(prepared.read_text())["player"]
+          assert player.get("level")==21 and player.get("class")=="ClassWarlock",player
+          receipt={
+              "kind":"rust_paid_candidate_frozen_l20_build_with_native_gear_subset",
+              "level":21,"native_prepared_actor_level":21,
+              "native_prepared_class":player["class"],
               "talents":actor["talentsString"],
-              "interpretation":"L20 talents retained at L21; one point left unspent; not optimized",
-          }),flush=True)
-          if proc.returncode:
-              raise RuntimeError("selected Rust refused even retained L20 build at actual L21")
-          native=json.loads(prepared.read_text())["player"]
-          assert native["level"]==21 and native["class"]=="ClassWarlock", native
-          (folder/"fallback_policy.json").write_text(json.dumps({
-              "kind":"native_prepared_fallback_not_optimal",
-              "level":21,"source_level":20,
-              "native_prepared_actor_level":21,
-              "native_prepared_class":native["class"],
-              "talents":actor["talentsString"],
-              "note":"Real L21 actor with unchanged L20 talents and one unspent point; no claim of talent optimization or continuous 10-40 route"
-          },indent=2)+"\n")
+              "gear_kept":kept,"gear_excluded":excluded,
+              "policy":"L20 talent ranks retained; L21 point unspent; each equipped item was tested with authoritative Rust prepare at L21; no invented rating conversion",
+              "optimization_claimed":False,
+              "not_a_continuous_10_40_route":True
+          }
+          (folder/"fallback_policy.json").write_text(json.dumps(receipt,indent=2)+"\n")
+          print("FROZEN_L20_BUILD_L21_REAL_PREPARE",json.dumps(receipt),flush=True)
           PY
       - name: Execute true hostile 100-target paid gsim/Rust at L21, publish route coverage
         working-directory: forever
