@@ -1377,23 +1377,31 @@ mod warlock_l20_actor_source_tests {
     #[test]
     fn l20_warlock_does_not_inherit_unsourced_level_60_rating_conversions() {
         let player = Message::from_json_text(
-            "proto.Player", r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
-        ).unwrap();
+            "proto.Player",
+            r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+        )
+        .unwrap();
         let mut sim = Sim::new();
-        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
+        let unit = sim
+            .new_character_at_level(0, 0, &player, &[], Some(20))
+            .unwrap();
         assert_eq!(sim.unit(unit).level, 20);
         assert_eq!(
-            sim.unit(unit).sdm.stat_dependency_coeff(
-                Stat::SpellHitRating, Stat::SpellHitPercent,
-            ),
+            sim.unit(unit)
+                .sdm
+                .stat_dependency_coeff(Stat::SpellHitRating, Stat::SpellHitPercent,),
             0.0,
         );
         let mut max_level = Sim::new();
-        let max_unit = max_level.new_character_at_level(0, 0, &player, &[], Some(60)).unwrap();
+        let max_unit = max_level
+            .new_character_at_level(0, 0, &player, &[], Some(60))
+            .unwrap();
         assert!(
-            max_level.unit(max_unit).sdm.stat_dependency_coeff(
-                Stat::SpellHitRating, Stat::SpellHitPercent,
-            ) > 0.0,
+            max_level
+                .unit(max_unit)
+                .sdm
+                .stat_dependency_coeff(Stat::SpellHitRating, Stat::SpellHitPercent,)
+                > 0.0,
             "the existing sourced level-60 conversion must remain available",
         );
         let mut equipment = Stats::default();
@@ -1407,7 +1415,8 @@ mod warlock_l20_actor_source_tests {
         let player = Message::from_json_text(
             "proto.Player",
             r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(requested_player_level(&player, None).unwrap(), 60);
         assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
         assert_eq!(requested_player_level(&player, Some(60)).unwrap(), 60);
@@ -1426,20 +1435,29 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(requested_player_level(&embedded, None).unwrap(), 20);
         assert_eq!(requested_player_level(&embedded, Some(20)).unwrap(), 20);
         assert_eq!(
-            requested_player_level(&embedded, Some(60)).unwrap_err().code,
+            requested_player_level(&embedded, Some(60))
+                .unwrap_err()
+                .code,
             "level",
         );
         assert_eq!(
-            requested_player_level(&embedded, Some(19)).unwrap_err().code,
+            requested_player_level(&embedded, Some(19))
+                .unwrap_err()
+                .code,
             "level",
         );
         let mut embedded_sim = Sim::new();
         let embedded_unit = embedded_sim.new_character(0, 0, &embedded, &[]).unwrap();
         assert_eq!(embedded_sim.unit(embedded_unit).level, 20);
-        assert_eq!(embedded_sim.character(embedded_unit).base_stats[Stat::Health], 204.0);
+        assert_eq!(
+            embedded_sim.character(embedded_unit).base_stats[Stat::Health],
+            204.0
+        );
 
         let mut sim = Sim::new();
-        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
+        let unit = sim
+            .new_character_at_level(0, 0, &player, &[], Some(20))
+            .unwrap();
         assert_eq!(sim.unit(unit).level, 20);
         assert_eq!(sim.character(unit).base_stats[Stat::Health], 204.0);
 
