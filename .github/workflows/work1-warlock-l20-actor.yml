@@ -282,7 +282,7 @@ jobs:
               Path("fixtures/warlock-l20-troll-best-paid.request.json").resolve())
           result = run_live(root, "warlock", 20, spec="unrestricted")
           receipt = Path("/tmp/warlock-l20-equipped-p3-no-record.json")
-          receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\\n")
+          receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
           paid = result.get("native_equipped_paid_attempts", 0)
           print("WARLOCK_L20_EQUIPPED_P3_NO_RECORD", json.dumps({
               "status": result.get("status"),
