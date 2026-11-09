@@ -1,0 +1,106 @@
+{
+  "simOptions": {
+    "iterations": 1,
+    "randomSeed": "42",
+    "debugFirstIteration": true
+  },
+  "encounter": {
+    "duration": 12,
+    "targets": [
+      {
+        "level": 20,
+        "name": "Explicit hostile L20 world test target (scenario parameters, not mob-source calibration)",
+        "stats": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "swingSpeed": 0.75,
+        "minBaseDamage": 4,
+        "damageSpread": 0,
+        "tankIndex": 0
+      }
+    ]
+  },
+  "raid": {
+    "parties": [
+      {
+        "players": [
+          {
+            "name": "Warlock L20 Troll native",
+            "class": "ClassWarlock",
+            "race": "RaceTroll",
+            "talentsString": "0-0-0",
+            "distanceFromTarget": 3,
+            "equipment": {
+              "items": []
+            },
+            "warlock": {
+              "options": {
+                "classOptions": {}
+              }
+            },
+            "rotation": {
+              "type": "TypeAPL",
+              "priorityList": [
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 1088
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "tanks": [
+      {
+        "type": "Player",
+        "index": 0
+      }
+    ]
+  }
+}
