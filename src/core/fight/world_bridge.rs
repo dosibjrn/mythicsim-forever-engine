@@ -89,6 +89,13 @@ pub(crate) fn inprocess_travel_ns() -> i64 {
     ))
 }
 
+/// Native 100ms boundary observations during paid walking (not estimated steps).
+pub(crate) fn inprocess_moving_samples() -> u32 {
+    NATIVE_SPATIAL.with(|state| state.borrow().as_ref().map_or(0, |world|
+        world.moving_samples()
+    ))
+}
+
 /// A geometry receipt from the actual in-process route at the current paid
 /// native target. Never reconstruct route identity from the pull ordinal.
 pub(crate) fn inprocess_position_receipt() -> Option<Value> {
@@ -170,7 +177,7 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         // transition. Refuse a route advance before any native lethal.
         NATIVE_SPATIAL.with(|slot| {
             if let Some(world) = slot.borrow_mut().as_mut() {
-                world.next_target()?;
+                world.next_target(at_ns)?;
             }
             Ok::<(), &'static str>(())
         })?;
@@ -376,14 +383,17 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     let native = NATIVE_SPATIAL.with(|slot| {
         let mut slot = slot.borrow_mut();
         let Some(world) = slot.as_mut() else { return None };
+        // Real native clock advances 2D position; Fight sees moving=true
+        // until the paid walking interval completes.
+        let moving = world.advance_to(clock_ns);
         let distance = world.distance_yards();
         for event in &events {
             world.apply_native_damage(event.damage)
                 .expect("NATIVE_SPATIAL_SOURCE_DAMAGE_INVALID");
         }
-        Some((distance, world.target_health()))
+        Some((distance, world.target_health(), moving))
     });
-    if let Some((distance, health)) = native {
+    if let Some((distance, health, moving)) = native {
         assert!(distance.is_finite() && (0.0..=100.0).contains(&distance),
             "NATIVE_SPATIAL_DISTANCE_INVALID");
         bridge.last_health = Some(health);
@@ -395,7 +405,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         bridge.sequence += 1;
         bridge.next_tick_ns = i64::MAX;
         BRIDGE.with(|state| *state.borrow_mut() = Some(bridge));
-        return (distance, true, false);
+        return (distance, true, moving);
     }
     let pid = std::process::id();
     send(&json!({
@@ -803,12 +813,26 @@ mod inprocess_spatial_ack_tests {
         let position = inprocess_position_receipt().unwrap();
         assert_eq!(position["target_source_index"], 1);
         assert_eq!(position["target_xy_yards"], json!([20.0, 0.0]));
-        assert_eq!(position["actor_xy_yards"], json!([15.0, 0.0]));
-        assert_eq!(position["distance_yards"], 5.0);
-        // From x=5 to mob x=20, stop five yards short: pay ten yards.
-        assert_eq!(inprocess_travel_ns(), (10.0 / 7.0_f64 * 1e9).ceil() as i64);
+        assert_eq!(position["actor_xy_yards"], json!([5.0, 0.0]));
+        assert_eq!(position["distance_yards"], 15.0);
+        // From x=5 to mob x=20, stop five yards short: pay ten yards
+        // on the actual native clock, without an instant position jump.
+        let travel = inprocess_travel_ns();
+        assert_eq!(travel, (10.0 / 7.0_f64 * 1e9).ceil() as i64);
         assert!(!acknowledged_lethal());
-        assert_eq!(exchange(3_000_000, 100_000_000_000, 45.0).0, 5.0);
+        let (distance, _, moving) = exchange(3_000_000, 100_000_000_000, 45.0);
+        assert_eq!(distance, 15.0);
+        assert!(moving);
+        let (distance, _, moving) =
+            exchange(3_000_000 + travel / 2, 100_000_000_000, 45.0);
+        assert!(moving && distance > 5.0 && distance < 15.0);
+        let (distance, _, moving) =
+            exchange(3_000_000 + travel, 100_000_000_000, 45.0);
+        assert!(!moving);
+        assert!((distance - 5.0).abs() < 1e-8);
+        assert!(inprocess_moving_samples() >= 2);
+        assert_eq!(inprocess_position_receipt().unwrap()["actor_xy_yards"],
+            json!([15.0, 0.0]));
         stop_inprocess();
     }
 }

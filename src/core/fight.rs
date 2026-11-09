@@ -5829,9 +5829,16 @@ impl<A: Agent> Fight<A> {
                 // never free. Charge their maximum on the same native clock.
                 let recovery_ns =
                     i64::from(recovery_seconds) * crate::core::time::NS_PER_SECOND;
-                let next_at = killed_at
-                    .checked_add(recovery_ns.max(native_spatial_travel_ns))
+                // In-process motion begins at world_started_at (after the
+                // committed lethal ACK), not at killed_at. Wait for that
+                // exact walking deadline so combat cannot resume mid-step.
+                let recovery_until = killed_at
+                    .checked_add(recovery_ns)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                let walked_until = world_started_at
+                    .checked_add(native_spatial_travel_ns)
+                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
+                let next_at = recovery_until.max(walked_until);
                 native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
                 native_recovery_elapsed_ns = next_at - killed_at;
                 let next_end = next_at
@@ -5930,6 +5937,7 @@ impl<A: Agent> Fight<A> {
                 "native_combat_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
                 "native_spatial_travel_ns": native_spatial_travel_ns,
+                "native_spatial_moving_samples": world_bridge::inprocess_moving_samples(),
                 "native_spatial_position": world_bridge::inprocess_position_receipt(),
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,

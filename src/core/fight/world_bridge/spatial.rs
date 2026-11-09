@@ -128,6 +128,10 @@ pub(super) struct NativeSpatialWorld {
     max_target_health: f64,
     target_health: f64,
     last_walk_ns: i64,
+    walk_start: Point,
+    walk_end: Point,
+    walk_started_at_ns: i64,
+    moving_samples: u32,
 }
 
 impl NativeSpatialWorld {
@@ -153,6 +157,10 @@ impl NativeSpatialWorld {
             max_target_health: target_health,
             target_health,
             last_walk_ns: 0,
+            walk_start: Point { x: engagement_range_yards, y: 0.0 },
+            walk_end: Point { x: engagement_range_yards, y: 0.0 },
+            walk_started_at_ns: 0,
+            moving_samples: 0,
         })
     }
 
@@ -182,6 +190,32 @@ impl NativeSpatialWorld {
         self.last_walk_ns
     }
 
+    pub fn moving_samples(&self) -> u32 {
+        self.moving_samples
+    }
+
+    /// Move the actor on the *paid native clock*, instead of teleporting to
+    /// the next target before travel has elapsed. This movement is forwarded
+    /// to Fight's normal moving/cast-legality state by world_bridge::exchange.
+    pub fn advance_to(&mut self, clock_ns: i64) -> bool {
+        if self.last_walk_ns == 0 {
+            return false;
+        }
+        let elapsed_ns = clock_ns.saturating_sub(self.walk_started_at_ns)
+            .clamp(0, self.last_walk_ns);
+        let fraction = elapsed_ns as f64 / self.last_walk_ns as f64;
+        self.player = Point {
+            x: self.walk_start.x + (self.walk_end.x - self.walk_start.x) * fraction,
+            y: self.walk_start.y + (self.walk_end.y - self.walk_start.y) * fraction,
+        };
+        let moving = clock_ns >= self.walk_started_at_ns
+            && elapsed_ns < self.last_walk_ns;
+        if moving {
+            self.moving_samples += 1;
+        }
+        moving
+    }
+
     /// Ingest a real native damage event, not an inferred DPS or enemy reset.
     /// Multiple native effects arriving at one scheduler boundary may overkill.
     pub fn apply_native_damage(&mut self, damage: f64) -> Result<(), &'static str> {
@@ -194,7 +228,7 @@ impl NativeSpatialWorld {
 
     /// Advance only after a native lethal ACK. The player stops at its supplied
     /// engagement range, then the native actor must pay for this walking time.
-    pub fn next_target(&mut self) -> Result<(), &'static str> {
+    pub fn next_target(&mut self, started_at_ns: i64) -> Result<(), &'static str> {
         if self.target_health > 0.0 {
             return Err("NATIVE_SPATIAL_TARGET_NOT_LETHAL");
         }
@@ -207,15 +241,23 @@ impl NativeSpatialWorld {
         let dy = target.y - self.player.y;
         let distance = dx.hypot(dy);
         let walking_yards = (distance - self.engagement_range_yards).max(0.0);
-        if distance > 0.0 {
-            self.player.x += dx * walking_yards / distance;
-            self.player.y += dy * walking_yards / distance;
-        }
+        let destination = if distance > 0.0 {
+            Point {
+                x: self.player.x + dx * walking_yards / distance,
+                y: self.player.y + dy * walking_yards / distance,
+            }
+        } else {
+            self.player
+        };
         let ns = (walking_yards / MOVEMENT_SPEED_YARDS_S * 1_000_000_000.0).ceil();
         if !ns.is_finite() || ns > i64::MAX as f64 {
             return Err("NATIVE_SPATIAL_TRAVEL_TIME_OVERFLOW");
         }
         self.last_walk_ns = ns as i64;
+        self.walk_start = self.player;
+        self.walk_end = destination;
+        self.walk_started_at_ns = started_at_ns;
+        self.moving_samples = 0;
         self.target_health = self.max_target_health;
         Ok(())
     }
@@ -267,6 +309,27 @@ mod tests {
         let world = SpacedWorld::new(2).unwrap();
         assert_eq!(world.route, vec![0, 1]);
         assert!((world.positions[1].distance(world.positions[0]) - 20.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn paid_travel_updates_position_and_moving_state_before_next_fight() {
+        let mut world = NativeSpatialWorld::new(2, 40.0, 5.0).unwrap();
+        world.apply_native_damage(40.0).unwrap();
+        let started = 1_000_000_i64;
+        world.next_target(started).unwrap();
+        // First target at x=0, actor at x=5; next target is x=20.
+        // Merely selecting the route cannot teleport the actor to x=15.
+        assert_eq!(world.player_position(), Point { x: 5.0, y: 0.0 });
+        assert_eq!(world.distance_yards(), 15.0);
+        let travel = world.last_walk_ns();
+        assert!(world.advance_to(started + travel / 2));
+        assert!(world.player_position().x > 5.0);
+        assert!(world.player_position().x < 15.0);
+        assert!(world.distance_yards() > 5.0);
+        assert!(!world.advance_to(started + travel));
+        assert!((world.player_position().x - 15.0).abs() < 1e-8);
+        assert!((world.distance_yards() - 5.0).abs() < 1e-8);
+        assert_eq!(world.moving_samples(), 1);
     }
 
     #[test]
