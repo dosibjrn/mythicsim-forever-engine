@@ -5930,6 +5930,7 @@ impl<A: Agent> Fight<A> {
                 "native_combat_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
                 "native_spatial_travel_ns": native_spatial_travel_ns,
+                "native_spatial_position": world_bridge::inprocess_position_receipt(),
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
             }));

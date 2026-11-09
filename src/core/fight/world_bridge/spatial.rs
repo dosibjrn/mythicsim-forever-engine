@@ -160,6 +160,16 @@ impl NativeSpatialWorld {
         self.layout.route[self.route_cursor]
     }
 
+    /// Source mob identity in the 2D ring, not its visitation order.
+    pub fn target_position(&self) -> Point {
+        self.layout.positions[self.target_index()]
+    }
+
+    /// Actual player position after native-clock-charged route selection.
+    pub fn player_position(&self) -> Point {
+        self.player
+    }
+
     pub fn target_health(&self) -> f64 {
         self.target_health
     }

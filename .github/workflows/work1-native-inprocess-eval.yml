@@ -47,6 +47,10 @@ jobs:
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 8, r
           assert len(r['windows']) == 8, r
+          spatial = [w['native_spatial_position'] for w in r['windows']]
+          assert [p['target_source_index'] for p in spatial] == list(range(8)), spatial
+          assert all(len(p['target_xy_yards']) == len(p['actor_xy_yards']) == 2 for p in spatial)
+          assert all(p['distance_yards'] >= 0 for p in spatial), spatial
           assert any(w['native_spatial_travel_ns'] > 0 for w in r['windows'][1:]), r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
           print('WORK1_NATIVE_INPROCESS_EIGHT_TARGETS',

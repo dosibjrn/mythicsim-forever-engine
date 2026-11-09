@@ -89,6 +89,23 @@ pub(crate) fn inprocess_travel_ns() -> i64 {
     ))
 }
 
+/// A geometry receipt from the actual in-process route at the current paid
+/// native target. Never reconstruct route identity from the pull ordinal.
+pub(crate) fn inprocess_position_receipt() -> Option<Value> {
+    NATIVE_SPATIAL.with(|slot| {
+        slot.borrow().as_ref().map(|world| {
+            let target = world.target_position();
+            let actor = world.player_position();
+            json!({
+                "target_source_index": world.target_index(),
+                "target_xy_yards": [target.x, target.y],
+                "actor_xy_yards": [actor.x, actor.y],
+                "distance_yards": world.distance_yards(),
+            })
+        })
+    })
+}
+
 pub(crate) fn start(source_hash: &str) {
     assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
@@ -782,6 +799,12 @@ mod inprocess_spatial_ack_tests {
         exchange(2_000_000, 100_000_000_000, 45.0);
         assert!(acknowledged_lethal());
         begin_next_target(3_000_000).unwrap();
+        // World path identity is a source mob id, not the pull ordinal.
+        let position = inprocess_position_receipt().unwrap();
+        assert_eq!(position["target_source_index"], 1);
+        assert_eq!(position["target_xy_yards"], json!([20.0, 0.0]));
+        assert_eq!(position["actor_xy_yards"], json!([15.0, 0.0]));
+        assert_eq!(position["distance_yards"], 5.0);
         // From x=5 to mob x=20, stop five yards short: pay ten yards.
         assert_eq!(inprocess_travel_ns(), (10.0 / 7.0_f64 * 1e9).ceil() as i64);
         assert!(!acknowledged_lethal());
