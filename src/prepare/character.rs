@@ -281,7 +281,7 @@ fn requested_player_level(player: &Message, actor_level: Option<i32>) -> Result<
     Err(Refusal::new(
         "level",
         format!(
-            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest/Rogue L20 and Druid L20/L30 for sourced Classic races)"
+            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest/Rogue L20 and Druid L20/L30 for sourced Classic races, or Troll Warlock L20)"
         ),
     ))
 }
@@ -1420,10 +1420,10 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(requested_player_level(&player, None).unwrap(), 60);
         assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
         assert_eq!(requested_player_level(&player, Some(60)).unwrap(), 60);
-        assert_eq!(
-            requested_player_level(&player, Some(19)).unwrap_err().code,
-            "level",
-        );
+        let unsupported = requested_player_level(&player, Some(19)).unwrap_err();
+        assert_eq!(unsupported.code, "level");
+        assert!(unsupported.reason.contains("Troll Warlock L20"));
+
 
         // The selected engine accepts a Rust-only embedded level. It must not
         // silently prepare a source L20 request at the legacy L60 default.
