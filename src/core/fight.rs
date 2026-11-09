@@ -6180,10 +6180,12 @@ impl<A: Agent> Fight<A> {
             )?;
 
             self.advance_living_native_world_actor()?;
-            let native_pull_elapsed_ns = self.now
+            let native_pull_elapsed_ns = self
+                .now
                 .checked_sub(native_pull_started_at_ns)
                 .ok_or("RUST_WORLD_PULL_CLOCK_REWOUND")?;
-            let native_elapsed_since_start_ns = self.now
+            let native_elapsed_since_start_ns = self
+                .now
                 .checked_sub(native_chain_started_at_ns)
                 .ok_or("RUST_WORLD_CHAIN_CLOCK_REWOUND")?;
             if !world_bridge::acknowledged_lethal() {
@@ -6271,7 +6273,8 @@ impl<A: Agent> Fight<A> {
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
-        let native_elapsed_ns = self.now
+        let native_elapsed_ns = self
+            .now
             .checked_sub(native_chain_started_at_ns)
             .ok_or("RUST_WORLD_CHAIN_CLOCK_REWOUND")?;
         // Paid source-native passive ticks and actual time-charged Decisions
