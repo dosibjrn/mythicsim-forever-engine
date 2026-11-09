@@ -1,0 +1,56 @@
+name: Work1 native in-process spatial evaluator
+on:
+  push:
+    branches:
+      - work/inprocess-2d-leveling-world-20261108
+    paths:
+      - src/core/fight.rs
+      - src/core/fight/world_bridge.rs
+      - src/core/fight/world_bridge/spatial.rs
+      - src/engine/prepared.rs
+      - src/lib.rs
+      - src/main.rs
+      - .github/workflows/work1-native-inprocess-eval.yml
+  workflow_dispatch:
+
+jobs:
+  native-spatial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile and execute real native spatial ACK transitions
+        run: |
+          cargo test --locked --lib inprocess_spatial_ack_tests -- --nocapture
+          cargo test --locked --lib matches_gsim_eight_target_chebyshev_ring_and_route
+          cargo check --locked --bin forever-engine
+      - name: Run same-process eight-target source-prepared Warlock smoke
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('fixtures/mage/prepared-v2/affliction-warlock-broad.prepared.json')
+          p = json.loads(path.read_text())
+          # Small scenario-owned enemy HP, unchanged source-prepared Warlock
+          # spell/APL/pet mechanics. This is NOT a gate or source reference.
+          p['target']['stats']['Health'] = 300.0
+          p['scenario_id'] = 'work1-native-spatial-eight-target-smoke'
+          Path('/tmp/work1-spatial-smoke.json').write_text(json.dumps(p))
+          PY
+          cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 8 --rng-mode balanced --recovery-seconds 12 > /tmp/work1-spatial-out.json
+          python3 - <<'PY'
+          import json
+          o = json.load(open('/tmp/work1-spatial-out.json'))
+          r = o['result']
+          assert r['native_spatial_inprocess'] is True, r
+          assert r['actual_2d_ack'] is False, r
+          assert r['world_targets_killed'] == 8, r
+          assert len(r['windows']) == 8, r
+          assert any(w['native_spatial_travel_ns'] > 0 for w in r['windows'][1:]), r
+          assert all(w['native_damage'] > 0 for w in r['windows']), r
+          print('WORK1_NATIVE_INPROCESS_EIGHT_TARGETS',
+                {'kills': r['world_targets_killed'],
+                 'last_kill_ns': r['windows'][-1]['native_kill_ns'],
+                 'travel_ns': sum(w['native_spatial_travel_ns'] for w in r['windows'])})
+          PY
