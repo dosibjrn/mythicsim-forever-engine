@@ -320,12 +320,19 @@ jobs:
               "scored_slots": result.get("real_catalogue_slots_scored"),
               "recorded": False,
           }, sort_keys=True), flush=True)
-          # Verify that the paid, native source path was actually exercised.
-          # An approved gate PASS is not inferred from this workflow.
+          # This is a real no-record P3 smoke, not an M1 recorder. A green
+          # workflow must not conceal a native FAIL/BLOCKED after paid work,
+          # as a historical trial did when only the paid-attempt count was read.
+          # Let the production P3 evaluator own its attempt budget and PASS
+          # predicates; do not add a second workflow-specific upper bound.
           assert result.get("production_engine") == "mythicsim_rust", result
-          assert type(paid) is int and 1 <= paid <= 44, result
+          assert type(paid) is int and paid > 0, result
           native = result.get("native_equipped_paid_receipt") or {}
           assert native.get("actor_checkpoint_verified") is True, native
+          assert result.get("status") == "PASS", (
+              "WARLOCK_L20_NATIVE_P3_NO_RECORD_NOT_PASS", result.get("status"),
+              result.get("reasons"), receipt.as_posix())
+          assert not result.get("reasons"), result.get("reasons")
           PY
       - name: Preserve authentic request, prepared actor and paid output
         if: always()
