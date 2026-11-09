@@ -21,6 +21,7 @@ on:
       - data/manifest.json
       - tools/rust_data.py
       - fixtures/warlock-l20-troll-native.request.json
+      - fixtures/warlock-l20-troll-source-equipped.request.json
       - fixtures/warlock-l20-troll-hostile-world.request.json
       - tests/warlock_l20_native_registration.rs
   workflow_dispatch:
@@ -270,6 +271,9 @@ jobs:
           import sys
           from pathlib import Path
 
+          # Use a source-level 20 gear baseline; the previous 17-slot
+          # "best-paid" donor contained level-60 raid items and Rust refused
+          # its unsourced L20 combat ratings before any paid comparison.
           # Reuse Forever's real P3 evaluator, not a second native scoring
           # implementation or the former 237-candidate optimizer search.
           root = Path("forever").resolve()
@@ -279,7 +283,7 @@ jobs:
           os.environ["FOREVER_P3_NATIVE_ITEM_OPTIONS_BIN"] = str(
               Path("target/debug/forever-engine").resolve())
           os.environ["FOREVER_P3_NATIVE_WARLOCK_L20_REQUEST"] = str(
-              Path("fixtures/warlock-l20-troll-best-paid.request.json").resolve())
+              Path("fixtures/warlock-l20-troll-source-equipped.request.json").resolve())
           result = run_live(root, "warlock", 20, spec="unrestricted")
           receipt = Path("/tmp/warlock-l20-equipped-p3-no-record.json")
           receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
@@ -307,6 +311,7 @@ jobs:
           name: work1-warlock-l20-actor-paid
           path: |
             fixtures/warlock-l20-troll-native.request.json
+            fixtures/warlock-l20-troll-source-equipped.request.json
             fixtures/warlock-l20-troll-hostile-world.request.json
             /tmp/warlock-l20-hostile-prepared.json
             /tmp/warlock-l20-prepared.json
