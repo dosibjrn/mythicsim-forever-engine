@@ -54,3 +54,22 @@ jobs:
                  'last_kill_ns': r['windows'][-1]['native_kill_ns'],
                  'travel_ns': sum(w['native_spatial_travel_ns'] for w in r['windows'])})
           PY
+      - name: Exercise same native actor over one hundred serial spatial targets
+        run: |
+          cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 100 --rng-mode balanced --recovery-seconds 12 > /tmp/work1-spatial-100-out.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open('/tmp/work1-spatial-100-out.json'))['result']
+          assert r['native_spatial_inprocess'] is True, r
+          assert r['actual_2d_ack'] is False, r
+          assert r['world_targets_killed'] == 100, r
+          assert len(r['windows']) == 100, r
+          assert all(w['native_damage'] > 0 for w in r['windows']), r
+          assert sum(w['native_spatial_travel_ns'] for w in r['windows']) > 0, r
+          print('WORK1_NATIVE_INPROCESS_HUNDRED_TARGETS',
+                {'kills': r['world_targets_killed'],
+                 'last_kill_ns': r['windows'][-1]['native_kill_ns'],
+                 'travel_ns': sum(w['native_spatial_travel_ns'] for w in r['windows']),
+                 'last_health': r['windows'][-1]['actor_health'],
+                 'last_mana': r['windows'][-1]['actor_mana']})
+          PY
