@@ -153,9 +153,10 @@ impl Warlock {
     /// Improved Drains rides on the talent as a dot SpellMod. Soul Siphon has to be counted per
     /// tick, so it stays in the tick.
     pub(super) fn register_drain_life(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data()
-            .drain_life
-            .highest_for_level(sim.unit(unit).level, sim.rules);
+        let Some(rank) = prepared_rank(&spell_data().drain_life, sim, unit) else {
+            // An unlearned spell cannot supply a native executable rank.
+            return;
+        };
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -351,9 +352,10 @@ impl Warlock {
     }
 
     pub(super) fn register_searing_pain(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data()
-            .searing_pain
-            .highest_for_level(sim.unit(unit).level, sim.rules);
+        let Some(rank) = prepared_rank(&spell_data().searing_pain, sim, unit) else {
+            // An unlearned spell cannot supply a native executable rank.
+            return;
+        };
         sim.register_spell(
             unit,
             SpellConfig {
