@@ -79,6 +79,10 @@ pub(crate) fn stop_inprocess() {
 
 /// Physical walking time since the previous acknowledged target; this must
 /// be charged on the SAME native clock before combat resumes.
+pub(crate) fn inprocess_enabled() -> bool {
+    NATIVE_SPATIAL.with(|state| state.borrow().is_some())
+}
+
 pub(crate) fn inprocess_travel_ns() -> i64 {
     NATIVE_SPATIAL.with(|state| state.borrow().as_ref().map_or(0, |world|
         world.last_walk_ns()
