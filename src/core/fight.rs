@@ -5767,6 +5767,23 @@ impl<A: Agent> Fight<A> {
     }
 
 
+    /// A target's lethal world ACK is not proof that the retained native actor survived.
+    /// Refuse further scheduler actions after native player death in spatial 8/100-mob
+    /// leveling as well as the external world path.
+    fn advance_living_native_world_actor(&mut self) -> Result<(), &'static str> {
+        loop {
+            if !self.player.health.is_finite() {
+                return Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID");
+            }
+            if self.player.health <= 0.0 {
+                return Err("RUST_MULTI_WORLD_ACTOR_DIED");
+            }
+            if !self.step() {
+                return Ok(());
+            }
+        }
+    }
+
     /// Multiple distinct gsim world deaths on one retained source-Rust actor.
     /// Native paid rest is charged between ACKed kills; this alone does not certify P4–P6.
     /// Source-native, clock-paid recovery duration is a candidate choice,
@@ -5854,7 +5871,7 @@ impl<A: Agent> Fight<A> {
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
                 self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
-            while self.step() {}
+            self.advance_living_native_world_actor()?;
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
             }
@@ -6952,6 +6969,31 @@ impl<A: Agent> Fight<A> {
 #[cfg(test)]
 mod tests {
     use super::{Mp5Path, Side, DEFENDERS, MAX_TARGETS};
+
+    #[test]
+    fn native_spatial_chain_refuses_dead_actor_before_next_native_action() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        for (health, expected) in [
+            (0.0, "RUST_MULTI_WORLD_ACTOR_DIED"),
+            (-1.0, "RUST_MULTI_WORLD_ACTOR_DIED"),
+            (f64::NAN, "RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID"),
+        ] {
+            let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+                &prepared,
+                crate::core::rng::RngMode::Stochastic,
+            )
+            .unwrap();
+            fight.player.health = health;
+            let before = fight.now;
+            assert_eq!(fight.advance_living_native_world_actor(), Err(expected));
+            assert_eq!(fight.now, before, "dead native actor was advanced");
+        }
+    }
 
     #[test]
     fn native_persistent_early_world_kill_clock_boundary() {
