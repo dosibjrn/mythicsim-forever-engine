@@ -9,6 +9,7 @@ on:
       - src/prepare/character.rs
       - src/prepare/env.rs
       - src/core/fight/world_bridge.rs
+      - src/core/fight.rs
       - src/engine/coverage.rs
       - src/classes/warlock/**
       - src/main.rs
@@ -37,6 +38,7 @@ jobs:
           set -euo pipefail
           cargo test --locked cleanup_damage_is_acknowledged_before_next_iteration -- --nocapture
           cargo test --locked restarting_iteration_zero_cannot_erase_acknowledged_source_counts -- --nocapture
+          cargo test --locked retained_world_chain_preserves_and_drains_acknowledged_source_actions -- --nocapture
           cargo test --locked world_bridge -- --nocapture
           cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
           cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
@@ -80,6 +82,49 @@ jobs:
           assert body['iterationsDone']==1
           assert isinstance(dps,(int,float)) and dps>0, ('NO_REAL_NATIVE_DAMAGE',dps)
           print('WARLOCK_L20_NATIVE_PAID_LOG',body.get('logs','')[:2000],flush=True)
+          PY
+      - name: Checkout current Forever 2D world producer (cross-repo integration)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dosibjrn/forever-sim
+          ref: main
+          path: forever
+          persist-credentials: false
+      - name: Run real L20 Warlock gsim ↔ native two-target ACK chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "FOREVER_GSIM_PRODUCER_SHA=$(git -C forever rev-parse HEAD)"
+          cargo build --locked --bin forever-engine
+          python3 forever/integrations/mythicsim-rust/live_two_world_pulls.py \
+            --binary target/debug/forever-engine \
+            --prepared /tmp/warlock-l20-prepared.json \
+            --mob-health 100 --targets 2 > /tmp/warlock-l20-world-ack.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          output = Path("/tmp/warlock-l20-world-ack.jsonl").read_text().splitlines()
+          valid = next((json.loads(line.partition(" ")[2])
+                        for line in output
+                        if line.startswith("RUST_TWO_REAL_GSIM_WORLD_KILLS ")), None)
+          forged = next((json.loads(line.partition(" ")[2])
+                         for line in output
+                         if line.startswith("RUST_TWO_WORLD_FORGED_ACK_REJECTED ")), None)
+          assert valid is not None and forged is not None, "MISSING_GSIM_NATIVE_RECEIPTS"
+          assert valid["world_targets_killed"] == 2, valid
+          assert valid["native_damage_events"] >= 2, valid
+          assert valid["continuous_native_actor"] is True, valid
+          assert valid["actual_2d_ack"] is True, valid
+          assert valid["minimum_native_actor_health"] > 0, valid
+          assert forged["forged_ack_rejected"] is True, forged
+          print("WARLOCK_L20_GSIM_NATIVE_WORLD_ACK", json.dumps({
+              "targets": valid["world_targets_killed"],
+              "damage_events": valid["native_damage_events"],
+              "world_ticks": valid["world_ticks"],
+              "elapsed_seconds": valid["world_elapsed_seconds"],
+              "forged_ack_rejected": forged["forged_ack_rejected"],
+              "checkpoint_certified": False,
+          }, sort_keys=True), flush=True)
           PY
       - name: Preserve authentic request, prepared actor and paid output
         if: always()
