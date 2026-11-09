@@ -2,7 +2,11 @@
 //! Activated only by FOREVER_GSIM_WORLD_BRIDGE=1. All damage comes from the
 //! unchanged native Fight::deal_damage; the world applies it before native
 //! scheduler resumes. This is a bounded multi-fight diagnostic, NOT P7 acceptance.
-use std::{cell::RefCell, io::{self, BufRead, Write}};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    io::{self, BufRead, Write},
+};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -42,6 +46,9 @@ struct Bridge {
 }
 thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
+    // Source-native damage event counts, kept across retained targets and reset per iteration.
+    static SOURCE_ACTION_COUNTS: RefCell<BTreeMap<String, u64>> =
+        RefCell::new(BTreeMap::new());
 }
 
 pub(crate) fn enabled() -> bool {
@@ -50,6 +57,7 @@ pub(crate) fn enabled() -> bool {
 
 pub(crate) fn start(source_hash: &str) {
     assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
+    SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
         last_health: None, previous_ack_id: String::new(),
@@ -77,6 +85,7 @@ pub(crate) fn begin_iteration(iteration: u32) {
         assert!(iteration == 0 || bridge.iteration_finished,
             "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED");
         assert!(bridge.pending.is_empty(), "RUST_WORLD_UNFLUSHED_EVENTS");
+        SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
         bridge.iteration = iteration;
         bridge.sequence = 0;
         bridge.next_tick_ns = 0;
@@ -236,6 +245,19 @@ pub(crate) fn record_damage(
     });
 }
 
+// These are *landed native damage events*, not casts or synthetic world actions.
+fn record_source_action(action: &str) {
+    if !action.is_empty() {
+        SOURCE_ACTION_COUNTS.with(|counts| {
+            *counts.borrow_mut().entry(action.to_owned()).or_default() += 1;
+        });
+    }
+}
+
+fn take_source_action_counts() -> Value {
+    SOURCE_ACTION_COUNTS.with(|counts| json!(std::mem::take(&mut *counts.borrow_mut())))
+}
+
 fn append_damage_event(
     bridge: &mut Bridge,
     time_ns: i64,
@@ -254,6 +276,8 @@ fn append_damage_event(
     } = source;
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
+    // Only a valid event admitted to the real world boundary counts as native damage.
+    record_source_action(&action);
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -464,6 +488,9 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
             "native_request_sha256": bridge.source_hash,
             "native_duration_ns": duration_ns,
             "native_total_damage": cumulative_damage,
+            // Additive receipt field: preserves the original selected pin's
+            // per-action native damage provenance for world/2D consumers.
+            "source_action_counts": take_source_action_counts(),
         }));
     });
 }
@@ -536,7 +563,7 @@ mod disabled_bridge_tests {
 mod iteration_teardown_tests {
     use super::{
         append_damage_event, assert_damage_acknowledgement, begin_iteration,
-        mark_iteration_finished, test_damage_source, Bridge, BRIDGE,
+        mark_iteration_finished, take_source_action_counts, test_damage_source, Bridge, BRIDGE,
     };
 
     fn bridge(iteration_finished: bool) -> Bridge {
@@ -575,6 +602,10 @@ mod iteration_teardown_tests {
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.event_ordinal, 1);
         });
+        assert_eq!(
+            take_source_action_counts(),
+            serde_json::json!({"cleanup-proc": 1})
+        );
 
         // This is the same take-and-ACK sequence used by exchange().
         let events = BRIDGE.with(|state| {
@@ -597,6 +628,7 @@ mod iteration_teardown_tests {
         // next stochastic iteration begin.
         mark_iteration_finished();
         begin_iteration(1);
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
         BRIDGE.with(|state| {
             let state = state.borrow();
             let bridge = state.as_ref().unwrap();
@@ -620,6 +652,7 @@ mod iteration_teardown_tests {
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
         });
+        assert_eq!(take_source_action_counts(), serde_json::json!({"combat-proc": 1}));
         BRIDGE.with(|state| *state.borrow_mut() = None);
     }
 
