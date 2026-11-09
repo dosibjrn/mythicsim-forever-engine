@@ -239,6 +239,8 @@ fn has_level_dependent_rating_stats(stats: &Stats) -> bool {
     LEVEL_DEPENDENT_RATING_STATS
         .into_iter()
         .any(|stat| stats[stat] != 0.0)
+}
+
 /// Go `Character.addUniversalStatDependencies`.
 pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: UnitId) {
     add_rating_conversions(sim, unit);
