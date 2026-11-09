@@ -5800,6 +5800,10 @@ impl<A: Agent> Fight<A> {
         let mut previous_health_damage_events = 0;
         let mut previous_mana_regen_gain = 0.0_f64;
         let mut previous_mana_regen_events = 0_i32;
+        // Preserve the complete ACKed action mix while also exposing each
+        // distinct target's real native damage actions to chain optimizers.
+        let mut acknowledged_source_action_totals =
+            std::collections::BTreeMap::<String, u64>::new();
 
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
@@ -5853,6 +5857,20 @@ impl<A: Agent> Fight<A> {
             {
                 return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
             }
+            // The target has a genuine lethal world ACK and no pending damage.
+            // Drain exactly this target's source actions; unlike a cumulative
+            // final-only count, this supports native per-mob APL measurements.
+            let native_source_action_counts = world_bridge::take_source_action_counts();
+            let action_counts = native_source_action_counts.as_object()
+                .ok_or("RUST_WORLD_SOURCE_ACTION_COUNTS_INVALID")?;
+            for (action, value) in action_counts {
+                let count = value.as_u64()
+                    .ok_or("RUST_WORLD_SOURCE_ACTION_COUNTS_INVALID")?;
+                let total = acknowledged_source_action_totals
+                    .entry(action.clone()).or_default();
+                *total = total.checked_add(count)
+                    .ok_or("RUST_WORLD_SOURCE_ACTION_COUNT_OVERFLOW")?;
+            }
             windows.push(serde_json::json!({
                 "index": index,
                 "native_kill_ns": self.now,
@@ -5867,6 +5885,7 @@ impl<A: Agent> Fight<A> {
                     mana_regen_events - previous_mana_regen_events,
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
+                "native_acknowledged_source_action_counts": native_source_action_counts,
             }));
             previous_damage = total_damage;
             previous_health_damage = health_damage;
@@ -5889,10 +5908,9 @@ impl<A: Agent> Fight<A> {
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
             "recovery_seconds_per_gap": recovery_seconds,
-            // Counts are captured only after the gsim world ACK confirms each
-            // native damage event. Preserve them across the retained actor's
-            // distinct targets and return the measured action mix to gsim.
-            "source_action_counts": world_bridge::take_source_action_counts(),
+            // Preserve the original aggregate receipt while every window now
+            // carries source actions charged only after that target's real ACK.
+            "source_action_counts": acknowledged_source_action_totals,
             "windows": windows,
         });
         self.cleanup();
