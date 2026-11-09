@@ -196,6 +196,93 @@ mod world_mana_receipt_tests {
     }
 }
 
+/// A reported recovery gap is paid when the native clock advanced and the
+/// retained actor received either real passive ticks or actual vendor food/water.
+/// Decisions can finish inside a mana tick while still paying food/water time:
+/// excluding that case mislabels charged recovery as free.
+fn native_world_recovery_paid(
+    window: &serde_json::Value,
+    strategy: WorldRecoveryStrategy,
+) -> bool {
+    let clock_paid = window["native_passive_recovery_ns"]
+        .as_i64()
+        .is_some_and(|ns| ns > 0);
+    let passive_paid = window["native_passive_recovery_ticks"]
+        .as_u64()
+        .is_some_and(|ticks| ticks > 0);
+    let vendor_paid = matches!(strategy, WorldRecoveryStrategy::Decisions { .. })
+        && (window["food_seconds"]
+            .as_f64()
+            .is_some_and(|seconds| seconds > 0.0)
+            || window["water_seconds"]
+                .as_f64()
+                .is_some_and(|seconds| seconds > 0.0));
+    clock_paid && (passive_paid || vendor_paid)
+}
+
+#[cfg(test)]
+mod native_world_recovery_receipt_tests {
+    use super::{native_world_recovery_paid, WorldRecoveryStrategy};
+    use serde_json::json;
+
+    #[test]
+    fn actual_decisions_food_or_water_counts_without_passive_mana_tick() {
+        let strategy = WorldRecoveryStrategy::Decisions {
+            health_fraction: 0.5,
+            mana_fraction: 0.5,
+        };
+        for (food, water) in [(1.7, 0.0), (0.0, 5.0)] {
+            let receipt = json!({
+                "native_passive_recovery_ns": 5_000_000_000_i64,
+                "native_passive_recovery_ticks": 0,
+                "food_seconds": food,
+                "water_seconds": water,
+            });
+            assert!(native_world_recovery_paid(&receipt, strategy));
+            // Fixed passive rest cannot claim food/water it did not perform.
+            assert!(!native_world_recovery_paid(
+                &receipt,
+                WorldRecoveryStrategy::Fixed(5)
+            ));
+        }
+    }
+
+    #[test]
+    fn never_count_uncharged_or_unobserved_recovery() {
+        let strategy = WorldRecoveryStrategy::Decisions {
+            health_fraction: 0.5,
+            mana_fraction: 0.5,
+        };
+        assert!(!native_world_recovery_paid(
+            &json!({
+                "native_passive_recovery_ns": 0,
+                "native_passive_recovery_ticks": 0,
+                "food_seconds": 5.0,
+                "water_seconds": 0.0,
+            }),
+            strategy
+        ));
+        assert!(!native_world_recovery_paid(
+            &json!({
+                "native_passive_recovery_ns": 1_000_000,
+                "native_passive_recovery_ticks": 0,
+                "food_seconds": 0.0,
+                "water_seconds": 0.0,
+            }),
+            strategy
+        ));
+        assert!(native_world_recovery_paid(
+            &json!({
+                "native_passive_recovery_ns": 2_000_000_000_i64,
+                "native_passive_recovery_ticks": 1,
+                "food_seconds": 0.0,
+                "water_seconds": 0.0,
+            }),
+            WorldRecoveryStrategy::Fixed(2)
+        ));
+    }
+}
+
 pub(crate) type SpellId = usize;
 pub(crate) type DotId = usize;
 pub(crate) type TimerId = usize;
@@ -6118,17 +6205,12 @@ impl<A: Agent> Fight<A> {
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
-        // Count only native scheduler regeneration actually paid on the
-        // retained actor between ACKed world kills. Time alone, an assumed
-        // refill or a completed movement schedule is not regeneration proof.
-        let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
-            window["native_passive_recovery_ns"]
-                .as_i64()
-                .is_some_and(|ns| ns > 0)
-                && window["native_passive_recovery_ticks"]
-                    .as_u64()
-                    .is_some_and(|ticks| ticks > 0)
-        });
+        // Paid source-native passive ticks and actual time-charged Decisions
+        // food/water both count. Neither movement nor an assumed free refill does.
+        let native_passive_recovery_paid = windows
+            .iter()
+            .skip(1)
+            .all(|window| native_world_recovery_paid(window, strategy));
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
