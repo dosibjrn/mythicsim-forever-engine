@@ -472,3 +472,51 @@ fn seal_of_righteousness_hits_with_the_swapped_one_hander() {
         );
     }
 }
+
+
+/// P3's actual source Feral L60 actor changes its off-hand equipment while the
+/// pre-existing Manual Crowd Pummeler opener also swaps the two-handed main hand.
+/// The native exporter must carry both slots through preparation and combat,
+/// rather than refusing the legal equipped alternative before it can be scored.
+#[test]
+fn feral_l60_p3_offhand_alternative_with_two_hand_swap_executes() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures/mage/prepared-v2/mcp-feral-druid.request.json");
+    let mut request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let player = &mut request["raid"]["parties"][0]["players"][0];
+    let items = player["equipment"]["items"].as_array_mut().unwrap();
+    // Match the 16 occupied/request positions of the production Feral L60
+    // source actor, including its two trinkets, main hand and off hand.
+    items.insert(12, json!({"id": 272437}));
+    items.insert(13, json!({"id": 11815}));
+    assert_eq!(items.len(), 16);
+    items[15] = json!({"id": 19366});
+    request["simOptions"]["iterations"] = json!(3);
+    request["simOptions"]["debugFirstIteration"] = json!(false);
+
+    let prepared = forever_engine::prepare_json_with(
+        request.to_string().as_bytes(),
+        "feral-l60-p3-offhand",
+        forever_engine::Rules::GoReference,
+    )
+    .expect("native source Feral offhand must prepare with its paired swap");
+    let slots = prepared["effects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|effect| effect["kind"] == "item_swap")
+        .expect("actual Feral source has a swap")["slots"]
+        .clone();
+    assert_eq!(slots, json!(["ItemSlotMainHand", "ItemSlotOffHand"]));
+    let actor: PreparedV2 = serde_json::from_value(prepared).unwrap();
+    assert!(prepared_coverage(&actor).is_empty(), "native offhand request must be executable");
+    let scored = forever_engine::simulate_prepared(
+        &actor,
+        forever_engine::RngMode::Balanced,
+    )
+    .expect("changed offhand must execute in native Rust");
+    assert!(scored.result["raidMetrics"]["dps"]["avg"]
+        .as_f64()
+        .expect("native DPS")
+        .is_finite());
+}
