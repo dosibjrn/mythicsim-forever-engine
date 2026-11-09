@@ -301,25 +301,11 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     Some(troll)
 }
 
-/// The request's source-native Player level is a real actor input, not a
-/// second game-legality check. An explicit CLI actor level must not silently
-/// override a conflicting embedded level (the selected native source also
-/// enforces this contract).
+/// The CLI actor level is an explicit native preparation input. proto.Player
+/// does not define a level field, so default callers retain level 60; a
+/// requested lower-level actor is sourced only from the native level table.
 fn requested_player_level(player: &Message, actor_level: Option<i32>) -> Result<i32, Refusal> {
-    let embedded = player.i32("level");
-    if let Some(external) = actor_level {
-        if embedded != 0 && embedded != external {
-            return Err(Refusal::new(
-                "level",
-                format!("native actor level {external} conflicts with request level {embedded}"),
-            ));
-        }
-    }
-    let level = actor_level.unwrap_or(if embedded == 0 {
-        constants::CHARACTER_LEVEL
-    } else {
-        embedded
-    });
+    let level = actor_level.unwrap_or(constants::CHARACTER_LEVEL);
     if level == constants::CHARACTER_LEVEL
         || base_stats_at_level(&player.enum_name("class"), &player.enum_name("race"), level).is_some()
     {
@@ -873,31 +859,30 @@ mod warlock_l20_actor_source_tests {
     }
 
     #[test]
-    fn embedded_warlock_l20_level_is_not_silently_replaced_by_l60() {
+    fn explicit_warlock_l20_actor_level_preserves_default_l60_and_refuses_unsourced_levels() {
         let player = Message::from_json_text(
             "proto.Player",
-            r#"{"class":"ClassWarlock","race":"RaceTroll","level":20}"#,
+            r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
         ).unwrap();
-        assert_eq!(requested_player_level(&player, None).unwrap(), 20);
+        assert_eq!(requested_player_level(&player, None).unwrap(), 60);
         assert_eq!(requested_player_level(&player, Some(20)).unwrap(), 20);
+        assert_eq!(requested_player_level(&player, Some(60)).unwrap(), 60);
+        assert_eq!(
+            requested_player_level(&player, Some(19)).unwrap_err().code,
+            "level",
+        );
 
         let mut sim = Sim::new();
-        let unit = sim.new_character_at_level(0, 0, &player, &[], None).unwrap();
+        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
         assert_eq!(sim.unit(unit).level, 20);
         assert_eq!(sim.character(unit).base_stats[Stat::Health], 204.0);
 
-        let mut conflict = Sim::new();
-        let refusal = conflict.new_character_at_level(0, 0, &player, &[], Some(60))
-            .unwrap_err();
-        assert_eq!(refusal.code, "level");
-
-        let unsupported = Message::from_json_text(
-            "proto.Player",
-            r#"{"class":"ClassWarlock","race":"RaceTroll","level":19}"#,
-        ).unwrap();
+        let mut default_sim = Sim::new();
+        let default_unit = default_sim.new_character(0, 0, &player, &[]).unwrap();
+        assert_eq!(default_sim.unit(default_unit).level, 60);
         assert_eq!(
-            requested_player_level(&unsupported, None).unwrap_err().code,
-            "level",
+            default_sim.character(default_unit).base_stats[Stat::Health],
+            base_stats("ClassWarlock", "RaceTroll").unwrap()[Stat::Health],
         );
     }
 
