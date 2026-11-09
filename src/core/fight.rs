@@ -5783,7 +5783,12 @@ impl<A: Agent> Fight<A> {
     fn advance_living_native_world_actor(&mut self) -> Result<(), &'static str> {
         loop {
             self.require_living_native_world_actor()?;
-            if !self.step() {
+            let continues = self.step();
+            // A target's last native scheduler step can also kill the player.
+            // A lethal target ACK is not a successful surviving route if the
+            // retained actor died on that same final step.
+            self.require_living_native_world_actor()?;
+            if !continues {
                 return Ok(());
             }
         }
@@ -7077,6 +7082,32 @@ mod tests {
             assert_eq!(fight.advance_living_native_world_actor(), Err(expected));
             assert_eq!(fight.now, before, "dead native actor was advanced");
         }
+    }
+
+    #[test]
+    fn native_spatial_chain_refuses_actor_killed_during_hostile_step() {
+        // A real source-prepared enemy swing may kill a player *inside* step().
+        // Checking survival only before the step lets the terminal action
+        // report a completed mob chain even though the actor did not survive.
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/feral-bear-druid-defensives.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        assert!(fight.config.target_auto_swing_melee);
+        fight.prepare_first_native_pull();
+        fight.player.health = 1.0;
+        assert_eq!(
+            fight.advance_living_native_world_actor(),
+            Err("RUST_MULTI_WORLD_ACTOR_DIED"),
+        );
+        assert!(fight.player.health <= 0.0, "hostile actor was not killed");
     }
 
     #[test]
