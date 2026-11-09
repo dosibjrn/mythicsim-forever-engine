@@ -6109,6 +6109,8 @@ impl<A: Agent> Fight<A> {
         // distinct target's real native damage actions to chain optimizers.
         let mut acknowledged_source_action_totals =
             std::collections::BTreeMap::<String, u64>::new();
+        let mut acknowledged_caster_raw_damage_totals =
+            std::collections::BTreeMap::<String, f64>::new();
 
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
@@ -6246,6 +6248,28 @@ impl<A: Agent> Fight<A> {
                     .checked_add(count)
                     .ok_or("RUST_WORLD_SOURCE_ACTION_COUNT_OVERFLOW")?;
             }
+            // Attribute only the damage events that this target's world
+            // actually ACKed. Do not infer pet share from APL instructions or
+            // player health loss; source caster types are preserved verbatim.
+            let native_caster_raw_damage = world_bridge::take_source_caster_raw_damage();
+            let caster_damage = native_caster_raw_damage
+                .as_object()
+                .ok_or("RUST_WORLD_CASTER_DAMAGE_RECEIPT_INVALID")?;
+            for (caster, value) in caster_damage {
+                let damage = value
+                    .as_f64()
+                    .ok_or("RUST_WORLD_CASTER_DAMAGE_RECEIPT_INVALID")?;
+                if !damage.is_finite() || damage < 0.0 {
+                    return Err("RUST_WORLD_CASTER_DAMAGE_RECEIPT_INVALID");
+                }
+                let total = acknowledged_caster_raw_damage_totals
+                    .entry(caster.clone())
+                    .or_default();
+                *total += damage;
+                if !total.is_finite() {
+                    return Err("RUST_WORLD_CASTER_DAMAGE_RECEIPT_INVALID");
+                }
+            }
             windows.push(serde_json::json!({
                 "index": index,
                 "native_kill_ns": self.now,
@@ -6269,6 +6293,7 @@ impl<A: Agent> Fight<A> {
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
                 "native_acknowledged_source_action_counts": native_source_action_counts,
+                "native_acknowledged_raw_damage_by_caster_type": native_caster_raw_damage,
                 "food_seconds": decisions_receipt.food_ns as f64 / 1e9,
                 "water_seconds": decisions_receipt.water_ns as f64 / 1e9,
                 "food_health_gain": decisions_receipt.food_health_gain,
@@ -6318,6 +6343,7 @@ impl<A: Agent> Fight<A> {
             // Preserve the original aggregate receipt while every window now
             // carries source actions charged only after that target's real ACK.
             "source_action_counts": acknowledged_source_action_totals,
+            "source_raw_damage_by_caster_type": acknowledged_caster_raw_damage_totals,
             "windows": windows,
         });
         self.cleanup();
