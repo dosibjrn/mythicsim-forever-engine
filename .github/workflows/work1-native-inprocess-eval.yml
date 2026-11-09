@@ -47,6 +47,21 @@ jobs:
           import json
           o = json.load(open('/tmp/work1-spatial-out.json'))
           r = o['result']
+          execution = o['native_execution']
+          source = json.load(open('/tmp/work1-spatial-smoke.json'))
+          # Execution metadata must distinguish native protocol, seed and
+          # scenario from the original source request hash. A route cache must
+          # also hash exact prepared input, recovery schedule and engine SHA.
+          assert execution == {
+              'protocol': 'native-inprocess-spatial-v1',
+              'rng_mode': 'balanced',
+              'seed': source['sim']['seed'],
+              'scenario_id': source['scenario_id'],
+              'declared_reference_revision': source['reference']['engine_revision'],
+              'target_count': 8,
+              'complete_cache_key': False,
+          }, execution
+          assert o['source_sha256'] == source['request_sha256'], o
           assert r['native_spatial_inprocess'] is True, r
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 8, r
@@ -200,7 +215,11 @@ jobs:
           cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 100 --rng-mode balanced --recovery-seconds 12 > /tmp/work1-spatial-100-out.json
           python3 - <<'PY'
           import json
-          r = json.load(open('/tmp/work1-spatial-100-out.json'))['result']
+          o = json.load(open('/tmp/work1-spatial-100-out.json'))
+          r = o['result']
+          assert o['native_execution']['target_count'] == 100, o['native_execution']
+          assert o['native_execution']['protocol'] == 'native-inprocess-spatial-v1', o
+          assert o['native_execution']['rng_mode'] == 'balanced', o
           assert r['native_spatial_inprocess'] is True, r
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 100, r
