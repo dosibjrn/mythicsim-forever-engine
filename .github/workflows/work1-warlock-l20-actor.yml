@@ -115,16 +115,23 @@ jobs:
                 json.dumps({'swing_speed':enemy['swing_speed'],
                             'action_id':enemy.get('action_id')},sort_keys=True),flush=True)
           PY
-      - name: Checkout Work1 Forever P3 candidate scorer (cross-repo integration)
+      - name: Checkout merged Forever main for source-native integration
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dosibjrn/forever-sim
-          # Paid P3 must exercise the latest Work1 third-candidate code rather
-          # than silently running the older two-candidate scorer from main.
-          # This is an integration diagnostic for PR #1184, not an M1 run.
-          ref: refs/pull/1184/head
+          # PR #1184's third-native-candidate scorer is now merged on main.
+          # Exercise the real integration; keep the checked-out exact SHA below.
+          ref: main
           path: forever
           persist-credentials: false
+      - name: Preserve exact Rust and Forever integration revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > /tmp/warlock-l20-rust-commit.txt
+          git -C forever rev-parse HEAD > /tmp/warlock-l20-forever-commit.txt
+          echo "WORK1_RUST_COMMIT=$(cat /tmp/warlock-l20-rust-commit.txt)"
+          echo "WORK1_FOREVER_COMMIT=$(cat /tmp/warlock-l20-forever-commit.txt)"
       - name: Run real L20 Warlock gsim ↔ native two-target ACK chain
         shell: bash
         run: |
@@ -320,5 +327,7 @@ jobs:
             /tmp/warlock-l20-prepared.json
             /tmp/warlock-l20-paid.json
             /tmp/warlock-l20-equipped-p3-no-record.json
+            /tmp/warlock-l20-rust-commit.txt
+            /tmp/warlock-l20-forever-commit.txt
           if-no-files-found: warn
           retention-days: 14
