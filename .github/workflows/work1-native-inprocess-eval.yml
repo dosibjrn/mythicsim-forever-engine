@@ -52,6 +52,19 @@ jobs:
           # Measure actual native regeneration across each paid gap. A World
           # optimizer must not substitute its own health/mana recovery model.
           import math
+          # The native source counters are partitioned at each real pull:
+          # charged travel/rest cannot be mislabeled as in-combat regen.
+          for w in r['windows']:
+              assert math.isclose(
+                  w['native_total_mana_regen_actual_gain'],
+                  w['native_recovery_mana_regen_actual_gain']
+                  + w['native_combat_mana_regen_actual_gain'],
+                  rel_tol=1e-9, abs_tol=1e-8), w
+              assert (w['native_total_mana_regen_events']
+                      == w['native_recovery_mana_regen_events']
+                      + w['native_combat_mana_regen_events']), w
+              assert w['native_recovery_mana_regen_actual_gain'] >= 0, w
+              assert w['native_combat_mana_regen_actual_gain'] >= 0, w
           assert r['windows'][0]['native_recovery_health_delta'] == 0.0, r
           assert r['windows'][0]['native_recovery_mana_delta'] == 0.0, r
           for previous, current in zip(r['windows'], r['windows'][1:]):
@@ -91,6 +104,19 @@ jobs:
           assert len(windows) == 8, r
           assert all(w['native_damage'] > 0 for w in windows), r
           import math
+          # The native source counters are partitioned at each real pull:
+          # charged travel/rest cannot be mislabeled as in-combat regen.
+          for w in r['windows']:
+              assert math.isclose(
+                  w['native_total_mana_regen_actual_gain'],
+                  w['native_recovery_mana_regen_actual_gain']
+                  + w['native_combat_mana_regen_actual_gain'],
+                  rel_tol=1e-9, abs_tol=1e-8), w
+              assert (w['native_total_mana_regen_events']
+                      == w['native_recovery_mana_regen_events']
+                      + w['native_combat_mana_regen_events']), w
+              assert w['native_recovery_mana_regen_actual_gain'] >= 0, w
+              assert w['native_combat_mana_regen_actual_gain'] >= 0, w
           for previous, current in zip(windows, windows[1:]):
               assert math.isclose(
                   current['native_actor_health_at_pull'],
@@ -129,6 +155,19 @@ jobs:
           assert len(r['windows']) == 100, r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
           import math
+          # The native source counters are partitioned at each real pull:
+          # charged travel/rest cannot be mislabeled as in-combat regen.
+          for w in r['windows']:
+              assert math.isclose(
+                  w['native_total_mana_regen_actual_gain'],
+                  w['native_recovery_mana_regen_actual_gain']
+                  + w['native_combat_mana_regen_actual_gain'],
+                  rel_tol=1e-9, abs_tol=1e-8), w
+              assert (w['native_total_mana_regen_events']
+                      == w['native_recovery_mana_regen_events']
+                      + w['native_combat_mana_regen_events']), w
+              assert w['native_recovery_mana_regen_actual_gain'] >= 0, w
+              assert w['native_combat_mana_regen_actual_gain'] >= 0, w
           for previous, current in zip(r['windows'], r['windows'][1:]):
               assert math.isclose(
                   current['native_actor_health_at_pull'],
