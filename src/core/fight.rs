@@ -5832,6 +5832,8 @@ impl<A: Agent> Fight<A> {
 
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
+            let mut native_recovery_item_mana_ticks = 0;
+            let mut native_recovery_item_mana_actual_gain = 0.0_f64;
             let mut native_recovery_elapsed_ns = 0;
             let mut native_spatial_travel_ns = 0;
             // Source-native retained actor resources are sampled on both
@@ -5877,10 +5879,17 @@ impl<A: Agent> Fight<A> {
                 // any native world exchange observes moving=true, even while
                 // the spatial clock and position do advance correctly.
                 if native_spatial_travel_ns > 0 {
-                    native_recovery_ticks +=
+                    let (ticks, item_ticks, item_gain) =
                         self.recover_native_world_actor_until(world_started_at)?;
+                    native_recovery_ticks += ticks;
+                    native_recovery_item_mana_ticks += item_ticks;
+                    native_recovery_item_mana_actual_gain += item_gain;
                 }
-                native_recovery_ticks += self.recover_native_world_actor_until(next_at)?;
+                let (ticks, item_ticks, item_gain) =
+                    self.recover_native_world_actor_until(next_at)?;
+                native_recovery_ticks += ticks;
+                native_recovery_item_mana_ticks += item_ticks;
+                native_recovery_item_mana_actual_gain += item_gain;
                 native_recovery_elapsed_ns = next_at - killed_at;
                 native_recovery_health_delta = self.player.health - health_before_recovery;
                 native_recovery_mana_delta = self.player.mana - mana_before_recovery;
@@ -6015,6 +6024,10 @@ impl<A: Agent> Fight<A> {
                 "native_spatial_position": world_bridge::inprocess_position_receipt(),
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
+                // Counts and resource gain from *executed* native scheduled item
+                // effects, not an assumed food/drink use or a generic mana tick.
+                "native_scheduled_item_mana_ticks": native_recovery_item_mana_ticks,
+                "native_scheduled_item_mana_actual_gain": native_recovery_item_mana_actual_gain,
             }));
             previous_damage = total_damage;
             previous_health_damage = health_damage;
@@ -6101,7 +6114,7 @@ impl<A: Agent> Fight<A> {
     /// not an invented mana refill. Keep combat events and their handles queued
     /// for the following pull; never execute attacks on a defeated world target.
     fn recover_native_world_actor_until(&mut self, until_ns: i64)
-        -> Result<usize, &'static str>
+        -> Result<(usize, usize, f64), &'static str>
     {
         if until_ns < self.now {
             return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
@@ -6110,6 +6123,8 @@ impl<A: Agent> Fight<A> {
         // Reject death before passive regen can move the clock or restore HP.
         self.require_living_native_world_actor()?;
         let mut ticks = 0;
+        let mut item_mana_ticks = 0;
+        let mut item_mana_actual_gain = 0.0_f64;
         // Follow the live 2D clock through travel. A single unobserved time jump
         // would skip the actual SpatialPlayerMoveStep observations and lose
         // native moving/cast-legality receipts even though gsim paid the route.
@@ -6132,8 +6147,18 @@ impl<A: Agent> Fight<A> {
                     self.require_living_native_world_actor()?;
                 }
                 if self.handle_still_valid(handle, &action) {
+                    let item_mana_tick = matches!(&action, Action::ItemManaTick { .. });
+                    let mana_before_item = self.player.mana;
                     self.run_action(handle, action);
                     self.require_living_native_world_actor()?;
+                    if item_mana_tick {
+                        let actual_gain = self.player.mana - mana_before_item;
+                        if !actual_gain.is_finite() || actual_gain < -1e-8 {
+                            return Err("RUST_WORLD_ITEM_MANA_RECEIPT_INVALID");
+                        }
+                        item_mana_ticks += 1;
+                        item_mana_actual_gain += actual_gain.max(0.0);
+                    }
                     ticks += 1;
                 }
             }
@@ -6156,7 +6181,7 @@ impl<A: Agent> Fight<A> {
                 }
             }
         }
-        Ok(ticks)
+        Ok((ticks, item_mana_ticks, item_mana_actual_gain))
     }
 
     /// Begin a second distinct world target on the SAME native actor.
@@ -7130,8 +7155,11 @@ mod tests {
             },
         );
         let end = start + 2 * second;
-        let executed = fight.recover_native_world_actor_until(end).unwrap();
+        let (executed, item_ticks, item_gain) =
+            fight.recover_native_world_actor_until(end).unwrap();
         assert!(executed >= 2, "item recovery was not executed on the paid clock");
+        assert_eq!(item_ticks, 2, "source item actions were not separately counted");
+        assert!(item_gain >= 34.0, "actual item-mana gain was not measured");
         assert!(fight.resources[metrics].events >= events_before + 2);
         assert!(fight.player.mana >= 34.0, "the source item ticks restored no mana");
         assert_eq!(fight.now, end);
@@ -7185,8 +7213,11 @@ mod tests {
         let before = fight.now;
         fight.player.mana = 0.0;
         let end = before + 12 * crate::core::time::NS_PER_SECOND;
-        let ticks = fight.recover_native_world_actor_until(end).unwrap();
+        let (ticks, item_ticks, item_gain) =
+            fight.recover_native_world_actor_until(end).unwrap();
         assert!(ticks > 0, "scheduled native mana ticks were not replayed");
+        assert_eq!(item_ticks, 0, "passive mana regen is not an item effect");
+        assert_eq!(item_gain, 0.0);
         assert!(fight.player.mana > 0.0, "native mana regeneration did not apply");
         assert_eq!(fight.now, end);
         assert!(fight.accepts_next_target_clock(end, end + 1_000_000_000, true));
