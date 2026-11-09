@@ -6071,14 +6071,27 @@ impl<A: Agent> Fight<A> {
                 *previous = spell.casts;
             }
         }
-        // Count only native scheduler regeneration actually paid on the
-        // retained actor between ACKed world kills. Time alone, an assumed
-        // refill or a completed movement schedule is not regeneration proof.
+        // Paid recovery is a clock-accounting receipt, not proof of passive
+        // regeneration or food/drink. A zero-rest chain pull or short paid
+        // walk can legitimately have no scheduled regen tick. Require that
+        // the retained native clock actually covered the requested rest AND
+        // the source-2D travel/ACK offset; keep tick/gain receipts separate.
         let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
-            window["native_passive_recovery_ns"]
-                .as_i64().is_some_and(|ns| ns > 0)
-                && window["native_passive_recovery_ticks"]
-                    .as_u64().is_some_and(|ticks| ticks > 0)
+            match (
+                window["native_passive_recovery_ns"].as_i64(),
+                window["native_requested_recovery_seconds"].as_u64(),
+                window["native_spatial_travel_ns"].as_i64(),
+            ) {
+                (Some(elapsed), Some(wait), Some(travel))
+                    if elapsed >= 0 && travel >= 0 =>
+                {
+                    let requested_ns = (wait as i64) * crate::core::time::NS_PER_SECOND;
+                    elapsed >= requested_ns
+                        && travel.checked_add(1_000_000)
+                            .is_some_and(|required| elapsed >= required)
+                }
+                _ => false,
+            }
         });
         let report = serde_json::json!({
             "scope": if world_bridge::inprocess_enabled() {
