@@ -5894,6 +5894,15 @@ impl<A: Agent> Fight<A> {
             // Python or confusing the prior kill state with the next pull.
             let native_actor_health_at_pull = self.player.health;
             let native_actor_mana_at_pull = self.player.mana;
+            // Snapshot source scheduler counters AFTER paid travel/rest and BEFORE
+            // this pull. Earlier receipts incorrectly called the entire
+            // kill-to-kill interval "combat" mana regeneration.
+            let mana_regen_gain_at_pull =
+                self.resources[self.mana_regen_casting].actual_gain
+                + self.resources[self.mana_regen_not_casting].actual_gain;
+            let mana_regen_events_at_pull =
+                self.resources[self.mana_regen_casting].events
+                + self.resources[self.mana_regen_not_casting].events;
             self.advance_living_native_world_actor()?;
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
@@ -5917,6 +5926,11 @@ impl<A: Agent> Fight<A> {
             if !mana_regen_gain.is_finite()
                 || mana_regen_gain < previous_mana_regen_gain - 1e-8
                 || mana_regen_events < previous_mana_regen_events
+                || !mana_regen_gain_at_pull.is_finite()
+                || mana_regen_gain_at_pull < previous_mana_regen_gain - 1e-8
+                || mana_regen_gain < mana_regen_gain_at_pull - 1e-8
+                || mana_regen_events_at_pull < previous_mana_regen_events
+                || mana_regen_events < mana_regen_events_at_pull
             {
                 return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
             }
@@ -5984,9 +5998,17 @@ impl<A: Agent> Fight<A> {
                 "native_recovery_mana_delta": native_recovery_mana_delta,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
+                "native_recovery_mana_regen_actual_gain":
+                    (mana_regen_gain_at_pull - previous_mana_regen_gain).max(0.0),
+                "native_recovery_mana_regen_events":
+                    mana_regen_events_at_pull - previous_mana_regen_events,
                 "native_combat_mana_regen_actual_gain":
-                    (mana_regen_gain - previous_mana_regen_gain).max(0.0),
+                    (mana_regen_gain - mana_regen_gain_at_pull).max(0.0),
                 "native_combat_mana_regen_events":
+                    mana_regen_events - mana_regen_events_at_pull,
+                "native_total_mana_regen_actual_gain":
+                    (mana_regen_gain - previous_mana_regen_gain).max(0.0),
+                "native_total_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
                 "native_spatial_travel_ns": native_spatial_travel_ns,
                 "native_spatial_moving_samples": world_bridge::inprocess_moving_samples(),
