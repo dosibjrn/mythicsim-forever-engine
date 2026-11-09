@@ -6089,6 +6089,9 @@ impl<A: Agent> Fight<A> {
         self.log = None;
         world_bridge::begin_iteration(0);
         self.prepare_first_native_pull();
+        // The first native prepull can start before t=0. Charge the full
+        // native actor clock, including that setup, when comparing routes.
+        let native_chain_started_at_ns = self.now;
         let food_water_metrics = if matches!(strategy, WorldRecoveryStrategy::Decisions { .. }) {
             Some(self.register_world_food_water_metrics())
         } else {
@@ -6110,6 +6113,7 @@ impl<A: Agent> Fight<A> {
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
             let mut native_recovery_elapsed_ns = 0;
+            let mut native_inter_pull_elapsed_ns = 0_i64;
             let mut decisions_receipt = WorldRecoveryReceipt::default();
             if index != 0 {
                 // Retain the Rust actor, resources and all native queue state.
@@ -6149,11 +6153,18 @@ impl<A: Agent> Fight<A> {
                         self.now
                     }
                 };
+                native_inter_pull_elapsed_ns = next_at
+                    .checked_sub(killed_at)
+                    .ok_or("RUST_WORLD_INTER_PULL_CLOCK_REWOUND")?;
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
                 self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
+            // The executable native scheduler owns both this combat duration
+            // and the previous world/food/drink/travel gap. A mandatory 1 ms
+            // new-target handshake must not vanish from true route elapsed.
+            let native_pull_started_at_ns = self.now;
             // Recovery ticks mutate the same cumulative actor metrics as combat.
             // Snapshot at the actual next pull; the prior kill's metric is not
             // a valid baseline for a field explicitly labeled "combat".
@@ -6169,6 +6180,12 @@ impl<A: Agent> Fight<A> {
             )?;
 
             self.advance_living_native_world_actor()?;
+            let native_pull_elapsed_ns = self.now
+                .checked_sub(native_pull_started_at_ns)
+                .ok_or("RUST_WORLD_PULL_CLOCK_REWOUND")?;
+            let native_elapsed_since_start_ns = self.now
+                .checked_sub(native_chain_started_at_ns)
+                .ok_or("RUST_WORLD_CHAIN_CLOCK_REWOUND")?;
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
             }
@@ -6225,6 +6242,9 @@ impl<A: Agent> Fight<A> {
             windows.push(serde_json::json!({
                 "index": index,
                 "native_kill_ns": self.now,
+                "native_pull_elapsed_ns": native_pull_elapsed_ns,
+                "native_inter_pull_elapsed_ns": native_inter_pull_elapsed_ns,
+                "native_elapsed_since_start_ns": native_elapsed_since_start_ns,
                 "native_damage": total_damage - previous_damage,
                 "actor_mana": self.player.mana,
                 "actor_health": self.player.health,
@@ -6251,6 +6271,9 @@ impl<A: Agent> Fight<A> {
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
+        let native_elapsed_ns = self.now
+            .checked_sub(native_chain_started_at_ns)
+            .ok_or("RUST_WORLD_CHAIN_CLOCK_REWOUND")?;
         // Paid source-native passive ticks and actual time-charged Decisions
         // food/water both count. Neither movement nor an assumed free refill does.
         let native_passive_recovery_paid = windows
@@ -6260,6 +6283,7 @@ impl<A: Agent> Fight<A> {
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
+            "native_elapsed_ns": native_elapsed_ns,
             "native_hostile_target_prepared": !self.enemies.is_empty(),
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
