@@ -49,6 +49,20 @@ jobs:
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 8, r
           assert len(r['windows']) == 8, r
+          # Measure actual native regeneration across each paid gap. A World
+          # optimizer must not substitute its own health/mana recovery model.
+          import math
+          assert r['windows'][0]['native_recovery_health_delta'] == 0.0, r
+          assert r['windows'][0]['native_recovery_mana_delta'] == 0.0, r
+          for previous, current in zip(r['windows'], r['windows'][1:]):
+              assert math.isclose(
+                  current['native_actor_health_at_pull'],
+                  previous['actor_health'] + current['native_recovery_health_delta'],
+                  abs_tol=1e-6), (previous, current)
+              assert math.isclose(
+                  current['native_actor_mana_at_pull'],
+                  previous['actor_mana'] + current['native_recovery_mana_delta'],
+                  abs_tol=1e-6), (previous, current)
           spatial = [w['native_spatial_position'] for w in r['windows']]
           assert [p['target_source_index'] for p in spatial] == list(range(8)), spatial
           assert all(len(p['target_xy_yards']) == len(p['actor_xy_yards']) == 2 for p in spatial)
@@ -76,6 +90,16 @@ jobs:
           windows = r['windows']
           assert len(windows) == 8, r
           assert all(w['native_damage'] > 0 for w in windows), r
+          import math
+          for previous, current in zip(windows, windows[1:]):
+              assert math.isclose(
+                  current['native_actor_health_at_pull'],
+                  previous['actor_health'] + current['native_recovery_health_delta'],
+                  abs_tol=1e-6), (previous, current)
+              assert math.isclose(
+                  current['native_actor_mana_at_pull'],
+                  previous['actor_mana'] + current['native_recovery_mana_delta'],
+                  abs_tol=1e-6), (previous, current)
           # One millisecond is the actual ACK/next-target clock transition;
           # there must be no extra mandatory one-second rest. Spatial
           # travel remains fully charged on the retained native clock.
@@ -104,6 +128,16 @@ jobs:
           assert r['world_targets_killed'] == 100, r
           assert len(r['windows']) == 100, r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
+          import math
+          for previous, current in zip(r['windows'], r['windows'][1:]):
+              assert math.isclose(
+                  current['native_actor_health_at_pull'],
+                  previous['actor_health'] + current['native_recovery_health_delta'],
+                  abs_tol=1e-6), (previous, current)
+              assert math.isclose(
+                  current['native_actor_mana_at_pull'],
+                  previous['actor_mana'] + current['native_recovery_mana_delta'],
+                  abs_tol=1e-6), (previous, current)
           assert sum(w['native_spatial_travel_ns'] for w in r['windows']) > 0, r
           # An in-range mob needs no walk. Every actual paid walk, including
           # sub-100ms legs, must still be seen as moving on the native clock.
