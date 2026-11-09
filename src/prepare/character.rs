@@ -132,6 +132,11 @@ pub(crate) fn unit_level_f64(
 /// Go `RatingConversions` and `AddRatingConversions`.
 pub(crate) fn add_rating_conversions(sim: &mut Sim, unit: UnitId) {
     use constants::*;
+    // Rating coefficients below are sourced at level 60 only. The selected
+    // engine already refuses to apply these conversions to lower-level actors.
+    if sim.unit(unit).level != CHARACTER_LEVEL {
+        return;
+    }
     let conversions: [(Stat, Stat, f64, f64); 12] = [
         (
             Stat::MeleeHitRating,
@@ -216,6 +221,24 @@ pub(crate) fn add_rating_conversions(sim: &mut Sim, unit: UnitId) {
     }
 }
 
+const LEVEL_DEPENDENT_RATING_STATS: [Stat; 11] = [
+    Stat::MeleeHitRating,
+    Stat::SpellHitRating,
+    Stat::MeleeCritRating,
+    Stat::SpellCritRating,
+    Stat::MeleeHasteRating,
+    Stat::SpellHasteRating,
+    Stat::ExpertiseRating,
+    Stat::DefenseRating,
+    Stat::BlockRating,
+    Stat::DodgeRating,
+    Stat::ParryRating,
+];
+
+fn has_level_dependent_rating_stats(stats: &Stats) -> bool {
+    LEVEL_DEPENDENT_RATING_STATS
+        .into_iter()
+        .any(|stat| stats[stat] != 0.0)
 /// Go `Character.addUniversalStatDependencies`.
 pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: UnitId) {
     add_rating_conversions(sim, unit);
@@ -425,6 +448,17 @@ impl Sim {
             }
         }
         let cached = self.compute_equip_stats(id);
+        if unit.level != constants::CHARACTER_LEVEL
+            && has_level_dependent_rating_stats(&cached)
+        {
+            return Err(Refusal::new(
+                "level",
+                format!(
+                    "player level {} {class} loadout contains combat-rating stats but no level-{} rating conversion source is available",
+                    unit.level, unit.level
+                ),
+            ));
+        }
         let character = self.character_mut(id);
         character.cached_equip_stats = cached;
         character.equip_cache_valid = true;
@@ -778,6 +812,26 @@ pub(crate) fn fresh_pseudo_stats() -> PseudoStats {
 #[cfg(test)]
 mod warlock_l20_actor_source_tests {
     use super::*;
+
+    #[test]
+    fn l20_warlock_does_not_inherit_unsourced_level_60_rating_conversions() {
+        let player = Message::from_json_text(
+            "proto.Player", r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+        ).unwrap();
+        let mut sim = Sim::new();
+        let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
+        assert_eq!(sim.unit(unit).level, 20);
+        assert_eq!(
+            sim.unit(unit).sdm.stat_dependency_coeff(
+                Stat::SpellHitRating, Stat::SpellHitPercent,
+            ),
+            0.0,
+        );
+        let mut equipment = Stats::default();
+        assert!(!has_level_dependent_rating_stats(&equipment));
+        equipment[Stat::SpellHitRating] = 1.0;
+        assert!(has_level_dependent_rating_stats(&equipment));
+    }
 
     #[test]
     fn troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection() {
