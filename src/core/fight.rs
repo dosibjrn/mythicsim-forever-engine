@@ -5833,6 +5833,23 @@ impl<A: Agent> Fight<A> {
             WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction })
     }
 
+    /// A lethal world-target ACK does not establish that the retained player survived.
+    /// Reject death before any further native action or pull; a dead actor must not
+    /// complete a 100-mob chain by relying on ordinary time-bounded simulation.
+    fn advance_living_native_world_actor(&mut self) -> Result<(), &'static str> {
+        loop {
+            if !self.player.health.is_finite() {
+                return Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID");
+            }
+            if self.player.health <= 0.0 {
+                return Err("RUST_MULTI_WORLD_ACTOR_DIED");
+            }
+            if !self.step() {
+                return Ok(());
+            }
+        }
+    }
+
     fn native_two_world_targets_with_strategy(
         &mut self,
         target_count: usize,
@@ -5924,7 +5941,7 @@ impl<A: Agent> Fight<A> {
                     mana_regen_at_pull, mana_regen_events_at_pull,
                 )?;
 
-            while self.step() {}
+            self.advance_living_native_world_actor()?;
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
             }
@@ -7002,6 +7019,27 @@ impl<A: Agent> Fight<A> {
 #[cfg(test)]
 mod tests {
     use super::{Mp5Path, Side, DEFENDERS, MAX_TARGETS};
+
+    #[test]
+    fn native_world_chain_refuses_dead_actor_before_scheduling_another_action() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 = serde_json::from_str(
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"))
+        ).unwrap();
+        for (health, expected) in [
+            (0.0, "RUST_MULTI_WORLD_ACTOR_DIED"),
+            (-1.0, "RUST_MULTI_WORLD_ACTOR_DIED"),
+            (f64::NAN, "RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID"),
+        ] {
+            let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+                &prepared, crate::core::rng::RngMode::Stochastic,
+            ).unwrap();
+            fight.player.health = health;
+            let clock_before = fight.now;
+            assert_eq!(fight.advance_living_native_world_actor(), Err(expected));
+            assert_eq!(fight.now, clock_before, "dead actor was advanced");
+        }
+    }
 
     #[test]
     fn native_persistent_early_world_kill_clock_boundary() {
