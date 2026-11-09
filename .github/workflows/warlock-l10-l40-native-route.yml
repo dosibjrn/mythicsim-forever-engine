@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: dosibjrn/forever-sim
-          ref: c00b6d4bda14ffb05324045600a7fdd6d42f1aac
+          ref: 3736710fd329d720b6b447c1be147f57f47bd425
           path: forever
       - uses: actions/setup-python@v5
         with:
