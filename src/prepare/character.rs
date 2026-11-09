@@ -451,9 +451,7 @@ impl Sim {
         }
         let cached = self.compute_equip_stats(id);
         let actor_level = self.unit(id).level;
-        if actor_level != constants::CHARACTER_LEVEL
-            && has_level_dependent_rating_stats(&cached)
-        {
+        if actor_level != constants::CHARACTER_LEVEL && has_level_dependent_rating_stats(&cached) {
             return Err(Refusal::new(
                 "level",
                 format!(
@@ -828,6 +826,14 @@ mod warlock_l20_actor_source_tests {
                 Stat::SpellHitRating, Stat::SpellHitPercent,
             ),
             0.0,
+        );
+        let mut max_level = Sim::new();
+        let max_unit = max_level.new_character_at_level(0, 0, &player, &[], Some(60)).unwrap();
+        assert!(
+            max_level.unit(max_unit).sdm.stat_dependency_coeff(
+                Stat::SpellHitRating, Stat::SpellHitPercent,
+            ) > 0.0,
+            "the existing sourced level-60 conversion must remain available",
         );
         let mut equipment = Stats::default();
         assert!(!has_level_dependent_rating_stats(&equipment));
