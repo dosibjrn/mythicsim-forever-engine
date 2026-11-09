@@ -81,6 +81,46 @@ use crate::{
     mechanics::mana::RegenInputs,
 };
 
+/// Separate paid between-pull mana ticks from ticks earned during the fight.
+/// Metrics are cumulative over the retained actor, so each boundary must be
+/// sampled at the actual end of recovery / beginning of the next combat.
+fn native_world_mana_regen_delta(
+    start_gain: f64, start_events: i32, end_gain: f64, end_events: i32,
+) -> Result<(f64, i32), &'static str> {
+    if !start_gain.is_finite() || !end_gain.is_finite()
+        || end_gain < start_gain - 1e-8 || end_events < start_events
+    {
+        return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
+    }
+    Ok(((end_gain - start_gain).max(0.0), end_events - start_events))
+}
+
+#[cfg(test)]
+mod world_mana_receipt_tests {
+    use super::native_world_mana_regen_delta;
+
+    #[test]
+    fn retained_world_regen_receipts_do_not_count_paid_rest_as_combat() {
+        // One retained actor: previous kill -> paid rest -> next kill.
+        let (rest_gain, rest_ticks) =
+            native_world_mana_regen_delta(5.0, 1, 13.0, 4).unwrap();
+        let (combat_gain, combat_ticks) =
+            native_world_mana_regen_delta(13.0, 4, 17.0, 6).unwrap();
+        assert_eq!((rest_gain, rest_ticks), (8.0, 3));
+        assert_eq!((combat_gain, combat_ticks), (4.0, 2));
+        assert_eq!(rest_gain + combat_gain, 17.0 - 5.0);
+        assert_eq!(rest_ticks + combat_ticks, 6 - 1);
+        assert_eq!(
+            native_world_mana_regen_delta(13.0, 4, 12.0, 5),
+            Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC")
+        );
+        assert_eq!(
+            native_world_mana_regen_delta(13.0, 4, 14.0, 3),
+            Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC")
+        );
+    }
+}
+
 pub(crate) type SpellId = usize;
 pub(crate) type DotId = usize;
 pub(crate) type TimerId = usize;
@@ -5872,6 +5912,19 @@ impl<A: Agent> Fight<A> {
                     .ok_or("RUST_WORLD_TARGET_DURATION_OVERFLOW")?;
                 self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
+            // Recovery ticks mutate the same cumulative actor metrics as combat.
+            // Snapshot at the actual next pull; the prior kill's metric is not
+            // a valid baseline for a field explicitly labeled "combat".
+            let mana_regen_at_pull = self.resources[self.mana_regen_casting].actual_gain
+                + self.resources[self.mana_regen_not_casting].actual_gain;
+            let mana_regen_events_at_pull = self.resources[self.mana_regen_casting].events
+                + self.resources[self.mana_regen_not_casting].events;
+            let (rest_mana_regen_gain, rest_mana_regen_events) =
+                native_world_mana_regen_delta(
+                    previous_mana_regen_gain, previous_mana_regen_events,
+                    mana_regen_at_pull, mana_regen_events_at_pull,
+                )?;
+
             while self.step() {}
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
@@ -5886,18 +5939,17 @@ impl<A: Agent> Fight<A> {
             {
                 return Err("RUST_WORLD_HEALTH_DAMAGE_RECEIPT_NONMONOTONIC");
             }
-            // Existing source-native 2-second mana ticks own these gains.
-            // These events include in-combat ticks, NOT paid between-pull rest.
+            // Native metrics are cumulative across both combat and rest.
+            // Attribute only post-pull ticks to combat; publish rest separately.
             let mana_regen_gain = self.resources[self.mana_regen_casting].actual_gain
                 + self.resources[self.mana_regen_not_casting].actual_gain;
             let mana_regen_events = self.resources[self.mana_regen_casting].events
                 + self.resources[self.mana_regen_not_casting].events;
-            if !mana_regen_gain.is_finite()
-                || mana_regen_gain < previous_mana_regen_gain - 1e-8
-                || mana_regen_events < previous_mana_regen_events
-            {
-                return Err("RUST_WORLD_MANA_REGEN_RECEIPT_NONMONOTONIC");
-            }
+            let (combat_mana_regen_gain, combat_mana_regen_events) =
+                native_world_mana_regen_delta(
+                    mana_regen_at_pull, mana_regen_events_at_pull,
+                    mana_regen_gain, mana_regen_events,
+                )?;
             // The target has a genuine lethal world ACK and no pending damage.
             // Drain exactly this target's source actions; unlike a cumulative
             // final-only count, this supports native per-mob APL measurements.
@@ -5920,10 +5972,10 @@ impl<A: Agent> Fight<A> {
                 "actor_health": self.player.health,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
-                "native_combat_mana_regen_actual_gain":
-                    (mana_regen_gain - previous_mana_regen_gain).max(0.0),
-                "native_combat_mana_regen_events":
-                    mana_regen_events - previous_mana_regen_events,
+                "native_combat_mana_regen_actual_gain": combat_mana_regen_gain,
+                "native_combat_mana_regen_events": combat_mana_regen_events,
+                "native_rest_mana_regen_actual_gain": rest_mana_regen_gain,
+                "native_rest_mana_regen_events": rest_mana_regen_events,
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
                 "native_acknowledged_source_action_counts": native_source_action_counts,
