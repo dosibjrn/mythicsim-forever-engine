@@ -1,0 +1,149 @@
+{
+  "simOptions": {
+    "iterations": 5,
+    "randomSeed": "914",
+    "debugFirstIteration": false
+  },
+  "encounter": {
+    "duration": 30,
+    "targets": [
+      {
+        "level": 20,
+        "name": "Stationary L20 native APL smoke",
+        "stats": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "raid": {
+    "parties": [
+      {
+        "players": [
+          {
+            "name": "Warlock L20 Troll native source-equipped P3 smoke",
+            "class": "ClassWarlock",
+            "race": "RaceTroll",
+            "talentsString": "0-0-0",
+            "distanceFromTarget": 25,
+            "equipment": {
+              "items": [
+                {
+                  "id": 253949
+                },
+                {
+                  "id": 20442
+                },
+                {
+                  "id": 4315
+                },
+                {
+                  "id": 5542
+                },
+                {
+                  "id": 2585
+                },
+                {
+                  "id": 3598
+                },
+                {
+                  "id": 253913
+                },
+                {
+                  "id": 253925
+                },
+                {
+                  "id": 274741
+                },
+                {
+                  "id": 4320
+                },
+                {
+                  "id": 1189
+                },
+                {
+                  "id": 20429
+                },
+                {
+                  "id": 226546
+                },
+                {
+                  "id": 231877
+                },
+                {
+                  "id": 3490
+                },
+                {
+                  "id": 7558
+                },
+                {
+                  "id": 5210
+                }
+              ]
+            },
+            "warlock": {
+              "options": {
+                "classOptions": {}
+              }
+            },
+            "rotation": {
+              "type": "TypeAPL",
+              "priorityList": [
+                {
+                  "action": {
+                    "castSpell": {
+                      "spellId": {
+                        "spellId": 1088
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "level": 20
+          }
+        ]
+      }
+    ]
+  }
+}
