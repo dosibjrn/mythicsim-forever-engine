@@ -75,13 +75,56 @@ jobs:
                      and r.get("native_class")=="ClassWarlock"
                      for r in rows), "One or more real source-native L10-40 Warlock actor preparations failed"
           PY
-      - name: Propose a native-prepared legal L20 to L21 talent continuation
+      - name: Propose a native-prepared L20 to L21 talent continuation
+        id: adjacent
+        continue-on-error: true
         run: |
           python -u forever/tools/wf_warlock_next_level_source.py \
             --binary target/debug/forever-engine \
             --source fixtures/warlock-l20-troll-best-paid.request.json \
             --from-level 20 --to-level 21 \
             --out warlock-l21-source
+      - name: Preserve refused talent proposals and try paid-capable L20 build at L21 with one unspent point
+        if: steps.adjacent.outcome == 'failure'
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          folder=Path("warlock-l21-source")
+          p=folder/"proposal.json"
+          if p.exists():
+              refused=json.loads(p.read_text())
+              print("ACTUAL_NATIVE_TALENT_PROPOSAL_REFUSALS",json.dumps(refused,sort_keys=True),flush=True)
+          else:
+              print("NATIVE_PROPOSAL_NO_RECEIPT",flush=True)
+          source=json.loads(Path("fixtures/warlock-l20-troll-best-paid.request.json").read_text())
+          actor=source["raid"]["parties"][0]["players"][0]
+          actor["level"]=21
+          source["encounter"]["targets"][0]["level"]=21
+          request=folder/"source_request.json"
+          prepared=folder/"l21_frozen_l20.prepared.json"
+          request.write_text(json.dumps(source,indent=2)+"\n")
+          proc=subprocess.run(["target/debug/forever-engine","prepare",
+              "--request",str(request),"--actor-level","21","--outfile",str(prepared)],
+              capture_output=True,text=True)
+          print("FROZEN_L20_BUILD_L21_NATIVE_PREPARE",json.dumps({
+              "returncode":proc.returncode,"output":(proc.stderr or proc.stdout)[-2000:],
+              "talents":actor["talentsString"],
+              "interpretation":"L20 talents retained at L21; one point left unspent; not optimized",
+          }),flush=True)
+          if proc.returncode:
+              raise RuntimeError("selected Rust refused even retained L20 build at actual L21")
+          native=json.loads(prepared.read_text())["player"]
+          assert native["level"]==21 and native["class"]=="ClassWarlock", native
+          (folder/"fallback_policy.json").write_text(json.dumps({
+              "kind":"native_prepared_fallback_not_optimal",
+              "level":21,"source_level":20,
+              "native_prepared_actor_level":21,
+              "native_prepared_class":native["class"],
+              "talents":actor["talentsString"],
+              "note":"Real L21 actor with unchanged L20 talents and one unspent point; no claim of talent optimization or continuous 10-40 route"
+          },indent=2)+"\n")
+          PY
       - name: Execute true hostile 100-target paid gsim/Rust at L21, publish route coverage
         working-directory: forever
         run: |
