@@ -48,7 +48,7 @@ thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
     // Source-native damage event counts, kept across retained targets and reset per iteration.
     static SOURCE_ACTION_COUNTS: RefCell<BTreeMap<String, u64>> =
-        RefCell::new(BTreeMap::new());
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn enabled() -> bool {
