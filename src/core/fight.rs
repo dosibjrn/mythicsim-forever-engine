@@ -214,13 +214,59 @@ fn native_world_recovery_paid(window: &serde_json::Value, strategy: WorldRecover
             || window["water_seconds"]
                 .as_f64()
                 .is_some_and(|seconds| seconds > 0.0));
-    clock_paid && (passive_paid || vendor_paid)
+    // Decisions may deliberately skip food/water when retained HP and mana are
+    // above both recovery thresholds. The native/world clock still pays for
+    // the actual inter-pull travel, even when no regeneration tick falls in
+    // that short gap. Do not turn a no-rest-needed pull into an unpaid refusal.
+    // An omitted receipt or a requested full refill still needs observed
+    // passive or vendor recovery; neither earns credit from this exception.
+    let no_refill_needed = matches!(strategy, WorldRecoveryStrategy::Decisions { .. })
+        && window["decisions_full_recovery"].as_bool() == Some(false);
+    clock_paid && (passive_paid || vendor_paid || no_refill_needed)
 }
 
 #[cfg(test)]
 mod native_world_recovery_receipt_tests {
     use super::{native_world_recovery_paid, WorldRecoveryStrategy};
     use serde_json::json;
+
+    #[test]
+    fn decisions_recovery_counts_paid_travel_when_vendor_not_needed() {
+        // This is an actual native clock-paid 2D travel gap; Decisions
+        // correctly requested no refill because the actor retained resources.
+        // A mana tick cannot be required in a sub-two-second interval.
+        let strategy = WorldRecoveryStrategy::Decisions {
+            health_fraction: 0.5,
+            mana_fraction: 0.5,
+        };
+        let travel_only = json!({
+            "native_passive_recovery_ns": 100_000_000_i64,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 0.0,
+            "water_seconds": 0.0,
+            "decisions_full_recovery": false,
+        });
+        assert!(native_world_recovery_paid(&travel_only, strategy));
+        // Never infer a free refill, missing policy receipt, or fixed rest.
+        assert!(!native_world_recovery_paid(
+            &{
+                let mut free = travel_only.clone();
+                free["native_passive_recovery_ns"] = json!(0);
+                free
+            },
+            strategy
+        ));
+        let mut missing = travel_only.clone();
+        missing.as_object_mut().unwrap().remove("decisions_full_recovery");
+        assert!(!native_world_recovery_paid(&missing, strategy));
+        let mut refill_required = travel_only.clone();
+        refill_required["decisions_full_recovery"] = json!(true);
+        assert!(!native_world_recovery_paid(&refill_required, strategy));
+        assert!(!native_world_recovery_paid(
+            &travel_only,
+            WorldRecoveryStrategy::Fixed(0),
+        ));
+    }
 
     #[test]
     fn actual_decisions_food_or_water_counts_without_passive_mana_tick() {
