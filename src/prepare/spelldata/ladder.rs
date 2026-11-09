@@ -157,6 +157,20 @@ impl Ladder {
         }
     }
 
+    /// Select the strongest rank whose native client row is taught at actor level.
+    /// Keep level-60 behavior exactly as before; unsourced lower-level ranks are absent.
+    pub(crate) fn highest_at_level(&self, level: i32) -> &'static Spell {
+        if level == 60 {
+            return self.highest();
+        }
+        self.ranks
+            .iter()
+            .rev()
+            .find(|rank| rank.spell_level > 0 && i32::from(rank.spell_level) <= level)
+            .copied()
+            .unwrap_or_else(nil)
+    }
+
     pub(crate) fn len(&self) -> i32 {
         self.ranks.len() as i32
     }
