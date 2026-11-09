@@ -306,7 +306,7 @@ fn native_pet_options(class: Class) -> Vec<PetOption> {
     if class != Class::Warlock {
         return Vec::new();
     }
-    const ENUM: &str = "proto.WarlockOptions_Summon";
+    const ENUM: &str = "proto.WarlockOptions.Summon";
     let registered = crate::classes::warlock::prepare::registered_native_summons();
     let mut choices = Vec::new();
     if let Some(no_pet) = crate::contracts::request::enum_name(ENUM, 0) {
@@ -493,7 +493,7 @@ mod tests {
             let option = options.pets.iter().find(|pet| pet.summon == summon)
                 .expect("registered native demon must appear in options");
             assert_eq!(
-                crate::contracts::request::enum_number("proto.WarlockOptions_Summon", summon),
+                crate::contracts::request::enum_number("proto.WarlockOptions.Summon", summon),
                 Some(option.proto_enum_value)
             );
             assert_eq!(option.eligibility, "native_prepare_and_combat_required");
