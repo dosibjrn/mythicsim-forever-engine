@@ -205,6 +205,23 @@ jobs:
           assert sum(w["native_hostile_swing_casts"] for w in report["native_windows"]) > 0, report
           rows = report["native_windows"]
           assert len(rows) == 2 and report["actual_2d_ack"] is True, report
+          # Source-paid actor snapshots distinguish combat HP/mana deltas from
+          # the charged recovery between pulls. No Python regen/damage model.
+          for w in rows:
+              for resource in ("health", "mana"):
+                  start = w[f"actor_{resource}_before_pull"]
+                  end = w[f"actor_{resource}"]
+                  net = w[f"actor_{resource}_net_combat_change"]
+                  assert all(isinstance(v, (int, float)) and abs(v) < float("inf")
+                             for v in (start, end, net)), w
+                  assert abs((end - start) - net) < 1e-7, w
+          print("WARLOCK_L20_NATIVE_PER_PULL_ACTOR_RESOURCES",
+                json.dumps([{
+                    "health_before": w["actor_health_before_pull"],
+                    "health_after": w["actor_health"],
+                    "mana_before": w["actor_mana_before_pull"],
+                    "mana_after": w["actor_mana"]
+                } for w in rows], sort_keys=True), flush=True)
           # Native cumulative elapsed is the actual retained-actor clock:
           # combat plus inter-pull travel/food/water/handshake, not an
           # uncharged guessed downtime or just a sum of DPS windows.
