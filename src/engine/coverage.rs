@@ -2042,23 +2042,6 @@ fn sourced_actor_level(class: &str, level: i32) -> bool {
     }
 }
 
-#[cfg(test)]
-mod sourced_level_gate_tests {
-    use super::sourced_actor_level;
-
-    #[test]
-    fn selected_native_checkpoint_levels_reach_coverage() {
-        for class in ["ClassDruid", "ClassPriest", "ClassRogue", "ClassWarlock"] {
-            assert!(sourced_actor_level(class, 20), "{class} L20");
-        }
-        assert!(sourced_actor_level("ClassDruid", 30));
-        assert!(!sourced_actor_level("ClassWarlock", 30));
-        assert!(!sourced_actor_level("ClassRogue", 30));
-        assert!(!sourced_actor_level("ClassMage", 20));
-        assert!(!sourced_actor_level("ClassDruid", 40));
-    }
-}
-
 pub(crate) fn prepared_coverage(
     prepared: &PreparedV2,
     rotation: Option<&Rotation>,
@@ -3793,4 +3776,21 @@ fn unreachable_items(prepared: &PreparedV2, rotation: &Rotation) -> BTreeSet<usi
         })
         .map(|item| item.position)
         .collect()
+}
+
+#[cfg(test)]
+mod sourced_level_gate_tests {
+    use super::sourced_actor_level;
+
+    #[test]
+    fn selected_native_checkpoint_levels_reach_coverage() {
+        for class in ["ClassDruid", "ClassPriest", "ClassRogue", "ClassWarlock"] {
+            assert!(sourced_actor_level(class, 20), "{class} L20");
+        }
+        assert!(sourced_actor_level("ClassDruid", 30));
+        assert!(!sourced_actor_level("ClassWarlock", 30));
+        assert!(!sourced_actor_level("ClassRogue", 30));
+        assert!(!sourced_actor_level("ClassMage", 20));
+        assert!(!sourced_actor_level("ClassDruid", 40));
+    }
 }
