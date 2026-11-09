@@ -5770,14 +5770,19 @@ impl<A: Agent> Fight<A> {
     /// A target's lethal world ACK is not proof that the retained native actor survived.
     /// Refuse further scheduler actions after native player death in spatial 8/100-mob
     /// leveling as well as the external world path.
+    fn require_living_native_world_actor(&self) -> Result<(), &'static str> {
+        if !self.player.health.is_finite() {
+            return Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID");
+        }
+        if self.player.health <= 0.0 {
+            return Err("RUST_MULTI_WORLD_ACTOR_DIED");
+        }
+        Ok(())
+    }
+
     fn advance_living_native_world_actor(&mut self) -> Result<(), &'static str> {
         loop {
-            if !self.player.health.is_finite() {
-                return Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID");
-            }
-            if self.player.health <= 0.0 {
-                return Err("RUST_MULTI_WORLD_ACTOR_DIED");
-            }
+            self.require_living_native_world_actor()?;
             if !self.step() {
                 return Ok(());
             }
@@ -6057,6 +6062,9 @@ impl<A: Agent> Fight<A> {
         if until_ns < self.now {
             return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
         }
+        // The previous target's lethal ACK cannot resurrect a killed player.
+        // Reject death before passive regen can move the clock or restore HP.
+        self.require_living_native_world_actor()?;
         let mut ticks = 0;
         // Follow the live 2D clock through travel. A single unobserved time jump
         // would skip the actual SpatialPlayerMoveStep observations and lose
@@ -6073,13 +6081,16 @@ impl<A: Agent> Fight<A> {
             ) {
                 if at > self.now {
                     self.advance_to(at);
+                    self.require_living_native_world_actor()?;
                 }
                 if self.handle_still_valid(handle, &action) {
                     self.run_action(handle, action);
+                    self.require_living_native_world_actor()?;
                     ticks += 1;
                 }
             }
             self.advance_to(boundary);
+            self.require_living_native_world_actor()?;
             if world_bridge::enabled() {
                 let (distance, front, moving) =
                     world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken);
@@ -6992,6 +7003,39 @@ mod tests {
             let before = fight.now;
             assert_eq!(fight.advance_living_native_world_actor(), Err(expected));
             assert_eq!(fight.now, before, "dead native actor was advanced");
+        }
+    }
+
+    #[test]
+    fn native_paid_recovery_never_resurrects_a_dead_actor() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        for (health, expected) in [
+            (0.0, "RUST_MULTI_WORLD_ACTOR_DIED"),
+            (-1.0, "RUST_MULTI_WORLD_ACTOR_DIED"),
+            (f64::NAN, "RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID"),
+        ] {
+            let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+                &prepared,
+                crate::core::rng::RngMode::Stochastic,
+            )
+            .unwrap();
+            fight.prepare_first_native_pull();
+            while fight.step() {}
+            fight.player.health = health;
+            let before = fight.now;
+            let until = before + 12 * crate::core::time::NS_PER_SECOND;
+            assert_eq!(fight.recover_native_world_actor_until(until), Err(expected));
+            assert_eq!(fight.now, before, "dead actor received paid recovery");
+            if health.is_finite() {
+                assert_eq!(fight.player.health, health, "dead actor regenerated");
+            } else {
+                assert!(fight.player.health.is_nan());
+            }
         }
     }
 
