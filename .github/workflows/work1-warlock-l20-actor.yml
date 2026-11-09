@@ -115,11 +115,14 @@ jobs:
                 json.dumps({'swing_speed':enemy['swing_speed'],
                             'action_id':enemy.get('action_id')},sort_keys=True),flush=True)
           PY
-      - name: Checkout current Forever 2D world producer (cross-repo integration)
+      - name: Checkout Work1 Forever P3 candidate scorer (cross-repo integration)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dosibjrn/forever-sim
-          ref: main
+          # Paid P3 must exercise the latest Work1 third-candidate code rather
+          # than silently running the older two-candidate scorer from main.
+          # This is an integration diagnostic for PR #1184, not an M1 run.
+          ref: refs/pull/1184/head
           path: forever
           persist-credentials: false
       - name: Run real L20 Warlock gsim ↔ native two-target ACK chain
