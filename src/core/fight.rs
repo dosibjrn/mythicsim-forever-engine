@@ -5811,22 +5811,27 @@ impl<A: Agent> Fight<A> {
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
             let mut native_recovery_elapsed_ns = 0;
+            let mut native_spatial_travel_ns = 0;
             if index != 0 {
                 // Pay for rest on the same native clock and actor, without
                 // resetting resources, cooldowns, auras or the event queue.
                 // Only native scheduled passive regeneration is processed
                 // while the previous 2D target is dead.
                 let killed_at = self.now;
-                let next_at = killed_at
-                    .checked_add(i64::from(recovery_seconds) * crate::core::time::NS_PER_SECOND)
-                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
-                // The new target is selected before the paid travel/rest
-                // interval, so every 2D movement step can be observed by the
-                // native boundary while attacks remain paused.
+                // Select the next world target after a genuine native lethal
+                // ACK; never allow a route transition based on a time budget.
                 let world_started_at = killed_at
                     .checked_add(1_000_000)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
                 world_bridge::begin_next_target(world_started_at)?;
+                native_spatial_travel_ns = world_bridge::inprocess_travel_ns();
+                // Actor rest and spatial travel may overlap, but walking is
+                // never free. Charge their maximum on the same native clock.
+                let recovery_ns =
+                    i64::from(recovery_seconds) * crate::core::time::NS_PER_SECOND;
+                let next_at = killed_at
+                    .checked_add(recovery_ns.max(native_spatial_travel_ns))
+                    .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
                 native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
                 native_recovery_elapsed_ns = next_at - killed_at;
                 let next_end = next_at
@@ -5924,6 +5929,7 @@ impl<A: Agent> Fight<A> {
                     (mana_regen_gain - previous_mana_regen_gain).max(0.0),
                 "native_combat_mana_regen_events":
                     mana_regen_events - previous_mana_regen_events,
+                "native_spatial_travel_ns": native_spatial_travel_ns,
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
             }));
@@ -5949,8 +5955,14 @@ impl<A: Agent> Fight<A> {
                     .as_u64().is_some_and(|ticks| ticks > 0)
         });
         let report = serde_json::json!({
-            "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
-            "continuous_native_actor": true, "actual_2d_ack": true,
+            "scope": if world_bridge::inprocess_enabled() {
+                "NATIVE_INPROCESS_SPATIAL_WORLD_NOT_P4_P6"
+            } else {
+                "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6"
+            },
+            "native_spatial_inprocess": world_bridge::inprocess_enabled(),
+            "continuous_native_actor": true,
+            "actual_2d_ack": !world_bridge::inprocess_enabled(),
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
             "recovery_seconds_per_gap": recovery_seconds,
