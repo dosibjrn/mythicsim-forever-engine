@@ -2,9 +2,13 @@
 //! Activated only by FOREVER_GSIM_WORLD_BRIDGE=1. All damage comes from the
 //! unchanged native Fight::deal_damage; the world applies it before native
 //! scheduler resumes. This is a bounded multi-fight diagnostic, NOT P7 acceptance.
-use std::{cell::RefCell, io::{self, BufRead, Write}};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::{
+    cell::RefCell,
+    collections::BTreeMap,
+    io::{self, BufRead, Write},
+};
 
 const TICK_NS: i64 = 100_000_000;
 
@@ -42,6 +46,14 @@ struct Bridge {
 }
 thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
+    // Source-native damage event counts, kept across retained targets and reset per iteration.
+    static SOURCE_ACTION_COUNTS: RefCell<BTreeMap<String, u64>> =
+        const { RefCell::new(BTreeMap::new()) };
+    // Raw damage from ACK-confirmed native events, keyed by the source's
+    // caster type. Preserve overkill: do not infer effective damage from
+    // the target's clamped lethal HP or classify pets in a Python model.
+    static SOURCE_CASTER_RAW_DAMAGE: RefCell<BTreeMap<String, f64>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn enabled() -> bool {
@@ -49,22 +61,39 @@ pub(crate) fn enabled() -> bool {
 }
 
 pub(crate) fn start(source_hash: &str) {
-    assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
-    BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
-        iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
-        last_health: None, previous_ack_id: String::new(),
-        source_hash: source_hash.to_owned(), event_ordinal: 0,
-        pending: Vec::new(), iteration_finished: false,
-    }));
+    assert!(
+        enabled() && source_hash.len() == 64,
+        "RUST_WORLD_INVALID_SOURCE"
+    );
+    SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
+    SOURCE_CASTER_RAW_DAMAGE.with(|totals| totals.borrow_mut().clear());
+    BRIDGE.with(|state| {
+        *state.borrow_mut() = Some(Bridge {
+            iteration: 0,
+            sequence: 0,
+            next_tick_ns: 0,
+            last_tick_ns: -1,
+            last_health: None,
+            previous_ack_id: String::new(),
+            source_hash: source_hash.to_owned(),
+            event_ordinal: 0,
+            pending: Vec::new(),
+            iteration_finished: false,
+        })
+    });
 }
 
 /// Preserve original source request and seed; only first N source fights
 /// run during a cheap diagnostic, never silently award 10k-fight acceptance.
 pub(crate) fn requested_iterations(source_count: u32) -> u32 {
     let count = std::env::var("FOREVER_GSIM_WORLD_ITERATIONS")
-        .ok().map(|s| s.parse::<u32>().expect("RUST_WORLD_ITERATIONS_NOT_INTEGER"))
+        .ok()
+        .map(|s| s.parse::<u32>().expect("RUST_WORLD_ITERATIONS_NOT_INTEGER"))
         .unwrap_or(1);
-    assert!(count > 0 && count <= source_count, "RUST_WORLD_ITERATIONS_OUT_OF_SOURCE_RANGE");
+    assert!(
+        count > 0 && count <= source_count,
+        "RUST_WORLD_ITERATIONS_OUT_OF_SOURCE_RANGE"
+    );
     count
 }
 
@@ -72,11 +101,29 @@ pub(crate) fn begin_iteration(iteration: u32) {
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        assert!(iteration == 0 || iteration == bridge.iteration + 1,
-            "RUST_WORLD_ITERATION_NOT_SEQUENTIAL");
-        assert!(iteration == 0 || bridge.iteration_finished,
-            "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED");
+        // Iteration zero is only an initial start, never a way to erase an
+        // already acknowledged world tick or its native source-action counts.
+        if iteration == 0 {
+            assert!(
+                bridge.iteration == 0
+                    && bridge.sequence == 0
+                    && bridge.last_tick_ns == -1
+                    && bridge.previous_ack_id.is_empty(),
+                "RUST_WORLD_RESTART_AFTER_ACK"
+            );
+        } else {
+            assert!(
+                iteration == bridge.iteration + 1,
+                "RUST_WORLD_ITERATION_NOT_SEQUENTIAL"
+            );
+            assert!(
+                bridge.iteration_finished,
+                "RUST_WORLD_PREVIOUS_ITERATION_NOT_FINISHED"
+            );
+        }
         assert!(bridge.pending.is_empty(), "RUST_WORLD_UNFLUSHED_EVENTS");
+        SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
+        SOURCE_CASTER_RAW_DAMAGE.with(|totals| totals.borrow_mut().clear());
         bridge.iteration = iteration;
         bridge.sequence = 0;
         bridge.next_tick_ns = 0;
@@ -104,11 +151,15 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         // Expiring a duration does not kill a distinct gsim world mob.
         // Only the previous source-native effects' committed HP/death/hash ACK
         // can authorize this retained Rust actor to acquire its next target.
-        if bridge.sequence == 0 || bridge.previous_ack_id.len() != 64
-            || bridge.last_health != Some(0.0) {
+        if bridge.sequence == 0
+            || bridge.previous_ack_id.len() != 64
+            || bridge.last_health != Some(0.0)
+        {
             return Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL");
         }
-        bridge.iteration = bridge.iteration.checked_add(1)
+        bridge.iteration = bridge
+            .iteration
+            .checked_add(1)
             .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
         bridge.last_health = None; // new world target, not a healed old one
         bridge.next_tick_ns = at_ns;
@@ -127,24 +178,35 @@ mod persistent_next_target_world_lethal_ack_tests {
         // This is the live Rust bridge's real state machine, not a replacement
         // combat evaluator. Only exchange() can set these ACK-derived fields
         // in production.
-        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
-            iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(25.0),
-            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
-            event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
-        }));
-        assert_eq!(begin_next_target(200),
-            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        BRIDGE.with(|slot| {
+            *slot.borrow_mut() = Some(Bridge {
+                iteration: 0,
+                sequence: 1,
+                next_tick_ns: 200,
+                last_tick_ns: 100,
+                last_health: Some(25.0),
+                previous_ack_id: "a".repeat(64),
+                source_hash: "b".repeat(64),
+                event_ordinal: 9,
+                pending: Vec::new(),
+                iteration_finished: false,
+            })
+        });
+        assert_eq!(
+            begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
         BRIDGE.with(|slot| {
             let mut state = slot.borrow_mut();
             let state = state.as_mut().unwrap();
             state.last_health = Some(0.0);
             state.previous_ack_id.clear();
         });
-        assert_eq!(begin_next_target(200),
-            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
-        BRIDGE.with(|slot| slot.borrow_mut().as_mut().unwrap()
-            .previous_ack_id = "a".repeat(64));
+        assert_eq!(
+            begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
+        BRIDGE.with(|slot| slot.borrow_mut().as_mut().unwrap().previous_ack_id = "a".repeat(64));
         assert_eq!(begin_next_target(200), Ok(()));
         BRIDGE.with(|slot| {
             let state = slot.borrow();
@@ -158,8 +220,10 @@ mod persistent_next_target_world_lethal_ack_tests {
             assert_eq!(state.last_health, None);
         });
         // The new target cannot be skipped without its own lethal ACK.
-        assert_eq!(begin_next_target(300),
-            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        assert_eq!(
+            begin_next_target(300),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
     }
 }
 
@@ -169,12 +233,20 @@ mod world_lethal_terminal_tests {
 
     #[test]
     fn world_lethal_terminal_requires_committed_native_world_ack() {
-        BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
-            iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(10.0),
-            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
-            event_ordinal: 1, pending: Vec::new(), iteration_finished: false,
-        }));
+        BRIDGE.with(|state| {
+            *state.borrow_mut() = Some(Bridge {
+                iteration: 0,
+                sequence: 1,
+                next_tick_ns: 200,
+                last_tick_ns: 100,
+                last_health: Some(10.0),
+                previous_ack_id: "a".repeat(64),
+                source_hash: "b".repeat(64),
+                event_ordinal: 1,
+                pending: Vec::new(),
+                iteration_finished: false,
+            })
+        });
         assert!(!acknowledged_lethal());
         BRIDGE.with(|state| state.borrow_mut().as_mut().unwrap().last_health = Some(0.0));
         assert!(acknowledged_lethal());
@@ -201,10 +273,22 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
         } else {
             bridge.next_tick_ns
         };
-        (boundary >= 0 && boundary > bridge.last_tick_ns
-            && boundary <= next_native_ns && boundary <= end_ns)
+        (boundary >= 0
+            && boundary > bridge.last_tick_ns
+            && boundary <= next_native_ns
+            && boundary <= end_ns)
             .then_some(boundary)
     })
+}
+
+/// Identifies the real native effect and its caster without positional metadata swaps.
+/// The world bridge only transports events; it never invents combat damage.
+pub(crate) struct DamageSource {
+    pub(crate) action: String,
+    pub(crate) target_label: String,
+    pub(crate) caster_type: String,
+    pub(crate) caster_index: u32,
+    pub(crate) caster_label: String,
 }
 
 pub(crate) fn record_damage(
@@ -213,33 +297,52 @@ pub(crate) fn record_damage(
     crit: bool,
     landed: bool,
     periodic: bool,
-    action: String,
-    target_label: String,
-    caster_type: &str,
-    caster_index: u32,
-    caster_label: String,
+    source: DamageSource,
 ) {
     if !enabled() {
         return;
     }
-    assert!(damage.is_finite() && damage > 0.0 && landed, "RUST_WORLD_DAMAGE_INVALID");
+    assert!(
+        damage.is_finite() && damage > 0.0 && landed,
+        "RUST_WORLD_DAMAGE_INVALID"
+    );
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        append_damage_event(
-            bridge,
-            time_ns,
-            damage,
-            crit,
-            landed,
-            periodic,
-            action,
-            target_label,
-            caster_type,
-            caster_index,
-            caster_label,
-        );
+        append_damage_event(bridge, time_ns, damage, crit, landed, periodic, source);
     });
+}
+
+// Record only native damage events that survived the world ACK identity, event-set,
+// health and hash checks; a queued event is not yet confirmed world damage.
+fn record_source_action(action: &str) {
+    if !action.is_empty() {
+        SOURCE_ACTION_COUNTS.with(|counts| {
+            *counts.borrow_mut().entry(action.to_owned()).or_default() += 1;
+        });
+    }
+}
+
+fn record_acknowledged_source_actions(events: &[DamageEvent]) {
+    for event in events {
+        record_source_action(&event.source_action_id);
+        SOURCE_CASTER_RAW_DAMAGE.with(|totals| {
+            *totals
+                .borrow_mut()
+                .entry(event.native_caster_type.clone())
+                .or_default() += event.damage;
+        });
+    }
+}
+
+pub(crate) fn take_source_action_counts() -> Value {
+    SOURCE_ACTION_COUNTS.with(|counts| json!(std::mem::take(&mut *counts.borrow_mut())))
+}
+
+/// Return and reset only damage with a verified native→world ACK. Raw native
+/// event amounts include lethal overkill; no synthetic effective-damage split.
+pub(crate) fn take_source_caster_raw_damage() -> Value {
+    SOURCE_CASTER_RAW_DAMAGE.with(|totals| json!(std::mem::take(&mut *totals.borrow_mut())))
 }
 
 fn append_damage_event(
@@ -249,14 +352,21 @@ fn append_damage_event(
     crit: bool,
     landed: bool,
     periodic: bool,
-    action: String,
-    target_label: String,
-    caster_type: &str,
-    caster_index: u32,
-    caster_label: String,
+    source: DamageSource,
 ) {
+    let DamageSource {
+        action,
+        target_label,
+        caster_type,
+        caster_index,
+        caster_label,
+    } = source;
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
-    assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
+    assert!(
+        !has_lethal_ack(bridge),
+        "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK"
+    );
+    // A pending event is not yet ACKed; count only after the world applied it.
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -270,7 +380,7 @@ fn append_damage_event(
         native_target_index: 0,
         native_target_unit_index: 0,
         native_target_label: target_label,
-        native_caster_type: caster_type.to_owned(),
+        native_caster_type: caster_type,
         native_caster_unit_index: caster_index,
         native_caster_label: caster_label,
     });
@@ -285,26 +395,42 @@ fn send(value: &Value) {
 fn receive() -> Value {
     let stdin = io::stdin();
     let mut line = String::new();
-    assert!(stdin.lock().read_line(&mut line).expect("RUST_WORLD_STDIN_FAILED") > 0,
-        "RUST_WORLD_PEER_CLOSED_BEFORE_ACK");
+    assert!(
+        stdin
+            .lock()
+            .read_line(&mut line)
+            .expect("RUST_WORLD_STDIN_FAILED")
+            > 0,
+        "RUST_WORLD_PEER_CLOSED_BEFORE_ACK"
+    );
     serde_json::from_str(&line).expect("RUST_WORLD_INVALID_JSON")
 }
 fn number(value: &Value, key: &str) -> f64 {
-    let n = value[key].as_f64().unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"));
+    let n = value[key]
+        .as_f64()
+        .unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"));
     assert!(n.is_finite(), "RUST_WORLD_NONFINITE");
     n
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {
-    value[key].as_str().unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"))
+    value[key]
+        .as_str()
+        .unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"))
 }
 
 /// One retained Rust process. The next native scheduler action cannot execute
 /// before the gsim CombatRuntime applied every real source damage event.
-pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) -> (f64, bool, bool) {
-    let mut bridge = BRIDGE.with(|state| state.borrow_mut().take()
-        .expect("RUST_WORLD_NOT_STARTED"));
-    assert!(clock_ns > bridge.last_tick_ns && clock_ns >= 0,
-        "RUST_WORLD_CLOCK_NOT_MONOTONIC");
+pub(crate) fn exchange(
+    clock_ns: i64,
+    duration_ns: i64,
+    cumulative_damage: f64,
+) -> (f64, bool, bool) {
+    let mut bridge =
+        BRIDGE.with(|state| state.borrow_mut().take().expect("RUST_WORLD_NOT_STARTED"));
+    assert!(
+        clock_ns > bridge.last_tick_ns && clock_ns >= 0,
+        "RUST_WORLD_CLOCK_NOT_MONOTONIC"
+    );
     let events = std::mem::take(&mut bridge.pending);
     let event_ids: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
     let pid = std::process::id();
@@ -316,30 +442,42 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "native_process_id": pid, "native_request_sha256": bridge.source_hash,
     }));
     let tick = receive();
-    assert!(tick["type"] == "gsim_world_range_tick"
-        && tick["sequence"] == bridge.sequence
-        && tick["iteration_index"] == bridge.iteration
-        && tick["native_clock_ns"] == clock_ns
-        && tick["world_source"] == "gsim.CombatRuntime"
-        && tick["previous_world_ack_id"] == bridge.previous_ack_id,
-        "RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID");
+    assert!(
+        tick["type"] == "gsim_world_range_tick"
+            && tick["sequence"] == bridge.sequence
+            && tick["iteration_index"] == bridge.iteration
+            && tick["native_clock_ns"] == clock_ns
+            && tick["world_source"] == "gsim.CombatRuntime"
+            && tick["previous_world_ack_id"] == bridge.previous_ack_id,
+        "RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID"
+    );
     let distance = number(&tick, "distance_yards");
-    assert!((0.0..=100.0).contains(&distance), "RUST_WORLD_DISTANCE_INVALID");
-    let front = tick["in_front_of_target"].as_bool()
+    assert!(
+        (0.0..=100.0).contains(&distance),
+        "RUST_WORLD_DISTANCE_INVALID"
+    );
+    let front = tick["in_front_of_target"]
+        .as_bool()
         .expect("RUST_WORLD_FACING_NOT_PROVIDED");
     // World movement is a live gsim fact, not a native game-rule override.
     // Existing stationary 2D probes omit movement; retain their false
     // default. When a live route explicitly supplies movement, reject any
     // malformed flag rather than silently permitting a noninstant cast.
-    let moving = tick.get("gsim_player_moving").map(|value|
-        value.as_bool().expect("RUST_WORLD_PLAYER_MOVEMENT_INVALID")
-    ).unwrap_or(false);
+    let moving = tick
+        .get("gsim_player_moving")
+        .map(|value| value.as_bool().expect("RUST_WORLD_PLAYER_MOVEMENT_INVALID"))
+        .unwrap_or(false);
     let before_health = number(&tick, "world_target_health_before");
     let max_health = number(&tick, "world_target_max_health");
-    assert!(before_health > 0.0 && before_health <= max_health,
-        "RUST_WORLD_HEALTH_INVALID");
+    assert!(
+        before_health > 0.0 && before_health <= max_health,
+        "RUST_WORLD_HEALTH_INVALID"
+    );
     if let Some(last) = bridge.last_health {
-        assert!((last - before_health).abs() < 1e-6, "RUST_WORLD_HEALTH_ACK_NOT_CONTINUOUS");
+        assert!(
+            (last - before_health).abs() < 1e-6,
+            "RUST_WORLD_HEALTH_ACK_NOT_CONTINUOUS"
+        );
     }
     let before_hash = string(&tick, "world_sha256").to_owned();
     let next_world_boundary_ns = match tick.get("next_world_boundary_ns") {
@@ -347,10 +485,12 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         Some(value) => value.as_i64().expect("RUST_WORLD_DEADLINE_NOT_INTEGER"),
         None => panic!("RUST_WORLD_DEADLINE_MISSING"),
     };
-    assert!(next_world_boundary_ns == i64::MAX
-        || (next_world_boundary_ns > clock_ns
-            && next_world_boundary_ns <= clock_ns.saturating_add(TICK_NS)),
-        "RUST_WORLD_DEADLINE_INVALID");
+    assert!(
+        next_world_boundary_ns == i64::MAX
+            || (next_world_boundary_ns > clock_ns
+                && next_world_boundary_ns <= clock_ns.saturating_add(TICK_NS)),
+        "RUST_WORLD_DEADLINE_INVALID"
+    );
     send(&json!({
         "type": "native_rust_world_receipt",
         "iteration_index": bridge.iteration,
@@ -368,23 +508,32 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "checkpoint_certified": false
     }));
     let ack = receive();
-    assert!(ack["type"] == "gsim_native_damage_applied_ack"
-        && ack["sequence"] == bridge.sequence
-        && ack["iteration_index"] == bridge.iteration
-        && ack["native_process_id"] == pid
-        && ack["world_before_sha256"] == before_hash,
-        "RUST_WORLD_DAMAGE_ACK_IDENTITY_INVALID");
-    let accepted = ack["applied_event_ids"].as_array()
+    assert!(
+        ack["type"] == "gsim_native_damage_applied_ack"
+            && ack["sequence"] == bridge.sequence
+            && ack["iteration_index"] == bridge.iteration
+            && ack["native_process_id"] == pid
+            && ack["world_before_sha256"] == before_hash,
+        "RUST_WORLD_DAMAGE_ACK_IDENTITY_INVALID"
+    );
+    let accepted = ack["applied_event_ids"]
+        .as_array()
         .expect("RUST_WORLD_DAMAGE_ACK_EVENT_IDS_MISSING");
     assert_damage_acknowledgement(&event_ids, accepted);
     let ack_before = number(&ack, "world_target_health_before");
     let ack_after = number(&ack, "world_target_health_after");
     let expected_damage: f64 = events.iter().map(|e| e.damage).sum();
-    assert!((ack_before - before_health).abs() < 1e-6
-        && (ack_after - (before_health - expected_damage).max(0.0)).abs() < 1e-6,
-        "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
+    assert!(
+        (ack_before - before_health).abs() < 1e-6
+            && (ack_after - (before_health - expected_damage).max(0.0)).abs() < 1e-6,
+        "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH"
+    );
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
-    assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
+    assert!(
+        bridge.previous_ack_id.len() == 64,
+        "RUST_WORLD_DAMAGE_ACK_HASH_INVALID"
+    );
+    record_acknowledged_source_actions(&events);
     bridge.last_health = Some(ack_after);
     bridge.last_tick_ns = clock_ns;
     bridge.sequence += 1;
@@ -394,9 +543,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
 }
 
 fn has_lethal_ack(bridge: &Bridge) -> bool {
-    bridge.sequence > 0
-        && bridge.last_health == Some(0.0)
-        && bridge.previous_ack_id.len() == 64
+    bridge.sequence > 0 && bridge.last_health == Some(0.0) && bridge.previous_ack_id.len() == 64
 }
 
 pub(crate) fn lethal_ack_received() -> bool {
@@ -416,9 +563,14 @@ pub(crate) fn acknowledged_lethal() -> bool {
 }
 
 fn assert_damage_acknowledgement(event_ids: &[String], accepted: &[Value]) {
-    assert!(accepted.len() == event_ids.len()
-        && accepted.iter().zip(event_ids.iter()).all(|(a, b)| a.as_str() == Some(b)),
-        "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH");
+    assert!(
+        accepted.len() == event_ids.len()
+            && accepted
+                .iter()
+                .zip(event_ids.iter())
+                .all(|(a, b)| a.as_str() == Some(b)),
+        "RUST_WORLD_DAMAGE_ACK_EVENTS_MISMATCH"
+    );
 }
 
 fn mark_iteration_finished() {
@@ -467,6 +619,9 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
             "native_request_sha256": bridge.source_hash,
             "native_duration_ns": duration_ns,
             "native_total_damage": cumulative_damage,
+            // Additive receipt field: preserves the original selected pin's
+            // per-action native damage provenance for world/2D consumers.
+            "source_action_counts": take_source_action_counts(),
         }));
     });
 }
@@ -512,8 +667,19 @@ mod persistent_next_target_tests {
 }
 
 #[cfg(test)]
+fn test_damage_source(action: &str) -> DamageSource {
+    DamageSource {
+        action: action.to_owned(),
+        target_label: "target".to_owned(),
+        caster_type: "player".to_owned(),
+        caster_index: 0,
+        caster_label: "Druid".to_owned(),
+    }
+}
+
+#[cfg(test)]
 mod disabled_bridge_tests {
-    use super::{enabled, record_damage};
+    use super::{enabled, record_damage, test_damage_source};
 
     #[test]
     fn disabled_bridge_ignores_damage_before_validation() {
@@ -526,11 +692,7 @@ mod disabled_bridge_tests {
             false,
             false,
             false,
-            "disabled".to_owned(),
-            "target".to_owned(),
-            "player",
-            0,
-            "Druid".to_owned(),
+            test_damage_source("disabled"),
         );
     }
 }
@@ -538,8 +700,9 @@ mod disabled_bridge_tests {
 #[cfg(test)]
 mod iteration_teardown_tests {
     use super::{
-        append_damage_event, assert_damage_acknowledgement, begin_iteration,
-        mark_iteration_finished, Bridge, BRIDGE,
+        append_damage_event, assert_damage_acknowledgement, begin_iteration, begin_next_target,
+        mark_iteration_finished, record_acknowledged_source_actions, take_source_action_counts,
+        take_source_caster_raw_damage, test_damage_source, Bridge, BRIDGE,
     };
 
     fn bridge(iteration_finished: bool) -> Bridge {
@@ -573,15 +736,13 @@ mod iteration_teardown_tests {
                 false,
                 true,
                 false,
-                "cleanup-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                test_damage_source("cleanup-proc"),
             );
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.event_ordinal, 1);
         });
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
 
         // This is the same take-and-ACK sequence used by exchange().
         let events = BRIDGE.with(|state| {
@@ -599,11 +760,22 @@ mod iteration_teardown_tests {
             .map(serde_json::Value::String)
             .collect::<Vec<_>>();
         assert_damage_acknowledgement(&event_ids, &accepted);
+        record_acknowledged_source_actions(&events);
+        assert_eq!(
+            take_source_action_counts(),
+            serde_json::json!({"cleanup-proc": 1})
+        );
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 5.0})
+        );
 
         // Only after the matching ACK may finish close the iteration and the
         // next stochastic iteration begin.
         mark_iteration_finished();
         begin_iteration(1);
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
         BRIDGE.with(|state| {
             let state = state.borrow();
             let bridge = state.as_ref().unwrap();
@@ -622,15 +794,86 @@ mod iteration_teardown_tests {
                 false,
                 true,
                 false,
-                "combat-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                test_damage_source("combat-proc"),
             );
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
         });
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
+        let events = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            std::mem::take(&mut state.as_mut().unwrap().pending)
+        });
+        record_acknowledged_source_actions(&events);
+        assert_eq!(
+            take_source_action_counts(),
+            serde_json::json!({"combat-proc": 1})
+        );
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 7.0})
+        );
+        BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
+
+    #[test]
+    fn retained_world_chain_preserves_and_drains_acknowledged_source_actions() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
+
+        // Only source-native damage confirmed by gsim ACK contributes to the
+        // final retained-actor receipt. Admission to the pending queue does not.
+        let first = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            append_damage_event(
+                bridge,
+                5,
+                58.0,
+                false,
+                true,
+                false,
+                test_damage_source("shadow-bolt"),
+            );
+            std::mem::take(&mut bridge.pending)
+        });
+        record_acknowledged_source_actions(&first);
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 58.0})
+        );
+
+        // A lethal ACK begins another distinct 2D mob on the same actor.
+        // Unlike begin_iteration(), this must not reset accumulated actions.
+        BRIDGE.with(|state| {
+            state.borrow_mut().as_mut().unwrap().last_health = Some(0.0);
+        });
+        assert_eq!(begin_next_target(6), Ok(()));
+        let second = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            append_damage_event(
+                bridge,
+                7,
+                58.0,
+                false,
+                true,
+                false,
+                test_damage_source("shadow-bolt"),
+            );
+            std::mem::take(&mut bridge.pending)
+        });
+        record_acknowledged_source_actions(&second);
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 58.0})
+        );
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
+
+        assert_eq!(
+            take_source_action_counts(),
+            serde_json::json!({"shadow-bolt": 2})
+        );
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
         BRIDGE.with(|state| *state.borrow_mut() = None);
     }
 
@@ -653,11 +896,7 @@ mod iteration_teardown_tests {
             false,
             true,
             false,
-            "late-proc".to_owned(),
-            "target".to_owned(),
-            "player",
-            0,
-            "Druid".to_owned(),
+            test_damage_source("late-proc"),
         );
     }
 
@@ -674,13 +913,34 @@ mod iteration_teardown_tests {
                 false,
                 true,
                 false,
-                "late-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                test_damage_source("late-proc"),
             );
         });
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_RESTART_AFTER_ACK")]
+    fn restarting_iteration_zero_cannot_erase_acknowledged_source_counts() {
+        // Simulate a completed world exchange, with source action provenance
+        // already accumulated for the same native stochastic iteration.
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
+        record_acknowledged_source_actions(&[super::DamageEvent {
+            event_id: "native-effect-1".to_owned(),
+            native_time_ns: 5,
+            damage: 5.0,
+            source_action_id: "corruption-tick".to_owned(),
+            rank: 0,
+            landed: true,
+            crit: false,
+            periodic: true,
+            native_target_index: 0,
+            native_target_unit_index: 0,
+            native_target_label: "target".to_owned(),
+            native_caster_type: "player".to_owned(),
+            native_caster_unit_index: 0,
+            native_caster_label: "Warlock".to_owned(),
+        }]);
+        begin_iteration(0);
     }
 
     #[test]

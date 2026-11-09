@@ -1021,11 +1021,14 @@ pub(crate) fn item_swap_effect(
     let refuse = |reason: &str| Err(Refusal::new("item_swap", reason.to_string()));
     let class = env.sim.character(unit).class.as_str();
     if swap.slots != [slot::MAIN_HAND] {
-        if swap.slots != [slot::MAIN_HAND, slot::OFF_HAND] || class != "ClassWarrior" {
+        if swap.slots != [slot::MAIN_HAND, slot::OFF_HAND]
+            || !matches!(class, "ClassWarrior" | "ClassDruid")
+        {
             return refuse("an item swap of a slot other than the main hand alone is unsupported");
         }
-        // A Warrior's two-hander for a one-hander and shield, or the other way: neither set
-        // swings an off hand, so the swap changes the main hand's attack and what a shield gives.
+        // A two-hander swap may also remove or restore a non-weapon off hand.
+        // Druid's feral paw and Warrior's weapon/shield state must use the same
+        // prepared two-slot diff; an actual off-hand weapon remains unsupported.
         let dual_wields = |swapped: bool| {
             let equipment = swap.set(swapped);
             let off_hand = &equipment[slot::OFF_HAND];

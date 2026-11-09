@@ -333,68 +333,107 @@ impl PreparedReport {
 }
 
 /// Validate, gate and simulate a prepared v2 input.
-pub fn simulate(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<PreparedReport, PreparedError> {
+pub fn simulate(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<PreparedReport, PreparedError> {
     check(prepared)?;
     run(prepared, rng_mode)
 }
 
-
 /// Preserve the selected native default for existing tests/callers.
-pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode)
-    -> Result<serde_json::Value, PreparedError>
-{
+pub fn native_two_world_targets(
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<serde_json::Value, PreparedError> {
     native_two_world_targets_with_recovery(prepared, target_count, rng_mode, 12)
 }
 
+/// The native Fixed(0) policy means an immediate next pull without paid passive rest.
+/// Keep the prepared entry point aligned with the CLI and native actor recovery.
+fn valid_native_world_recovery_seconds(seconds: u32) -> bool {
+    seconds <= 120
+}
+
 /// One selected source-native actor and monotonic gsim ACKs; diagnostic only.
-pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode, recovery_seconds: u32)
-    -> Result<serde_json::Value, PreparedError>
-{
-    if !(1..=120).contains(&recovery_seconds) {
-        return Err(PreparedError::Invalid("RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned()));
+pub fn native_two_world_targets_with_recovery(
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    recovery_seconds: u32,
+) -> Result<serde_json::Value, PreparedError> {
+    if !valid_native_world_recovery_seconds(recovery_seconds) {
+        return Err(PreparedError::Invalid(
+            "RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned(),
+        ));
     }
     check(prepared)?;
     if !crate::core::fight::world_bridge::enabled() {
         return Err(PreparedError::Invalid(
-            "RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".to_owned()));
+            "RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".to_owned(),
+        ));
     }
     if !(2..=100).contains(&target_count) {
         return Err(PreparedError::Invalid(
-            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned()));
+            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned(),
+        ));
     }
     crate::core::fight::world_bridge::start(&prepared.request_sha256);
-    crate::classes::native_two_world_targets_with_recovery(prepared, target_count, rng_mode, recovery_seconds)
-        .map_err(PreparedError::Invalid)
+    crate::classes::native_two_world_targets_with_recovery(
+        prepared,
+        target_count,
+        rng_mode,
+        recovery_seconds,
+    )
+    .map_err(PreparedError::Invalid)
 }
 
 /// Decisions recovery on the SAME native actor and gsim 2D world clock.
 /// Food/water are earned by native 100-ms resource events, not Python resets.
 pub fn native_two_world_targets_with_decisions_recovery(
-    prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode,
-    health_fraction: f64, mana_fraction: f64,
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    health_fraction: f64,
+    mana_fraction: f64,
 ) -> Result<serde_json::Value, PreparedError> {
-    if !(health_fraction.is_finite() && mana_fraction.is_finite()
+    if !(health_fraction.is_finite()
+        && mana_fraction.is_finite()
         && (0.0..=1.0).contains(&health_fraction)
-        && (0.0..=1.0).contains(&mana_fraction)) {
-        return Err(PreparedError::Invalid("RUST_WORLD_DECISIONS_THRESHOLDS_INVALID".into()));
+        && (0.0..=1.0).contains(&mana_fraction))
+    {
+        return Err(PreparedError::Invalid(
+            "RUST_WORLD_DECISIONS_THRESHOLDS_INVALID".into(),
+        ));
     }
     check(prepared)?;
     if !crate::core::fight::world_bridge::enabled() {
-        return Err(PreparedError::Invalid("RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".into()));
+        return Err(PreparedError::Invalid(
+            "RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM".into(),
+        ));
     }
     if !(2..=100).contains(&target_count) {
-        return Err(PreparedError::Invalid("RUST_MULTI_WORLD_TARGET_COUNT_INVALID".into()));
+        return Err(PreparedError::Invalid(
+            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".into(),
+        ));
     }
     crate::core::fight::world_bridge::start(&prepared.request_sha256);
     crate::classes::native_two_world_targets_with_decisions_recovery(
-        prepared, target_count, rng_mode, health_fraction, mana_fraction)
-        .map_err(PreparedError::Invalid)
+        prepared,
+        target_count,
+        rng_mode,
+        health_fraction,
+        mana_fraction,
+    )
+    .map_err(PreparedError::Invalid)
 }
 
 /// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
-pub fn native_two_pull_windows(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode)
-    -> Result<serde_json::Value, PreparedError>
-{
+pub fn native_two_pull_windows(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<serde_json::Value, PreparedError> {
     check(prepared)?;
     crate::classes::native_two_pull_windows(prepared, rng_mode).map_err(PreparedError::Invalid)
 }
@@ -412,7 +451,10 @@ pub enum Gated {
 /// that wants both needs one pass over the input instead of a [`refusals`] call and then a
 /// [`simulate`] call that gates it again. A refusal is a result here, not an error; invalid
 /// input is still [`PreparedError::Invalid`].
-pub fn simulate_gated(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Gated, PreparedError> {
+pub fn simulate_gated(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<Gated, PreparedError> {
     validate(prepared).map_err(PreparedError::Invalid)?;
     let refusals = refusals(prepared);
     if !refusals.is_empty() {
@@ -422,7 +464,10 @@ pub fn simulate_gated(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode
 }
 
 /// Simulate an input that is valid and that the gate supports.
-fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<PreparedReport, PreparedError> {
+fn run(
+    prepared: &PreparedV2,
+    rng_mode: crate::core::rng::RngMode,
+) -> Result<PreparedReport, PreparedError> {
     if crate::core::fight::world_bridge::enabled() {
         crate::core::fight::world_bridge::start(&prepared.request_sha256);
     }
@@ -443,4 +488,18 @@ fn run(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Pre
         presentation,
         extra_attack_strikes,
     })
+}
+
+#[cfg(test)]
+mod world_recovery_boundary_tests {
+    use super::valid_native_world_recovery_seconds;
+
+    #[test]
+    fn immediate_next_pull_zero_rest_reaches_native_world_execution() {
+        assert!(valid_native_world_recovery_seconds(0));
+        assert!(valid_native_world_recovery_seconds(1));
+        assert!(valid_native_world_recovery_seconds(120));
+        assert!(!valid_native_world_recovery_seconds(121));
+        assert!(!valid_native_world_recovery_seconds(u32::MAX));
+    }
 }

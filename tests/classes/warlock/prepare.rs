@@ -232,7 +232,6 @@ fn a_demons_melee_hit_is_eight_seventeenths_of_its_masters_spell_hit() {
     assert_eq!(melee_term(&go), Some(1.0));
 }
 
-
 /// A wand-equipped Warlock must use the same OtherActionShoot native ranged
 /// auto-attack as the shared engine. An empty ranged slot cannot create a
 /// phantom Shoot, and no Python/game-rule mirror is involved.
@@ -250,25 +249,30 @@ fn warlock_wand_registers_native_shoot_for_apl_and_combat() {
         {"action": {"castSpell": {"spellId": {"otherId": "OtherActionShoot"}}}}
     ]);
 
-    let prepared = forever_engine::prepare_json(
-        &serde_json::to_vec(&source).unwrap(),
-        "warlock_wand_shoot",
-    ).unwrap();
+    let prepared =
+        forever_engine::prepare_json(&serde_json::to_vec(&source).unwrap(), "warlock_wand_shoot")
+            .unwrap();
     assert_eq!(prepared["melee"]["auto_swing_ranged"], true);
     assert_eq!(prepared["melee"]["auto_swing_melee"], false);
     assert!(prepared["melee"]["ranged"]["swing_speed"].as_f64().unwrap() > 0.0);
-    assert!(prepared["player"]["spells"].as_array().unwrap().iter().any(|spell| {
-        spell["action_id"]["other_id"] == "OtherActionShoot"
-    }), "Shoot must be a native prepared action");
+    assert!(
+        prepared["player"]["spells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|spell| { spell["action_id"]["other_id"] == "OtherActionShoot" }),
+        "Shoot must be a native prepared action"
+    );
 
     // Identical Warlock and APL but without a wand: no fabricated attack.
     source["raid"]["parties"][0]["players"][0]["equipment"]["items"][16] = json!({});
-    let empty = forever_engine::prepare_json(
-        &serde_json::to_vec(&source).unwrap(),
-        "warlock_no_wand",
-    ).unwrap();
+    let empty =
+        forever_engine::prepare_json(&serde_json::to_vec(&source).unwrap(), "warlock_no_wand")
+            .unwrap();
     assert_eq!(empty["melee"]["auto_swing_ranged"], false);
-    assert!(!empty["player"]["spells"].as_array().unwrap().iter().any(|spell| {
-        spell["action_id"]["other_id"] == "OtherActionShoot"
-    }));
+    assert!(!empty["player"]["spells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|spell| { spell["action_id"]["other_id"] == "OtherActionShoot" }));
 }

@@ -164,20 +164,27 @@ mod tests {
         queue.push(14, 1, "health");
         queue.push(20, 1, "future_mana");
 
-        let first = queue.pop_next_matching_through(15, |action| {
-            matches!(*action, "mana" | "health")
-        });
-        assert_eq!(first.map(|(at, _, action)| (at, action)), Some((12, "mana")));
-        let second = queue.pop_next_matching_through(15, |action| {
-            matches!(*action, "mana" | "health")
-        });
-        assert_eq!(second.map(|(at, _, action)| (at, action)), Some((14, "health")));
-        assert!(queue.pop_next_matching_through(15, |action| {
-            matches!(*action, "mana" | "health")
-        }).is_none());
+        let first =
+            queue.pop_next_matching_through(15, |action| matches!(*action, "mana" | "health"));
+        assert_eq!(
+            first.map(|(at, _, action)| (at, action)),
+            Some((12, "mana"))
+        );
+        let second =
+            queue.pop_next_matching_through(15, |action| matches!(*action, "mana" | "health"));
+        assert_eq!(
+            second.map(|(at, _, action)| (at, action)),
+            Some((14, "health"))
+        );
+        assert!(queue
+            .pop_next_matching_through(15, |action| { matches!(*action, "mana" | "health") })
+            .is_none());
         assert!(queue.cancel(attack));
         assert!(queue.cancel(cooldown));
-        assert_eq!(queue.pop().map(|(at, _, action)| (at, action)), Some((20, "future_mana")));
+        assert_eq!(
+            queue.pop().map(|(at, _, action)| (at, action)),
+            Some((20, "future_mana"))
+        );
         assert!(queue.pop().is_none());
     }
 

@@ -26,7 +26,8 @@ fn arcane_blasts(cast_speed_multiplier: f64) -> (f64, f64, String) {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     let logs = report.result["logs"].as_str().unwrap();
     let casts: Vec<&str> = logs
         .lines()

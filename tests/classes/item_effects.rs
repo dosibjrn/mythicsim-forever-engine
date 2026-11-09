@@ -18,7 +18,8 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -147,7 +148,9 @@ fn armor_penetration_is_read_live() {
         let mut value = value.clone();
         value["sim"]["iterations"] = json!(1);
         let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"]["dps"]["avg"]
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+            .unwrap()
+            .result["raidMetrics"]["dps"]["avg"]
             .as_f64()
             .unwrap()
     };
@@ -517,7 +520,9 @@ fn a_stat_proc_of_hits_taken_hears_the_sappers_hit() {
         value["sim"]["iterations"] = json!(400);
         let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
         assert_eq!(prepared_coverage(&prepared), Vec::<String>::new());
-        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result["raidMetrics"]["dps"]["avg"]
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+            .unwrap()
+            .result["raidMetrics"]["dps"]["avg"]
             .as_f64()
             .unwrap()
     };
@@ -562,7 +567,9 @@ fn combat(mut value: Value, iterations: u64) -> Value {
     value["sim"]["iterations"] = json!(iterations);
     value["sim"]["debug_first_iteration"] = json!(false);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result
+    forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result
 }
 
 /// A unit's resource metric of this spell: (events, gain).
@@ -813,7 +820,8 @@ fn prepare_forever(request: &Value) -> Value {
 fn dps(prepared: &Value) -> f64 {
     let prepared: PreparedV2 = serde_json::from_value(prepared.clone()).unwrap();
     assert_eq!(prepared_coverage(&prepared), Vec::<String>::new());
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["raidMetrics"]["dps"]["avg"].as_f64().unwrap()
 }
 

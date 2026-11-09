@@ -13,13 +13,14 @@ mod talents;
 mod weapon_stones;
 
 use crate::contracts::request::Message;
-use crate::prepare::attack::{AutoAttackOptions, Weapon};
 use crate::prepare::agent::{fill_talents, ClassSpellName, PrepAgent};
+use crate::prepare::attack::{AutoAttackOptions, Weapon};
 use crate::prepare::env::Environment;
 use crate::prepare::sim::{AuraId, Sim, SpellId, UnitId};
 use crate::prepare::stats::Stat;
 use crate::prepare::Refusal;
 
+pub(crate) use pets::registered_native_summons;
 use pets::WarlockPets;
 
 /// Go warlock.TalentTreeSizes.
@@ -214,7 +215,8 @@ pub(crate) fn new_warlock(
     // wand is equipped; otherwise a caster with an empty ranged slot must not
     // acquire a phantom ranged attack. The common fight engine owns the hit
     // table, cast interruption and weapon damage.
-    let wand = sim.ranged_weapon(unit)
+    let wand = sim
+        .ranged_weapon(unit)
         .filter(|item| item.ranged_weapon_type == "RangedWeaponTypeWand")
         .map(|item| Weapon::from_item(item, sim.unit(unit).pseudo_stats.bonus_ranged_dps));
     if let Some(ranged) = wand {

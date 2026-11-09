@@ -79,7 +79,13 @@ impl Class {
     fn has_native_item_eligibility(self) -> bool {
         matches!(
             self,
-            Self::Priest | Self::Mage | Self::Shaman | Self::Paladin | Self::Rogue | Self::Druid
+            Self::Priest
+                | Self::Mage
+                | Self::Shaman
+                | Self::Paladin
+                | Self::Rogue
+                | Self::Druid
+                | Self::Warlock
         )
     }
 }
@@ -141,6 +147,16 @@ pub struct ItemOption {
     pub legacy_wowhead: Option<LegacyItemFact>,
 }
 
+/// A proposal taken from the native Warlock pet executor and request proto enum.
+/// Only source-native preparation and combat may determine whether it works.
+#[derive(Clone, Debug, Serialize)]
+pub struct PetOption {
+    pub summon: &'static str,
+    pub proto_enum_value: i32,
+    pub eligibility: &'static str,
+    pub source: &'static str,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Coverage {
     pub spell_learnability_complete: bool,
@@ -161,6 +177,7 @@ pub struct CharacterOptions {
     /// Native TalentsForever source: three trees, tier points, parent/rank
     /// requirements, point budget, and original source revision.
     pub talents: serde_json::Value,
+    pub pets: Vec<PetOption>,
     pub coverage: Coverage,
 }
 
@@ -288,6 +305,43 @@ fn unverified_class_items(level: u8, class: Class) -> Vec<ItemOption> {
     items
 }
 
+const WARLOCK_SUMMON_ENUM: &str = "proto.WarlockOptions.Summon";
+
+/// A registered native summon must have a request enum identity. Dropping an
+/// unmapped summon silently would hide an executable optimizer search axis.
+fn native_pet_proto_option(summon: &'static str) -> Result<PetOption, String> {
+    let proto_enum_value = crate::contracts::request::enum_number(WARLOCK_SUMMON_ENUM, summon)
+        .ok_or_else(|| {
+            format!("registered native Warlock summon {summon} missing from {WARLOCK_SUMMON_ENUM}")
+        })?;
+    Ok(PetOption {
+        summon,
+        proto_enum_value,
+        eligibility: "native_prepare_and_combat_required",
+        source: "native_warlock_executor_and_proto_enum",
+    })
+}
+
+/// Only enumerate the four demons registered in the actual native Warlock
+/// executor, plus the proto's zero/no-pet choice if it exists. This is an
+/// executable candidate domain, not a Python trainer or level-unlock model.
+/// If the executor and pinned request schema diverge, refuse instead of
+/// silently returning incomplete pet candidates.
+fn native_pet_options(class: Class) -> Result<Vec<PetOption>, String> {
+    if class != Class::Warlock {
+        return Ok(Vec::new());
+    }
+    let registered = crate::classes::warlock::prepare::registered_native_summons();
+    let mut choices = Vec::new();
+    if let Some(no_pet) = crate::contracts::request::enum_name(WARLOCK_SUMMON_ENUM, 0) {
+        if !registered.contains(&no_pet) {
+            choices.push(no_pet);
+        }
+    }
+    choices.extend(registered);
+    choices.into_iter().map(native_pet_proto_option).collect()
+}
+
 /// Inventory the native source's item, spell and talent options together.
 /// No new validation gate is introduced. Unknown item/spell eligibility stays
 /// explicit, never "legal by construction" without a known prerequisite.
@@ -300,6 +354,7 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         return Err(format!("native talent source refused {}", class.as_str()));
     }
     let spells = class_spells(level, class);
+    let pets = native_pet_options(class)?;
     let (items, native_item_status, item_eligibility_complete) =
         if class.has_native_item_eligibility() {
             let (items, status) = native_class_items(level, class)?;
@@ -316,6 +371,9 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
     if !item_eligibility_complete {
         notes.push("item_eligibility_incomplete_for_requested_class_or_level");
     }
+    if class == Class::Warlock {
+        notes.push("pet_choices_require_native_execution_not_level_unlock_certification");
+    }
     Ok(CharacterOptions {
         schema_version: 1,
         source_revision: SOURCE_REVISION,
@@ -324,6 +382,7 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         spells,
         items,
         talents,
+        pets,
         coverage: Coverage {
             spell_learnability_complete: false,
             item_eligibility_complete,
@@ -391,12 +450,16 @@ mod tests {
             Class::Paladin,
             Class::Rogue,
             Class::Druid,
+            Class::Warlock,
         ] {
             let result = get_options(20, class).unwrap();
             assert!(!result.items.is_empty(), "{}", class.as_str());
             assert!(result.items.iter().all(|item| {
                 item.eligibility == "native_eligible"
-                    && item.native.as_ref().is_some_and(|native| native.required_level <= 20)
+                    && item
+                        .native
+                        .as_ref()
+                        .is_some_and(|native| native.required_level <= 20)
                     && item.unverified.is_none()
             }));
         }
@@ -404,16 +467,78 @@ mod tests {
 
     #[test]
     fn other_classes_have_source_facts_but_no_invented_proficiencies() {
-        for class in [Class::Hunter, Class::Warlock, Class::Warrior] {
+        for class in [Class::Hunter, Class::Warrior] {
             let result = get_options(20, class).unwrap();
             assert!(!result.items.is_empty(), "{}", class.as_str());
             assert!(!result.coverage.item_eligibility_complete);
             assert!(result.items.iter().all(|item| {
                 item.eligibility == "proficiency_unverified"
-                    && item.unverified.as_ref().is_some_and(|row| row.required_level <= 20)
+                    && item
+                        .unverified
+                        .as_ref()
+                        .is_some_and(|row| row.required_level <= 20)
                     && item.native.is_none()
             }));
         }
+    }
+
+    #[test]
+    fn warlock_l20_uses_pinned_client_skills_and_item_sparse() {
+        let source = crate::data::warlock_equipment_skills().unwrap();
+        assert_eq!(source.min_level("Cloth"), Some(1));
+        assert_eq!(source.min_level("Daggers"), Some(1));
+        assert_eq!(source.min_level("Staves"), Some(1));
+        assert_eq!(source.min_level("Wands"), Some(1));
+        assert_eq!(source.min_level("Swords"), None);
+        assert_eq!(source.min_level("Leather"), None);
+
+        let options = get_options(20, Class::Warlock).unwrap();
+        assert!(options.coverage.item_eligibility_complete);
+        assert_eq!(options.coverage.native_item_status, "ok");
+        assert!(!options.items.is_empty());
+        assert!(options
+            .items
+            .iter()
+            .all(|row| row.eligibility == "native_eligible"
+                && row.unverified.is_none()
+                && row
+                    .native
+                    .as_ref()
+                    .is_some_and(|item| item.required_level <= 20)));
+        assert!(options.items.iter().any(|row| row
+            .native
+            .as_ref()
+            .is_some_and(|item| item.ranged_weapon_type == "RangedWeaponTypeWand")));
+    }
+
+    #[test]
+    fn native_warlock_pet_candidates_are_actual_registered_proto_choices() {
+        let options = get_options(20, Class::Warlock).unwrap();
+        let registered = crate::classes::warlock::prepare::registered_native_summons();
+        for summon in registered {
+            let option = options
+                .pets
+                .iter()
+                .find(|pet| pet.summon == summon)
+                .expect("registered native demon must appear in options");
+            assert_eq!(
+                crate::contracts::request::enum_number("proto.WarlockOptions.Summon", summon),
+                Some(option.proto_enum_value)
+            );
+            assert_eq!(option.eligibility, "native_prepare_and_combat_required");
+        }
+        assert!(options
+            .coverage
+            .notes
+            .contains(&"pet_choices_require_native_execution_not_level_unlock_certification"));
+        assert!(get_options(20, Class::Druid).unwrap().pets.is_empty());
+    }
+
+    #[test]
+    fn native_registered_pet_without_proto_identity_refuses_instead_of_disappearing() {
+        let error = native_pet_proto_option("MissingNativeSummonEnum").unwrap_err();
+        assert!(error.contains("MissingNativeSummonEnum"));
+        assert!(error.contains(WARLOCK_SUMMON_ENUM));
     }
 
     #[test]

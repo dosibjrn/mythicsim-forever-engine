@@ -301,6 +301,7 @@ pub(crate) fn shaman_equipment_skills() -> Result<&'static ShamanEquipmentSkills
 const PALADIN_EQUIPMENT_SKILLS: &str = include_str!("../data/paladin-equipment-skills.json");
 const ROGUE_EQUIPMENT_SKILLS: &str = include_str!("../data/rogue-equipment-skills.json");
 const DRUID_EQUIPMENT_SKILLS: &str = include_str!("../data/druid-equipment-skills.json");
+const WARLOCK_EQUIPMENT_SKILLS: &str = include_str!("../data/warlock-equipment-skills.json");
 
 #[derive(serde::Deserialize)]
 struct PaladinSkillLineName {
@@ -452,6 +453,10 @@ fn parse_druid_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()
     parse_class_equipment_skills(text, "druid", 11)
 }
 
+fn parse_warlock_equipment_skills(text: &str) -> Result<PaladinEquipmentSkills, ()> {
+    parse_class_equipment_skills(text, "warlock", 9)
+}
+
 pub(crate) fn paladin_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
     static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
     match SKILLS.get_or_init(|| parse_paladin_equipment_skills(PALADIN_EQUIPMENT_SKILLS)) {
@@ -475,6 +480,16 @@ pub(crate) fn druid_equipment_skills() -> Result<&'static PaladinEquipmentSkills
     match SKILLS.get_or_init(|| parse_druid_equipment_skills(DRUID_EQUIPMENT_SKILLS)) {
         Ok(skills) => Ok(skills),
         Err(()) => Err("the pinned Druid SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
+    }
+}
+
+/// The pinned client-wide Warlock class-skill projection; never use another
+/// caster's proficiency as a fallback.
+pub(crate) fn warlock_equipment_skills() -> Result<&'static PaladinEquipmentSkills, &'static str> {
+    static SKILLS: OnceLock<Result<PaladinEquipmentSkills, ()>> = OnceLock::new();
+    match SKILLS.get_or_init(|| parse_warlock_equipment_skills(WARLOCK_EQUIPMENT_SKILLS)) {
+        Ok(skills) => Ok(skills),
+        Err(()) => Err("the pinned Warlock SkillLine/SkillRaceClassInfo projection is missing, invalid, or for another client build"),
     }
 }
 

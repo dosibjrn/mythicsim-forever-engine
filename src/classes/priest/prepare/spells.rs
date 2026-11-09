@@ -28,6 +28,12 @@ fn spell_action(id: i32) -> ActionId {
     }
 }
 
+/// Use the pinned native client row when registering Priest spells for a
+/// lower-level actor. The established level-60 spellbook is unchanged.
+pub(super) fn rank_available_at_level(rank: &Row, level: i32) -> bool {
+    level == 60 || (rank.spell_level > 0 && i32::from(rank.spell_level) <= level)
+}
+
 /// Go `ManaCost: core.ManaCostOptions{FlatCost: int32(rank.Cost())}`.
 pub(super) fn flat_cost(row: &Row) -> CostOptions {
     CostOptions {
@@ -103,30 +109,43 @@ impl Priest {
     /// Go `Priest.Initialize`.
     pub(super) fn register_spells(&mut self, sim: &mut Sim, unit: UnitId) {
         let data = spell_data();
+        let level = sim.unit(unit).level;
         let mind_blast_cd = sim.new_timer(unit);
         let shadow_word_death_cd = sim.new_timer(unit);
 
         data.mind_blast.each(|_, rank| {
-            Self::register_mind_blast_spell(sim, unit, rank, mind_blast_cd);
+            if rank_available_at_level(rank, level) {
+                Self::register_mind_blast_spell(sim, unit, rank, mind_blast_cd);
+            }
         });
         let mut shadow_word_pain = Vec::new();
         data.shadow_word_pain.each(|_, rank| {
-            shadow_word_pain.push(Self::register_shadow_word_pain_spell(sim, unit, rank));
+            if rank_available_at_level(rank, level) {
+                shadow_word_pain.push(Self::register_shadow_word_pain_spell(sim, unit, rank));
+            }
         });
         self.shadow_word_pain.extend(shadow_word_pain);
         data.shadow_word_death.each(|_, rank| {
-            Self::register_shadow_word_death_spell(sim, unit, rank, shadow_word_death_cd);
+            if rank_available_at_level(rank, level) {
+                Self::register_shadow_word_death_spell(sim, unit, rank, shadow_word_death_cd);
+            }
         });
         data.smite.each(|_, rank| {
-            Self::register_smite_spell(sim, unit, rank);
+            if rank_available_at_level(rank, level) {
+                Self::register_smite_spell(sim, unit, rank);
+            }
         });
         let mut holy_fire = Vec::new();
         data.holy_fire.each(|_, rank| {
-            holy_fire.push(Self::register_holy_fire_spell(sim, unit, rank));
+            if rank_available_at_level(rank, level) {
+                holy_fire.push(Self::register_holy_fire_spell(sim, unit, rank));
+            }
         });
         self.holy_fire.extend(holy_fire);
         data.chastise.each(|_, rank| {
-            Self::register_chastise_spell(sim, unit, rank);
+            if rank_available_at_level(rank, level) {
+                Self::register_chastise_spell(sim, unit, rank);
+            }
         });
         self.register_shadowfiend_spell(sim, unit);
 
@@ -141,14 +160,18 @@ impl Priest {
         if race == "RaceNightElf" && !racials_disabled {
             let starshards_cd = sim.new_timer(unit);
             data.starshards.each(|_, rank| {
-                Self::register_starshards_spell(sim, unit, rank, starshards_cd);
+                if rank_available_at_level(rank, level) {
+                    Self::register_starshards_spell(sim, unit, rank, starshards_cd);
+                }
             });
         }
 
         // Devouring Plague is baseline here: the Forever client teaches it to every race.
         let devouring_plague_cd = sim.new_timer(unit);
         data.devouring_plague.each(|_, rank| {
-            Self::register_devouring_plague_spell(sim, unit, rank, devouring_plague_cd);
+            if rank_available_at_level(rank, level) {
+                Self::register_devouring_plague_spell(sim, unit, rank, devouring_plague_cd);
+            }
         });
     }
 
@@ -249,6 +272,9 @@ impl Priest {
             return;
         }
         let rank = spell_data().shadowfiend.highest();
+        if !rank_available_at_level(rank, sim.unit(unit).level) {
+            return;
+        }
         let action = spell_action(rank.id);
 
         // Timeline aura, and what the tier 4 two piece lengthens.
@@ -298,6 +324,9 @@ impl Priest {
     /// buff that turns health into mana over its ticks.
     fn register_dark_sacrifice_spell(sim: &mut Sim, unit: UnitId) {
         let rank = spell_data().dark_sacrifice.highest();
+        if !rank_available_at_level(rank, sim.unit(unit).level) {
+            return;
+        }
         let effect = rank.proc_energize_effect();
 
         let mut config = spell_config(sim, unit, rank, &[flags(SpellFlag::APL)]);

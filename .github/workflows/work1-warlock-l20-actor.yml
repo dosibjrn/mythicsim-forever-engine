@@ -1,0 +1,380 @@
+name: Work1 Troll Warlock L20 selected-native paid smoke
+
+on:
+  push:
+    branches: [work/work1-warlock-l20-native-item-options-20261106]
+    paths:
+      - .github/workflows/work1-warlock-l20-actor.yml
+      - src/prepare.rs
+      - src/prepare/character.rs
+      - src/prepare/env.rs
+      - src/core/fight/world_bridge.rs
+      - src/core/fight.rs
+      - src/core/fight/leveling_recovery.rs
+      - src/classes.rs
+      - src/engine/prepared.rs
+      - src/engine/coverage.rs
+      - src/classes/warlock/**
+      - src/main.rs
+      - src/lib.rs
+      - data/warlock-l20-actor-source.json
+      - data/manifest.json
+      - tools/rust_data.py
+      - fixtures/warlock-l20-troll-native.request.json
+      - fixtures/warlock-l20-troll-source-equipped.request.json
+      - fixtures/warlock-l20-troll-hostile-world.request.json
+      - tests/warlock_l20_native_registration.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warlock-l20-actor-paid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check native data manifest (including L20 actor and Wands)
+        run: python3 tools/rust_data.py check
+      - name: Test native level-specific character and preserved L60 path
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked cleanup_damage_is_acknowledged_before_next_iteration -- --nocapture
+          cargo test --locked restarting_iteration_zero_cannot_erase_acknowledged_source_counts -- --nocapture
+          cargo test --locked retained_world_chain_preserves_and_drains_acknowledged_source_actions -- --nocapture
+          cargo test --locked world_bridge -- --nocapture
+          cargo test --locked leveling_recovery -- --nocapture
+          cargo test --locked warlock_wand_registers_native_shoot_for_apl_and_combat -- --nocapture
+          cargo test --locked retained_world_regen_receipts_do_not_count_paid_rest_as_combat -- --nocapture
+          cargo test --locked decisions_recovery_counts_paid_travel_when_vendor_not_needed -- --nocapture
+          cargo test --locked terminal_native_world_step_must_not_accept_a_dead_or_invalid_actor -- --nocapture
+          cargo test --locked native_world_recovery_refuses_dead_actor_before_food_or_passive_ticks -- --nocapture
+          cargo test --locked explicit_warlock_l20_actor_level_preserves_default_l60_and_refuses_unsourced_levels -- --nocapture
+          cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
+          cargo test --locked l20_warlock_does_not_inherit_unsourced_level_60_rating_conversions -- --nocapture
+          cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
+          cargo test --locked native_warlock_direct_damage_uses_registered_caster_level -- --nocapture
+          cargo test --locked warlock_l20_exported_effects_reference_registered_native_actions -- --nocapture
+      - name: Prepare actual selected Troll Warlock L20 (no L60 surrogate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- prepare --request fixtures/warlock-l20-troll-native.request.json --actor-level 20 --scenario warlock-l20-native-smoke --outfile /tmp/warlock-l20-prepared.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path('/tmp/warlock-l20-prepared.json').read_text())
+          actor=p['player']
+          assert actor['level']==20, ('NOT_L20',actor.get('level'))
+          assert actor['stats']['Health']>0 and actor['stats']['Mana']>0, actor['stats']
+          print('SELECTED_NATIVE_ACTOR', {'level':actor['level'],'health':actor['stats']['Health'],'mana':actor['stats']['Mana']},flush=True)
+          PY
+      - name: Run one real native balanced paid encounter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- sim --infile /tmp/warlock-l20-prepared.json --rng-mode balanced --outfile /tmp/warlock-l20-paid.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('/tmp/warlock-l20-paid.json').read_text())
+          body=result['result']
+          players=body['raidMetrics']['parties'][0]['players']
+          player=players[0]
+          dps=player.get('dps',{}).get('avg')
+          print('WARLOCK_L20_NATIVE_PAID_METRICS',json.dumps({
+              'player_dps':dps,
+              'iterations':body['iterationsDone'],
+              'duration_s':body['firstIterationDuration'],
+              'request_sha256':result['request_sha256'],
+              'source_revision':result['source_revision'],
+              'client_build':result['identity']['client_build'],
+          },sort_keys=True),flush=True)
+          assert body['iterationsDone']==1
+          assert isinstance(dps,(int,float)) and dps>0, ('NO_REAL_NATIVE_DAMAGE',dps)
+          print('WARLOCK_L20_NATIVE_PAID_LOG',body.get('logs','')[:2000],flush=True)
+          PY
+      - name: Prepare explicitly attacking L20 world target from the native request
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/forever-engine prepare \
+            --request fixtures/warlock-l20-troll-hostile-world.request.json \
+            --actor-level 20 --scenario warlock-l20-hostile-world \
+            --outfile /tmp/warlock-l20-hostile-prepared.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          prepared=json.loads(Path('/tmp/warlock-l20-hostile-prepared.json').read_text())
+          enemy=prepared.get('enemy')
+          assert isinstance(enemy,dict), ('NO_NATIVE_PREPARED_ENEMY',prepared.get('unrepresented'))
+          assert enemy.get('swing_speed',0)>0, enemy
+          print('WARLOCK_L20_REAL_HOSTILE_SOURCE_PREPARED',
+                json.dumps({'swing_speed':enemy['swing_speed'],
+                            'action_id':enemy.get('action_id')},sort_keys=True),flush=True)
+          PY
+      - name: Checkout merged Forever main for source-native integration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dosibjrn/forever-sim
+          # PR #1184's third-native-candidate scorer is now merged on main.
+          # Exercise the real integration; keep the checked-out exact SHA below.
+          ref: main
+          path: forever
+          persist-credentials: false
+      - name: Preserve exact Rust and Forever integration revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > /tmp/warlock-l20-rust-commit.txt
+          git -C forever rev-parse HEAD > /tmp/warlock-l20-forever-commit.txt
+          echo "WORK1_RUST_COMMIT=$(cat /tmp/warlock-l20-rust-commit.txt)"
+          echo "WORK1_FOREVER_COMMIT=$(cat /tmp/warlock-l20-forever-commit.txt)"
+      - name: Run real L20 Warlock gsim ↔ native two-target ACK chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "FOREVER_GSIM_PRODUCER_SHA=$(git -C forever rev-parse HEAD)"
+          cargo build --locked --bin forever-engine
+          python3 forever/integrations/mythicsim-rust/live_two_world_pulls.py \
+            --binary target/debug/forever-engine \
+            --prepared /tmp/warlock-l20-hostile-prepared.json \
+            --mob-health 100 --targets 2 > /tmp/warlock-l20-world-ack.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          output = Path("/tmp/warlock-l20-world-ack.jsonl").read_text().splitlines()
+          valid = next((json.loads(line.partition(" ")[2])
+                        for line in output
+                        if line.startswith("RUST_TWO_REAL_GSIM_WORLD_KILLS ")), None)
+          forged = next((json.loads(line.partition(" ")[2])
+                         for line in output
+                         if line.startswith("RUST_TWO_WORLD_FORGED_ACK_REJECTED ")), None)
+          assert valid is not None and forged is not None, "MISSING_GSIM_NATIVE_RECEIPTS"
+          assert valid["world_targets_killed"] == 2, valid
+          assert valid["native_damage_events"] >= 2, valid
+          # These are real per-kill, world-ACK-confirmed native action counts,
+          # not inferred APL intent or a duplicate Python damage model.
+          windows = valid["native_windows"]
+          assert len(windows) == 2, windows
+          action_counts = [w["native_acknowledged_source_action_counts"]
+                           for w in windows]
+          assert all(isinstance(counts, dict)
+                     and sum(counts.values()) > 0
+                     and all(isinstance(n, int) and n > 0
+                             for n in counts.values())
+                     for counts in action_counts), action_counts
+          assert sum(sum(counts.values()) for counts in action_counts) == (
+              valid["native_damage_events"]), (action_counts, valid)
+          print("WARLOCK_L20_NATIVE_PER_KILL_ACK_ACTIONS",
+                json.dumps(action_counts, sort_keys=True), flush=True)
+          assert valid["continuous_native_actor"] is True, valid
+          assert valid["actual_2d_ack"] is True, valid
+          assert valid["minimum_native_actor_health"] > 0, valid
+          assert sum(w["native_hostile_swing_casts"] for w in windows) > 0, windows
+          assert sum(w["native_health_damage_events"] for w in windows) > 0, windows
+          assert forged["forged_ack_rejected"] is True, forged
+          print("WARLOCK_L20_GSIM_NATIVE_WORLD_ACK", json.dumps({
+              "targets": valid["world_targets_killed"],
+              "damage_events": valid["native_damage_events"],
+              "world_ticks": valid["world_ticks"],
+              "elapsed_seconds": valid["world_elapsed_seconds"],
+              "forged_ack_rejected": forged["forged_ack_rejected"],
+              "checkpoint_certified": False,
+          }, sort_keys=True), flush=True)
+          PY
+      - name: Verify Decisions recovery on retained L20 actor and 2D world ACK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import runpy
+          from pathlib import Path
+          bridge = runpy.run_path("forever/integrations/mythicsim-rust/live_two_world_pulls.py",
+                                  run_name="work1_decisions_smoke")
+          report = bridge["run"](Path("target/debug/forever-engine"),
+                                 Path("/tmp/warlock-l20-hostile-prepared.json"),
+                                 mob_health=100, target_count=2,
+                                 recovery_policy="decisions",
+                                 health_threshold=1.0, mana_threshold=1.0)
+          assert report["world_targets_killed"] == 2, report
+          assert report["native_recovery_mode"] == "decisions_food_water", report
+          assert sum(w["native_hostile_swing_casts"] for w in report["native_windows"]) > 0, report
+          rows = report["native_windows"]
+          assert len(rows) == 2 and report["actual_2d_ack"] is True, report
+          # Source-paid actor snapshots distinguish combat HP/mana deltas from
+          # the charged recovery between pulls. No Python regen/damage model.
+          for w in rows:
+              for resource in ("health", "mana"):
+                  start = w[f"actor_{resource}_before_pull"]
+                  end = w[f"actor_{resource}"]
+                  net = w[f"actor_{resource}_net_combat_change"]
+                  assert all(isinstance(v, (int, float)) and abs(v) < float("inf")
+                             for v in (start, end, net)), w
+                  assert abs((end - start) - net) < 1e-7, w
+          print("WARLOCK_L20_NATIVE_PER_PULL_ACTOR_RESOURCES",
+                json.dumps([{
+                    "health_before": w["actor_health_before_pull"],
+                    "health_after": w["actor_health"],
+                    "mana_before": w["actor_mana_before_pull"],
+                    "mana_after": w["actor_mana"]
+                } for w in rows], sort_keys=True), flush=True)
+          # Native cumulative elapsed is the actual retained-actor clock:
+          # combat plus inter-pull travel/food/water/handshake, not an
+          # uncharged guessed downtime or just a sum of DPS windows.
+          assert all(type(w.get("native_pull_elapsed_ns")) is int
+                     and w["native_pull_elapsed_ns"] > 0 for w in rows), rows
+          assert rows[0]["native_inter_pull_elapsed_ns"] == 0, rows
+          assert rows[1]["native_inter_pull_elapsed_ns"] > 0, rows
+          assert rows[0]["native_elapsed_since_start_ns"] == (
+              rows[0]["native_pull_elapsed_ns"]), rows
+          assert rows[1]["native_elapsed_since_start_ns"] == (
+              rows[0]["native_elapsed_since_start_ns"] +
+              rows[1]["native_inter_pull_elapsed_ns"] +
+              rows[1]["native_pull_elapsed_ns"]), rows
+          assert rows[1]["native_passive_recovery_ns"] > 0, rows
+          assert rows[1]["decisions_full_recovery"] is True, rows
+          assert rows[1]["food_health_gain"] > 0 or rows[1]["water_mana_gain"] > 0, rows
+          # A native tick during paid recovery belongs to rest, never combat;
+          # the first pull has no previous kill / between-pull rest.
+          assert rows[0]["native_rest_mana_regen_events"] == 0, rows
+          assert rows[0]["native_rest_mana_regen_actual_gain"] == 0, rows
+          assert rows[1]["native_rest_mana_regen_events"] > 0, rows
+          assert rows[1]["native_rest_mana_regen_actual_gain"] > 0, rows
+          assert all(w["native_combat_mana_regen_events"] >= 0 and
+                     w["native_combat_mana_regen_actual_gain"] >= 0 for w in rows), rows
+          assert all(sum(w["native_acknowledged_source_action_counts"].values()) > 0
+                     for w in rows), rows
+          # Real Rust events only; preserve exact source caster types and
+          # distinguish raw overkill from target HP actually removed.
+          caster_damage = [w["native_acknowledged_raw_damage_by_caster_type"]
+                           for w in rows]
+          assert all(isinstance(d, dict) and sum(d.values()) > 0
+                     and all(isinstance(k, str) and isinstance(v, (int, float))
+                             and 0 <= v < float("inf") for k, v in d.items())
+                     for d in caster_damage), caster_damage
+          print("WARLOCK_L20_NATIVE_ACK_CASTER_RAW_DAMAGE",
+                json.dumps(caster_damage, sort_keys=True), flush=True)
+          print("WARLOCK_L20_DECISIONS_NATIVE_WORLD", json.dumps({
+              "kills": len(rows), "food_seconds": rows[1]["food_seconds"],
+              "water_seconds": rows[1]["water_seconds"],
+              "food_health_gain": rows[1]["food_health_gain"],
+              "water_mana_gain": rows[1]["water_mana_gain"],
+              "recovery_ns": rows[1]["native_passive_recovery_ns"],
+              "native_rest_mana_regen_gain": rows[1]["native_rest_mana_regen_actual_gain"],
+              "native_rest_mana_regen_events": rows[1]["native_rest_mana_regen_events"],
+              "native_combat_mana_regen_gain": rows[1]["native_combat_mana_regen_actual_gain"],
+              "native_combat_mana_regen_events": rows[1]["native_combat_mana_regen_events"],
+              "checkpoint_certified": False,
+          }, sort_keys=True), flush=True)
+          PY
+      - name: Verify native-hostile Decisions travel without unneeded vendor refill
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import runpy
+          from pathlib import Path
+          world = runpy.run_path("forever/integrations/mythicsim-rust/live_two_world_pulls.py",
+                                 run_name="work1_no_refill_smoke")
+          report = world["run"](
+              Path("target/debug/forever-engine"),
+              Path("/tmp/warlock-l20-hostile-prepared.json"),
+              mob_health=100, target_count=2,
+              recovery_policy="decisions",
+              health_threshold=0.0, mana_threshold=0.0)
+          assert report["world_targets_killed"] == 2, report
+          assert report["actual_2d_ack"] is True, report
+          # The native request prepared an actual hostile enemy above; this
+          # public gsim report does not project "native_hostile_target_prepared".
+          assert isinstance(json.loads(
+              Path("/tmp/warlock-l20-hostile-prepared.json").read_text()
+          ).get("enemy"), dict), "MISSING_SELECTED_NATIVE_HOSTILE_ENEMY"
+          # Forever's current Python report has an independent older
+          # no-regen/no-vendor paid_recovery classification. Assert the real
+          # charged native/2D clock here, not that pending Work2 projection.
+          assert report["native_recovery_clock_accounted"] is True, report
+          rows = report["native_windows"]
+          assert len(rows) == 2 and rows[1]["native_passive_recovery_ns"] > 0, rows
+          assert rows[1]["decisions_full_recovery"] is False, rows
+          assert rows[1]["food_seconds"] == 0 and rows[1]["water_seconds"] == 0, rows
+          assert sum(w["native_hostile_swing_casts"] for w in rows) > 0, rows
+          print("WARLOCK_L20_PAID_TRAVEL_WITHOUT_VENDOR_REFILL", json.dumps({
+              "native_recovery_clock_accounted": report["native_recovery_clock_accounted"],
+              "python_paid_recovery_projection": report["paid_recovery"],
+              "travel_ns": rows[1]["native_passive_recovery_ns"],
+              "hostile_swing_casts": sum(w["native_hostile_swing_casts"] for w in rows),
+              "gate_pass_claimed": False,
+          }, sort_keys=True), flush=True)
+          PY
+      - name: Run exact-source equipped Warlock L20 P3 without recording gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          # Use a source-level 20 gear baseline; the previous 17-slot
+          # "best-paid" donor contained level-60 raid items and Rust refused
+          # its unsourced L20 combat ratings before any paid comparison.
+          # Reuse Forever's real P3 evaluator, not a second native scoring
+          # implementation or the former 237-candidate optimizer search.
+          root = Path("forever").resolve()
+          sys.path.insert(0, str(root))
+          from tools.wf_gate_p3_live import run_live
+
+          os.environ["FOREVER_P3_NATIVE_ITEM_OPTIONS_BIN"] = str(
+              Path("target/debug/forever-engine").resolve())
+          os.environ["FOREVER_P3_NATIVE_WARLOCK_L20_REQUEST"] = str(
+              Path("fixtures/warlock-l20-troll-source-equipped.request.json").resolve())
+          result = run_live(root, "warlock", 20, spec="unrestricted")
+          receipt = Path("/tmp/warlock-l20-equipped-p3-no-record.json")
+          receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+          paid = result.get("native_equipped_paid_attempts", 0)
+          print("WARLOCK_L20_EQUIPPED_P3_NO_RECORD", json.dumps({
+              "status": result.get("status"),
+              "reasons": result.get("reasons"),
+              "engine": result.get("production_engine"),
+              "paid_attempts": paid,
+              "source_slots": result.get("source_occupied_slots"),
+              "scored_slots": result.get("real_catalogue_slots_scored"),
+              "recorded": False,
+          }, sort_keys=True), flush=True)
+          # This is a real no-record P3 smoke, not an M1 recorder. A green
+          # workflow must not conceal a native FAIL/BLOCKED after paid work,
+          # as a historical trial did when only the paid-attempt count was read.
+          # Let the production P3 evaluator own its attempt budget and PASS
+          # predicates; do not add a second workflow-specific upper bound.
+          assert result.get("production_engine") == "mythicsim_rust", result
+          assert type(paid) is int and paid > 0, result
+          native = result.get("native_equipped_paid_receipt") or {}
+          assert native.get("actor_checkpoint_verified") is True, native
+          assert result.get("status") == "PASS", (
+              "WARLOCK_L20_NATIVE_P3_NO_RECORD_NOT_PASS", result.get("status"),
+              result.get("reasons"), receipt.as_posix())
+          assert not result.get("reasons"), result.get("reasons")
+          PY
+      - name: Preserve authentic request, prepared actor and paid output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: work1-warlock-l20-actor-paid
+          path: |
+            fixtures/warlock-l20-troll-native.request.json
+            fixtures/warlock-l20-troll-source-equipped.request.json
+            fixtures/warlock-l20-troll-hostile-world.request.json
+            /tmp/warlock-l20-hostile-prepared.json
+            /tmp/warlock-l20-prepared.json
+            /tmp/warlock-l20-paid.json
+            /tmp/warlock-l20-equipped-p3-no-record.json
+            /tmp/warlock-l20-rust-commit.txt
+            /tmp/warlock-l20-forever-commit.txt
+          if-no-files-found: warn
+          retention-days: 14

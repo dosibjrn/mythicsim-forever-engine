@@ -192,7 +192,7 @@ pub(crate) fn new_priest(
     if armor == "InnerFire" {
         sim.add_stat(unit, Stat::Armor, INNER_FIRE_ARMOR);
     }
-    let crit_per_agi = sim.crit_per_agi_max_level(unit);
+    let crit_per_agi = sim.crit_per_agi(unit);
     sim.unit_mut(unit).sdm.add_stat_dependency(
         Stat::Agility,
         Stat::PhysicalCritPercent,

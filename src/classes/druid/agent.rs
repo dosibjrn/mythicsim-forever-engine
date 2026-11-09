@@ -407,7 +407,10 @@ impl DruidAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<DruidAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<DruidAgent>, String> {
         let auras = class_auras(prepared);
         let target_auras: Vec<(String, DruidAura)> = prepared
             .effects
@@ -463,11 +466,14 @@ impl DruidAgent {
         // Native-only Forever spell: source data owns base tick numbers, not a
         // Python or Go copy. Root/break and real 2D CC remain unimplemented.
         if let Some(roots) = find_spell(&fight, 9853, 0) {
-            let dot = fight.spells[roots].dot.ok_or("Entangling Roots lacks its dot")?;
+            let dot = fight.spells[roots]
+                .dot
+                .ok_or("Entangling Roots lacks its dot")?;
             let row = crate::prepare::spelldata::Ladder::ranked(&[9853]).highest();
-            fight.dots[dot].tick_base = Some(row.periodic_effect().average(
-                crate::prepare::character::constants::CHARACTER_LEVEL,
-            ));
+            fight.dots[dot].tick_base = Some(
+                row.periodic_effect()
+                    .average(crate::prepare::character::constants::CHARACTER_LEVEL),
+            );
             fight.dots[dot].tick_can_crit = row.periodic_can_crit();
         }
         for effect in &prepared.effects {

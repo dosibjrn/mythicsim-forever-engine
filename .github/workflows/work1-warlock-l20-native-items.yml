@@ -1,0 +1,100 @@
+name: Work1 Warlock L20 native equipment source
+
+on:
+  push:
+    branches: [work/work1-warlock-l20-native-item-options-20261106]
+    paths:
+      - .github/workflows/work1-warlock-l20-native-items.yml
+      - src/data.rs
+      - src/options.rs
+      - src/prepare/items.rs
+      - tools/import_paladin_equipment.py
+      - tools/import_warlock_equipment.py
+      - data/warlock-equipment-skills.json
+      - data/warlock-equipment-skills.manifest.json
+      - data/manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warlock-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch source DB2 at exact pinned client build
+        shell: bash
+        run: |
+          set -euo pipefail
+          build="$(python3 -c 'import json; print(json.load(open("data/manifest.json"))["client_build"])')"
+          for table in SkillLine SkillRaceClassInfo; do
+            curl --fail --location --silent --show-error --retry 3 --retry-delay 2 \
+              --user-agent "MythicSim source importer" \
+              "https://wago.tools/db2/${table}/csv?build=${build}" \
+              -o "/tmp/${table}.csv"
+            test -s "/tmp/${table}.csv"
+          done
+      - name: Reimport and compare committed Warlock class skill source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/import_warlock_equipment.py /tmp/SkillLine.csv /tmp/SkillRaceClassInfo.csv
+          git diff --exit-code -- data/manifest.json data/warlock-equipment-skills.json data/warlock-equipment-skills.manifest.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          row = json.loads(Path('data/warlock-equipment-skills.json').read_text())
+          assert row['client_build'] == '1.60.1.70425', row
+          assert row['class_id'] == 9 and row['class_mask'] == 256, row
+          available = {s['name'] for s in row['skills'] if s['min_level'] is not None and s['min_level'] <= 20}
+          assert {'Cloth', 'Daggers', 'Staves', 'Wands'} <= available, available
+          assert 'Swords' not in available and 'Leather' not in available, available
+          print('WARLOCK_L20_SKILLS', sorted(available), flush=True)
+          PY
+      - name: Test real selected native Rust item options
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked warlock_l20_uses_pinned_client_skills_and_item_sparse -- --nocapture
+          cargo test --locked native_warlock_pet_candidates_are_actual_registered_proto_choices -- --nocapture
+          cargo run --locked -- options --class warlock --level 20 >/tmp/warlock-l20-unified-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('/tmp/warlock-l20-unified-options.json').read_text())
+          assert result['class'] == 'warlock' and result['level'] == 20
+          pets = result['pets']
+          assert len(pets) >= 4, pets
+          assert all(p['eligibility'] == 'native_prepare_and_combat_required' and
+                     p['source'] == 'native_warlock_executor_and_proto_enum'
+                     for p in pets), pets
+          assert 'pet_choices_require_native_execution_not_level_unlock_certification' in result['coverage']['notes']
+          print('WARLOCK_L20_NATIVE_PET_PROPOSALS', [p['summon'] for p in pets], flush=True)
+          PY
+          cargo run --locked -- item-options --class warlock --level 20 --spec unrestricted --slot all >/tmp/warlock-l20-options.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          row = json.loads(Path('/tmp/warlock-l20-options.json').read_text())
+          assert row['status'] == 'ok', row.get('refusal')
+          assert row['class'] == 'warlock' and row['level'] == 20, row
+          assert row['required_level_supported'] and row['items'], row
+          assert row['unverified_candidate_count'] == 0, row
+          assert all(i['required_level'] <= 20 for i in row['items']), row
+          assert any(i['ranged_weapon_type'] == 'RangedWeaponTypeWand' for i in row['items']), 'No native Wand options'
+          print('WARLOCK_L20_NATIVE_ITEMS', len(row['items']), flush=True)
+          PY
+      - name: Keep native source receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: work1-warlock-l20-native-items
+          path: |
+            /tmp/warlock-l20-options.json
+            /tmp/warlock-l20-unified-options.json
+            data/warlock-equipment-skills.json
+            data/warlock-equipment-skills.manifest.json
+          if-no-files-found: warn
+          retention-days: 14

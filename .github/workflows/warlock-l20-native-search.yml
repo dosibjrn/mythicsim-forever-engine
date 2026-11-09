@@ -1,0 +1,74 @@
+name: Warlock L20 genuine native build comparison
+
+on:
+  push:
+    branches:
+      - experiment/warlock-l20-real-build-search-20261106
+      - work/work1-warlock-l20-native-item-options-20261106
+    paths:
+      - tools/warlock_l20_native_search.py
+      - tools/test_warlock_l20_native_search.py
+      - .github/workflows/warlock-l20-native-search.yml
+      - fixtures/warlock-l20-troll-best-paid.request.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-level20-build-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify APL option-source construction
+        run: python3 -m unittest discover -s tools -p 'test_warlock_l20_native_search.py' -v
+      - name: Build the exact checked-out Rust engine
+        run: cargo build --locked --bin forever-engine
+      - name: Replay committed optimized 17-slot Troll L20 with native balanced combat
+        shell: bash
+        run: |
+          set -euo pipefail
+          request=fixtures/warlock-l20-troll-best-paid.request.json
+          target/debug/forever-engine prepare --request "$request" --actor-level 20 --outfile /tmp/warlock-l20-best-prepared.json
+          target/debug/forever-engine sim --infile /tmp/warlock-l20-best-prepared.json --rng-mode balanced --outfile /tmp/warlock-l20-best-paid.json
+          python3 - <<'PY'
+          import json, math
+          from pathlib import Path
+          request = json.loads(Path("fixtures/warlock-l20-troll-best-paid.request.json").read_text())
+          actor = request["raid"]["parties"][0]["players"][0]
+          prepared = json.loads(Path("/tmp/warlock-l20-best-prepared.json").read_text())["player"]
+          paid = json.loads(Path("/tmp/warlock-l20-best-paid.json").read_text())
+          assert actor["class"] == prepared["class"] == "ClassWarlock"
+          assert actor["race"] == prepared["race"] == "RaceTroll"
+          assert prepared["level"] == 20
+          assert len(actor["equipment"]["items"]) == 17
+          assert all(item["id"] > 0 for item in actor["equipment"]["items"])
+          body = paid["result"]
+          dps = body["raidMetrics"]["parties"][0]["players"][0]["dps"]["avg"]
+          assert isinstance(dps, (int, float)) and math.isfinite(dps)
+          print("WARLOCK_L20_EQUIPPED_NATIVE_REPLAY", json.dumps({
+              "dps": dps, "iterations": body["iterationsDone"],
+              "duration_s": body["firstIterationDuration"],
+              "source_revision": paid.get("source_revision"),
+              "request_sha256": paid.get("request_sha256"),
+              "equipped_ids": [item["id"] for item in actor["equipment"]["items"]]
+          }))
+          PY
+      - name: Score actual level-20 Warlock gear, talents and APL variations
+        run: |
+          set -euo pipefail
+          python3 tools/warlock_l20_native_search.py \
+            --binary target/debug/forever-engine \
+            --request fixtures/warlock-l20-troll-native.request.json \
+            --incumbent-request fixtures/warlock-l20-troll-best-paid.request.json \
+            --out /tmp/warlock-l20-search \
+            --duration 30 --iterations 8
+      - name: Preserve full exact-native build comparisons and best request
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: warlock-l20-real-native-build-search
+          path: /tmp/warlock-l20-search/
+          if-no-files-found: warn
+          retention-days: 14

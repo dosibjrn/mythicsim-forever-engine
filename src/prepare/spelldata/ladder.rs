@@ -130,6 +130,21 @@ impl Ladder {
         }
     }
 
+    /// Select the highest source rank whose required player level is available.
+    /// The same pinned client Spell row is used for both rank and level; no
+    /// additional Forever spellbook or trainer-proficiency rules are inferred.
+    pub(crate) fn highest_for_level(&self, level: i32, rules: Rules) -> &'static Spell {
+        self.ranks
+            .iter()
+            .rev()
+            .find(|spell| {
+                i32::from(spell.spell_level) <= level
+                    && (rules != Rules::Forever || !book_ranks::is_book_rank(spell.id))
+            })
+            .copied()
+            .unwrap_or_else(nil)
+    }
+
     /// The rank with this spell id. Panics on an id the ladder does not carry, the way
     /// `must_find` does on a spell the store does not carry.
     pub(crate) fn by_id(&self, id: i32) -> &'static Spell {
@@ -140,6 +155,20 @@ impl Ladder {
                 self.ranks.len()
             ),
         }
+    }
+
+    /// Select the strongest rank whose native client row is taught at actor level.
+    /// Keep level-60 behavior exactly as before; unsourced lower-level ranks are absent.
+    pub(crate) fn highest_at_level(&self, level: i32) -> &'static Spell {
+        if level == 60 {
+            return self.highest();
+        }
+        self.ranks
+            .iter()
+            .rev()
+            .find(|rank| rank.spell_level > 0 && i32::from(rank.spell_level) <= level)
+            .copied()
+            .unwrap_or_else(nil)
     }
 
     pub(crate) fn len(&self) -> i32 {
@@ -315,6 +344,23 @@ mod tests {
         frostbolt.each(|rank, spell| seen.push((rank, spell.id)));
         assert_eq!(seen, [(1, 116), (2, 205), (3, 837)]);
         assert!(Ladder::default().highest().is_nil());
+    }
+
+    #[test]
+    fn level_limited_rank_preserves_selected_source_and_l60_behavior() {
+        let spells = Ladder::ranked(&[686, 695, 705, 1088, 1106]);
+        let l20 = spells.highest_for_level(20, Rules::Forever);
+        assert!(!l20.is_nil());
+        assert!(i32::from(l20.spell_level) <= 20);
+        assert!(spells
+            .ranks
+            .iter()
+            .any(|spell| spell.spell_level > l20.spell_level));
+        assert_eq!(
+            spells.highest_for_level(60, Rules::Forever).id,
+            spells.highest_for(Rules::Forever).id
+        );
+        assert!(spells.highest_for_level(-1, Rules::Forever).is_nil());
     }
 
     #[test]

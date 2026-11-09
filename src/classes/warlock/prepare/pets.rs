@@ -90,6 +90,18 @@ impl Summon {
     }
 }
 
+/// The names actually installed by the native Warlock executor. This is a
+/// candidate domain, not proof that a demon is trained/unlocked at a given level.
+pub(crate) fn registered_native_summons() -> [&'static str; 4] {
+    [
+        Summon::Imp,
+        Summon::Voidwalker,
+        Summon::Succubus,
+        Summon::Felhunter,
+    ]
+    .map(Summon::name)
+}
+
 /// Go `petStatInheritance`: linear in the owner's stats, which the dynamic inheritance needs.
 /// Melee hit is Rust only: Go gives the demon its master's whole spell hit as melee hit, Forever
 /// scales it to the melee cap ([`DEMON_MELEE_HIT_PER_SPELL_HIT`]).

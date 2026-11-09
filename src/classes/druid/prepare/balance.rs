@@ -62,7 +62,6 @@ impl Druid {
         }
     }
 
-
     /// Source-native Forever Roots periodic damage, not yet root/break/2D CC behavior.
     /// Keep GoReference preparation unchanged for the pinned Go goldens.
     fn register_entangling_roots_spell(&mut self, sim: &mut Sim) {
