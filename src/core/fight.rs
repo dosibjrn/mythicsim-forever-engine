@@ -126,8 +126,10 @@ mod native_world_actor_survival_tests {
                 Err(reason)
             );
             assert_eq!(
-                fight.recover_native_world_actor_decisions(0.5, 0.5, food, water),
-                Err(reason)
+                fight
+                    .recover_native_world_actor_decisions(0.5, 0.5, food, water)
+                    .unwrap_err(),
+                reason
             );
             assert_eq!(fight.now, before, "refusal must not advance native clock");
         }
