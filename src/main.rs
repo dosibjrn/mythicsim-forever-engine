@@ -1,6 +1,7 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
+    native_inprocess_world_targets_with_recovery,
     native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals,
     simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
     PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
@@ -170,7 +171,7 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
     if args.is_empty() || args == ["--help"] {
-        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--actor-level 20] [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine options --class CLASS --level LEVEL\nforever-engine talent-options --class CLASS --level LEVEL\nforever-engine version");
+        println!("forever-engine sim --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--trace] [--gate] [--rotation-stats]\nforever-engine sim --request RAID_SIM_REQUEST.json [--scenario ID] [--outfile RESULT.json] [--gate] [--rotation-stats] [--go-rules]\nforever-engine prepare --request RAID_SIM_REQUEST.json [--actor-level 20] [--scenario ID] [--outfile PREPARED_V2.json] [--go-rules]\nforever-engine bench --infile REQUEST.json|PREPARED_V2.json [--outfile RESULT.json] [--warmups 3] [--samples 7]\nforever-engine check --infile PREPARED_V2.json\nforever-engine gear-options --item-types ItemTypeHead,ItemTypeHands,...\nforever-engine item-options --class priest|mage|shaman|paladin --level N --spec unrestricted --slot SLOT\nforever-engine player-context --class paladin --level 20 [--race human|dwarf]\nforever-engine options --class CLASS --level LEVEL\nforever-engine talent-options --class CLASS --level LEVEL\nforever-engine eval-leveling --infile PREPARED_V2.json --targets 2..100 --rng-mode balanced [--recovery-seconds 1..120]\nforever-engine version");
         return Ok(());
     }
 
@@ -312,7 +313,8 @@ fn run() -> Result<(), Failure> {
         return Ok(());
     }
 
-    if args[0] == "native-world-pulls" {
+    if args[0] == "native-world-pulls" || args[0] == "eval-leveling" {
+        let inprocess = args[0] == "eval-leveling";
         if !(args.len() == 7 || args.len() == 9)
             || args[1] != "--infile"
             || args[3] != "--targets"
@@ -343,9 +345,16 @@ fn run() -> Result<(), Failure> {
         let prepared =
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
-        let report =
-            native_two_world_targets_with_recovery(&prepared, target_count, mode, recovery_seconds)
-                .map_err(|err| err.to_string())?;
+        let report = if inprocess {
+            native_inprocess_world_targets_with_recovery(
+                &prepared, target_count, mode, recovery_seconds,
+            )
+        } else {
+            native_two_world_targets_with_recovery(
+                &prepared, target_count, mode, recovery_seconds,
+            )
+        }
+        .map_err(|err| err.to_string())?;
         println!(
             "{}",
             serde_json::json!({
