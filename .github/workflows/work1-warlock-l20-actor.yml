@@ -44,6 +44,7 @@ jobs:
           cargo test --locked retained_world_chain_preserves_and_drains_acknowledged_source_actions -- --nocapture
           cargo test --locked world_bridge -- --nocapture
           cargo test --locked leveling_recovery -- --nocapture
+          cargo test --locked retained_world_regen_receipts_do_not_count_paid_rest_as_combat -- --nocapture
           cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
           cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
           cargo test --locked native_warlock_direct_damage_uses_registered_caster_level -- --nocapture
@@ -167,6 +168,14 @@ jobs:
           assert rows[1]["native_passive_recovery_ns"] > 0, rows
           assert rows[1]["decisions_full_recovery"] is True, rows
           assert rows[1]["food_health_gain"] > 0 or rows[1]["water_mana_gain"] > 0, rows
+          # A native tick during paid recovery belongs to rest, never combat;
+          # the first pull has no previous kill / between-pull rest.
+          assert rows[0]["native_rest_mana_regen_events"] == 0, rows
+          assert rows[0]["native_rest_mana_regen_actual_gain"] == 0, rows
+          assert rows[1]["native_rest_mana_regen_events"] > 0, rows
+          assert rows[1]["native_rest_mana_regen_actual_gain"] > 0, rows
+          assert all(w["native_combat_mana_regen_events"] >= 0 and
+                     w["native_combat_mana_regen_actual_gain"] >= 0 for w in rows), rows
           assert all(sum(w["native_acknowledged_source_action_counts"].values()) > 0
                      for w in rows), rows
           print("WARLOCK_L20_DECISIONS_NATIVE_WORLD", json.dumps({
@@ -175,6 +184,10 @@ jobs:
               "food_health_gain": rows[1]["food_health_gain"],
               "water_mana_gain": rows[1]["water_mana_gain"],
               "recovery_ns": rows[1]["native_passive_recovery_ns"],
+              "native_rest_mana_regen_gain": rows[1]["native_rest_mana_regen_actual_gain"],
+              "native_rest_mana_regen_events": rows[1]["native_rest_mana_regen_events"],
+              "native_combat_mana_regen_gain": rows[1]["native_combat_mana_regen_actual_gain"],
+              "native_combat_mana_regen_events": rows[1]["native_combat_mana_regen_events"],
               "checkpoint_certified": False,
           }, sort_keys=True), flush=True)
           PY
