@@ -378,6 +378,31 @@ pub fn native_inprocess_world_targets_with_recovery(
     rng_mode: crate::core::rng::RngMode,
     recovery_seconds: u32,
 ) -> Result<serde_json::Value, PreparedError> {
+    native_inprocess_world_targets_with_recovery_schedule(
+        prepared, target_count, rng_mode, recovery_seconds, None,
+    )
+}
+
+/// The route optimizer may select a different native paid wait after each kill.
+pub fn native_inprocess_world_targets_with_recovery_schedule(
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    recovery_seconds: u32,
+    recovery_schedule_seconds: Option<&[u32]>,
+) -> Result<serde_json::Value, PreparedError> {
+    if let Some(schedule) = recovery_schedule_seconds {
+        if schedule.len() != target_count.saturating_sub(1) {
+            return Err(PreparedError::Invalid(
+                "RUST_WORLD_RECOVERY_SCHEDULE_LENGTH_INVALID".to_owned(),
+            ));
+        }
+        if schedule.iter().any(|seconds| *seconds > 120) {
+            return Err(PreparedError::Invalid(
+                "RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned(),
+            ));
+        }
+    }
     if recovery_seconds > 120 {
         return Err(PreparedError::Invalid(
             "RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned(),
@@ -399,8 +424,8 @@ pub fn native_inprocess_world_targets_with_recovery(
         prepared.player.distance_yards,
     )
     .map_err(|reason| PreparedError::Invalid(reason.to_owned()))?;
-    let result = crate::classes::native_two_world_targets_with_recovery(
-        prepared, target_count, rng_mode, recovery_seconds,
+    let result = crate::classes::native_world_targets_with_recovery_schedule(
+        prepared, target_count, rng_mode, recovery_seconds, recovery_schedule_seconds,
     )
     .map_err(PreparedError::Invalid);
     crate::core::fight::world_bridge::stop_inprocess();

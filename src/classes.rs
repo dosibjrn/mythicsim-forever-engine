@@ -37,16 +37,27 @@ pub(crate) fn native_two_world_targets_with_recovery(
     rng_mode: crate::core::rng::RngMode,
     recovery_seconds: u32,
 ) -> Result<serde_json::Value, String> {
+    native_world_targets_with_recovery_schedule(prepared, target_count, rng_mode, recovery_seconds, None)
+}
+
+/// Forward caller-chosen timing; native remains the sole combat executor.
+pub(crate) fn native_world_targets_with_recovery_schedule(
+    prepared: &crate::contracts::prepared_v2::PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    recovery_seconds: u32,
+    schedule: Option<&[u32]>,
+) -> Result<serde_json::Value, String> {
     match prepared.player.class.as_str() {
-        "ClassMage" => mage::agent::MageAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassDruid" => druid::agent::DruidAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassWarlock" => warlock::agent::WarlockAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassShaman" => shaman::agent::ShamanAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassPaladin" => paladin::agent::PaladinAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassPriest" => priest::agent::PriestAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassRogue" => rogue::agent::RogueAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassWarrior" => warrior::agent::WarriorAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
-        "ClassHunter" => hunter::agent::HunterAgent::fight(prepared, rng_mode)?.native_two_world_targets_with_recovery(target_count, recovery_seconds).map_err(str::to_string),
+        "ClassMage" => mage::agent::MageAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassDruid" => druid::agent::DruidAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassWarlock" => warlock::agent::WarlockAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassShaman" => shaman::agent::ShamanAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassPaladin" => paladin::agent::PaladinAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassPriest" => priest::agent::PriestAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassRogue" => rogue::agent::RogueAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassWarrior" => warrior::agent::WarriorAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
+        "ClassHunter" => hunter::agent::HunterAgent::fight(prepared, rng_mode)?.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, schedule).map_err(str::to_string),
         other => Err(format!("class {other} has no native fight agent")),
     }
 }

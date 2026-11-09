@@ -157,6 +157,38 @@ jobs:
                  'travel_ns': sum(w['native_spatial_travel_ns']
                                   for w in windows[1:])})
           PY
+      - name: Exercise variable native recovery decisions on eight real kills
+        run: |
+          python3 - <<'PY'
+          import json
+          json.dump([0, 12, 0, 12, 0, 12, 0], open('/tmp/work1-recovery-schedule.json', 'w'))
+          PY
+          cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 8 --rng-mode balanced --recovery-schedule /tmp/work1-recovery-schedule.json > /tmp/work1-scheduled-out.json
+          python3 - <<'PY'
+          import json, subprocess
+          schedule = [0, 12, 0, 12, 0, 12, 0]
+          r = json.load(open('/tmp/work1-scheduled-out.json'))['result']
+          assert r['world_targets_killed'] == 8, r
+          assert r['recovery_seconds_per_gap'] is None, r
+          assert r['recovery_schedule_seconds_per_gap'] == schedule, r
+          assert [w['native_requested_recovery_seconds'] for w in r['windows'][1:]] == schedule, r
+          assert all(w['native_damage'] > 0 for w in r['windows']), r
+          for chosen, w in zip(schedule, r['windows'][1:]):
+              assert w['native_passive_recovery_ns'] == max(
+                  chosen * 1_000_000_000,
+                  1_000_000 + w['native_spatial_travel_ns']), w
+          for bad, reason in [([0], 'RUST_WORLD_RECOVERY_SCHEDULE_LENGTH_INVALID'),
+                              ([121] * 7, 'RUST_WORLD_RECOVERY_SECONDS_INVALID')]:
+              path = '/tmp/work1-invalid-schedule.json'
+              json.dump(bad, open(path, 'w'))
+              p = subprocess.run(['target/debug/forever-engine', 'eval-leveling',
+                  '--infile', '/tmp/work1-spatial-smoke.json', '--targets', '8',
+                  '--rng-mode', 'balanced', '--recovery-schedule', path],
+                  text=True, capture_output=True)
+              assert p.returncode != 0 and reason in p.stderr, (p.returncode, p.stderr)
+          print('WORK1_NATIVE_VARIABLE_RECOVERY_8_8', {'schedule': schedule,
+                'last_kill_ns': r['windows'][-1]['native_kill_ns']})
+          PY
       - name: Exercise same native actor over one hundred serial spatial targets
         run: |
           cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 100 --rng-mode balanced --recovery-seconds 12 > /tmp/work1-spatial-100-out.json

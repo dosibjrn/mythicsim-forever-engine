@@ -1,7 +1,7 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
-    native_inprocess_world_targets_with_recovery,
+    native_inprocess_world_targets_with_recovery_schedule,
     native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals,
     simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
     PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
@@ -319,13 +319,14 @@ fn run() -> Result<(), Failure> {
             || args[1] != "--infile"
             || args[3] != "--targets"
             || args[5] != "--rng-mode"
-            || (args.len() == 9 && args[7] != "--recovery-seconds")
+            || (args.len() == 9 && args[7] != "--recovery-seconds"
+                && !(inprocess && args[7] == "--recovery-schedule"))
         {
             return Err(
                 "native-world-pulls requires --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 0..120]".into(),
             );
         }
-        let recovery_seconds = if args.len() == 9 {
+        let recovery_seconds = if args.len() == 9 && args[7] == "--recovery-seconds" {
             args[8]
                 .parse::<u32>()
                 .map_err(|_| "native-world-pulls recovery seconds must be an integer")?
@@ -345,9 +346,18 @@ fn run() -> Result<(), Failure> {
         let prepared =
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
+        let recovery_schedule: Option<Vec<u32>> =
+            if inprocess && args.len() == 9 && args[7] == "--recovery-schedule" {
+                let bytes = fs::read(&args[8]).map_err(|err| err.to_string())?;
+                Some(serde_json::from_slice(&bytes)
+                    .map_err(|_| "eval-leveling recovery schedule must be a JSON integer array")?)
+            } else {
+                None
+            };
         let report = if inprocess {
-            native_inprocess_world_targets_with_recovery(
+            native_inprocess_world_targets_with_recovery_schedule(
                 &prepared, target_count, mode, recovery_seconds,
+                recovery_schedule.as_deref(),
             )
         } else {
             native_two_world_targets_with_recovery(

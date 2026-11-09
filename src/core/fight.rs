@@ -5803,6 +5803,25 @@ impl<A: Agent> Fight<A> {
         target_count: usize,
         recovery_seconds: u32,
     ) -> Result<serde_json::Value, &'static str> {
+        self.native_world_targets_with_recovery_schedule(target_count, recovery_seconds, None)
+    }
+
+    /// Execute the caller's per-gap rest policy on the retained native actor.
+    /// It pays real native scheduler ticks; no item/mana effects are fabricated.
+    pub(crate) fn native_world_targets_with_recovery_schedule(
+        &mut self,
+        target_count: usize,
+        recovery_seconds: u32,
+        recovery_schedule_seconds: Option<&[u32]>,
+    ) -> Result<serde_json::Value, &'static str> {
+        if let Some(schedule) = recovery_schedule_seconds {
+            if schedule.len() != target_count.saturating_sub(1) {
+                return Err("RUST_WORLD_RECOVERY_SCHEDULE_LENGTH_INVALID");
+            }
+            if schedule.iter().any(|seconds| *seconds > 120) {
+                return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
+            }
+        }
         if recovery_seconds > 120 {
             return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
         }
@@ -5836,6 +5855,11 @@ impl<A: Agent> Fight<A> {
             self.spells.iter().map(|spell| spell.casts).collect();
 
         for index in 0..target_count {
+            let chosen_recovery_seconds = if index == 0 {
+                0
+            } else {
+                recovery_schedule_seconds.map_or(recovery_seconds, |schedule| schedule[index - 1])
+            };
             let mut native_recovery_ticks = 0;
             let mut native_recovery_item_mana_ticks = 0;
             let mut native_recovery_item_mana_actual_gain = 0.0_f64;
@@ -5864,7 +5888,7 @@ impl<A: Agent> Fight<A> {
                 // Actor rest and spatial travel may overlap, but walking is
                 // never free. Charge their maximum on the same native clock.
                 let recovery_ns =
-                    i64::from(recovery_seconds) * crate::core::time::NS_PER_SECOND;
+                    i64::from(chosen_recovery_seconds) * crate::core::time::NS_PER_SECOND;
                 // In-process motion begins at world_started_at (after the
                 // committed lethal ACK), not at killed_at. Wait for that
                 // exact walking deadline so combat cannot resume mid-step.
@@ -6027,6 +6051,7 @@ impl<A: Agent> Fight<A> {
                 "native_spatial_travel_ns": native_spatial_travel_ns,
                 "native_spatial_moving_samples": world_bridge::inprocess_moving_samples(),
                 "native_spatial_position": world_bridge::inprocess_position_receipt(),
+                "native_requested_recovery_seconds": chosen_recovery_seconds,
                 "native_passive_recovery_ns": native_recovery_elapsed_ns,
                 "native_passive_recovery_ticks": native_recovery_ticks,
                 // Counts and resource gain from *executed* native scheduled item
@@ -6066,7 +6091,13 @@ impl<A: Agent> Fight<A> {
             "actual_2d_ack": !world_bridge::inprocess_enabled(),
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
-            "recovery_seconds_per_gap": recovery_seconds,
+            "recovery_seconds_per_gap": if recovery_schedule_seconds.is_some() {
+                None
+            } else {
+                Some(recovery_seconds)
+            },
+            "recovery_schedule_seconds_per_gap": recovery_schedule_seconds
+                .map_or_else(|| vec![recovery_seconds; target_count - 1], |schedule| schedule.to_vec()),
             "windows": windows,
         });
         self.cleanup();
