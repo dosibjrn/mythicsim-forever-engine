@@ -6165,6 +6165,11 @@ impl<A: Agent> Fight<A> {
             // and the previous world/food/drink/travel gap. A mandatory 1 ms
             // new-target handshake must not vanish from true route elapsed.
             let native_pull_started_at_ns = self.now;
+            // Sample the actual retained native actor AFTER paid travel/food/water
+            // and BEFORE combat. The old per-kill-only HP/mana receipt could not
+            // separate combat resource change from inter-pull recovery.
+            let actor_health_before_pull = self.player.health;
+            let actor_mana_before_pull = self.player.mana;
             // Recovery ticks mutate the same cumulative actor metrics as combat.
             // Snapshot at the actual next pull; the prior kill's metric is not
             // a valid baseline for a field explicitly labeled "combat".
@@ -6250,6 +6255,10 @@ impl<A: Agent> Fight<A> {
                 "native_damage": total_damage - previous_damage,
                 "actor_mana": self.player.mana,
                 "actor_health": self.player.health,
+                "actor_mana_before_pull": actor_mana_before_pull,
+                "actor_health_before_pull": actor_health_before_pull,
+                "actor_mana_net_combat_change": self.player.mana - actor_mana_before_pull,
+                "actor_health_net_combat_change": self.player.health - actor_health_before_pull,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
                 "native_hostile_swing_casts": hostile_swings - previous_hostile_swings,
