@@ -108,6 +108,9 @@ jobs:
           assert r['native_spatial_inprocess'] is True, r
           assert r['world_targets_killed'] == 8, r
           assert r['recovery_seconds_per_gap'] == 0, r
+          # A chain-pull need not receive a passive regen tick to have
+          # charged the chosen zero-rest policy and native spatial travel.
+          assert r['paid_recovery'] is True, r
           windows = r['windows']
           assert len(windows) == 8, r
           assert all(w['native_damage'] > 0 for w in windows), r
@@ -172,6 +175,9 @@ jobs:
           assert r['recovery_seconds_per_gap'] is None, r
           assert r['recovery_schedule_seconds_per_gap'] == schedule, r
           assert [w['native_requested_recovery_seconds'] for w in r['windows'][1:]] == schedule, r
+          # Mixed no-rest / 12s rest is fully charged even when one gap has
+          # zero native passive-tick events. Tick and item gains stay distinct.
+          assert r['paid_recovery'] is True, r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
           for chosen, w in zip(schedule, r['windows'][1:]):
               assert w['native_passive_recovery_ns'] == max(
