@@ -205,6 +205,19 @@ jobs:
           assert sum(w["native_hostile_swing_casts"] for w in report["native_windows"]) > 0, report
           rows = report["native_windows"]
           assert len(rows) == 2 and report["actual_2d_ack"] is True, report
+          # Native cumulative elapsed is the actual retained-actor clock:
+          # combat plus inter-pull travel/food/water/handshake, not an
+          # uncharged guessed downtime or just a sum of DPS windows.
+          assert all(type(w.get("native_pull_elapsed_ns")) is int
+                     and w["native_pull_elapsed_ns"] > 0 for w in rows), rows
+          assert rows[0]["native_inter_pull_elapsed_ns"] == 0, rows
+          assert rows[1]["native_inter_pull_elapsed_ns"] > 0, rows
+          assert rows[0]["native_elapsed_since_start_ns"] == (
+              rows[0]["native_pull_elapsed_ns"]), rows
+          assert rows[1]["native_elapsed_since_start_ns"] == (
+              rows[0]["native_elapsed_since_start_ns"] +
+              rows[1]["native_inter_pull_elapsed_ns"] +
+              rows[1]["native_pull_elapsed_ns"]), rows
           assert rows[1]["native_passive_recovery_ns"] > 0, rows
           assert rows[1]["decisions_full_recovery"] is True, rows
           assert rows[1]["food_health_gain"] > 0 or rows[1]["water_mana_gain"] > 0, rows
