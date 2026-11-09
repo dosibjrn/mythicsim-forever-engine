@@ -248,6 +248,16 @@ jobs:
                      w["native_combat_mana_regen_actual_gain"] >= 0 for w in rows), rows
           assert all(sum(w["native_acknowledged_source_action_counts"].values()) > 0
                      for w in rows), rows
+          # Real Rust events only; preserve exact source caster types and
+          # distinguish raw overkill from target HP actually removed.
+          caster_damage = [w["native_acknowledged_raw_damage_by_caster_type"]
+                           for w in rows]
+          assert all(isinstance(d, dict) and sum(d.values()) > 0
+                     and all(isinstance(k, str) and isinstance(v, (int, float))
+                             and 0 <= v < float("inf") for k, v in d.items())
+                     for d in caster_damage), caster_damage
+          print("WARLOCK_L20_NATIVE_ACK_CASTER_RAW_DAMAGE",
+                json.dumps(caster_damage, sort_keys=True), flush=True)
           print("WARLOCK_L20_DECISIONS_NATIVE_WORLD", json.dumps({
               "kills": len(rows), "food_seconds": rows[1]["food_seconds"],
               "water_seconds": rows[1]["water_seconds"],
