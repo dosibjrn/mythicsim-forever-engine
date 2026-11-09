@@ -5798,7 +5798,7 @@ impl<A: Agent> Fight<A> {
         target_count: usize,
         recovery_seconds: u32,
     ) -> Result<serde_json::Value, &'static str> {
-        if !(1..=120).contains(&recovery_seconds) {
+        if recovery_seconds > 120 {
             return Err("RUST_WORLD_RECOVERY_SECONDS_INVALID");
         }
         if !world_bridge::enabled() {
@@ -5860,7 +5860,11 @@ impl<A: Agent> Fight<A> {
                 let walked_until = world_started_at
                     .checked_add(native_spatial_travel_ns)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
-                let next_at = recovery_until.max(walked_until);
+                // Even with zero chosen rest and an already-in-range next mob,
+                // a new target may only begin after its committed ACK clock.
+                // Otherwise the retained actor can start before the world's
+                // next-target transition (or replay actions against the corpse).
+                let next_at = recovery_until.max(walked_until).max(world_started_at);
                 // Sample the true walk-start clock before the 100ms recovery
                 // stepping loop. Otherwise short paid walks can finish before
                 // any native world exchange observes moving=true, even while
