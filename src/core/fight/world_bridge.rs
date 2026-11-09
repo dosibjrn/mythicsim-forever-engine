@@ -765,7 +765,10 @@ mod iteration_teardown_tests {
             take_source_action_counts(),
             serde_json::json!({"cleanup-proc": 1})
         );
-        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 5.0}));
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 5.0})
+        );
 
         // Only after the matching ACK may finish close the iteration and the
         // next stochastic iteration begin.
@@ -806,7 +809,10 @@ mod iteration_teardown_tests {
             take_source_action_counts(),
             serde_json::json!({"combat-proc": 1})
         );
-        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 7.0}));
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 7.0})
+        );
         BRIDGE.with(|state| *state.borrow_mut() = None);
     }
 
@@ -831,7 +837,10 @@ mod iteration_teardown_tests {
             std::mem::take(&mut bridge.pending)
         });
         record_acknowledged_source_actions(&first);
-        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 58.0}));
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 58.0})
+        );
 
         // A lethal ACK begins another distinct 2D mob on the same actor.
         // Unlike begin_iteration(), this must not reset accumulated actions.
@@ -854,7 +863,10 @@ mod iteration_teardown_tests {
             std::mem::take(&mut bridge.pending)
         });
         record_acknowledged_source_actions(&second);
-        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 58.0}));
+        assert_eq!(
+            take_source_caster_raw_damage(),
+            serde_json::json!({"player": 58.0})
+        );
         assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
 
         assert_eq!(
