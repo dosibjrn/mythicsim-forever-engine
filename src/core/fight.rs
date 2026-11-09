@@ -200,10 +200,7 @@ mod world_mana_receipt_tests {
 /// retained actor received either real passive ticks or actual vendor food/water.
 /// Decisions can finish inside a mana tick while still paying food/water time:
 /// excluding that case mislabels charged recovery as free.
-fn native_world_recovery_paid(
-    window: &serde_json::Value,
-    strategy: WorldRecoveryStrategy,
-) -> bool {
+fn native_world_recovery_paid(window: &serde_json::Value, strategy: WorldRecoveryStrategy) -> bool {
     let clock_paid = window["native_passive_recovery_ns"]
         .as_i64()
         .is_some_and(|ns| ns > 0);
