@@ -367,6 +367,46 @@ pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_coun
         .map_err(PreparedError::Invalid)
 }
 
+/// One native Rust request executes multiple sequential spatial world targets
+/// without stdin/stdout world exchanges. The source-prepared mob HP and player
+/// engagement distance are scenario facts, not independently inferred rules.
+/// Fixed between-pull time pays native passive regeneration and actual travel;
+/// this initial slice does NOT claim item-based food/water recovery or P4-P6.
+pub fn native_inprocess_world_targets_with_recovery(
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    recovery_seconds: u32,
+) -> Result<serde_json::Value, PreparedError> {
+    if !(1..=120).contains(&recovery_seconds) {
+        return Err(PreparedError::Invalid(
+            "RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned(),
+        ));
+    }
+    check(prepared)?;
+    if !(2..=100).contains(&target_count) {
+        return Err(PreparedError::Invalid(
+            "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned(),
+        ));
+    }
+    let health = prepared.target.stats.get("Health").copied().ok_or_else(|| {
+        PreparedError::Invalid("NATIVE_SPATIAL_TARGET_HEALTH_MISSING".to_owned())
+    })?;
+    crate::core::fight::world_bridge::start_inprocess(
+        &prepared.request_sha256,
+        target_count,
+        health,
+        prepared.player.distance_yards,
+    )
+    .map_err(|reason| PreparedError::Invalid(reason.to_owned()))?;
+    let result = crate::classes::native_two_world_targets_with_recovery(
+        prepared, target_count, rng_mode, recovery_seconds,
+    )
+    .map_err(PreparedError::Invalid);
+    crate::core::fight::world_bridge::stop_inprocess();
+    result
+}
+
 /// A real native two-window same-actor smoke; no world ACK, mob kills or paid recovery.
 pub fn native_two_pull_windows(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode)
     -> Result<serde_json::Value, PreparedError>
