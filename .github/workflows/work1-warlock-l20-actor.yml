@@ -21,6 +21,7 @@ on:
       - data/manifest.json
       - tools/rust_data.py
       - fixtures/warlock-l20-troll-native.request.json
+      - fixtures/warlock-l20-troll-hostile-world.request.json
       - tests/warlock_l20_native_registration.rs
   workflow_dispatch:
 
@@ -89,6 +90,25 @@ jobs:
           assert isinstance(dps,(int,float)) and dps>0, ('NO_REAL_NATIVE_DAMAGE',dps)
           print('WARLOCK_L20_NATIVE_PAID_LOG',body.get('logs','')[:2000],flush=True)
           PY
+      - name: Prepare explicitly attacking L20 world target from the native request
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/forever-engine prepare \
+            --request fixtures/warlock-l20-troll-hostile-world.request.json \
+            --actor-level 20 --scenario warlock-l20-hostile-world \
+            --outfile /tmp/warlock-l20-hostile-prepared.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          prepared=json.loads(Path('/tmp/warlock-l20-hostile-prepared.json').read_text())
+          enemy=prepared.get('enemy')
+          assert isinstance(enemy,dict), ('NO_NATIVE_PREPARED_ENEMY',prepared.get('unrepresented'))
+          assert enemy.get('swing_speed',0)>0, enemy
+          print('WARLOCK_L20_REAL_HOSTILE_SOURCE_PREPARED',
+                json.dumps({'swing_speed':enemy['swing_speed'],
+                            'action_id':enemy.get('action_id')},sort_keys=True),flush=True)
+          PY
       - name: Checkout current Forever 2D world producer (cross-repo integration)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,7 +124,7 @@ jobs:
           cargo build --locked --bin forever-engine
           python3 forever/integrations/mythicsim-rust/live_two_world_pulls.py \
             --binary target/debug/forever-engine \
-            --prepared /tmp/warlock-l20-prepared.json \
+            --prepared /tmp/warlock-l20-hostile-prepared.json \
             --mob-health 100 --targets 2 > /tmp/warlock-l20-world-ack.jsonl
           python3 - <<'PY'
           import json
@@ -137,6 +157,9 @@ jobs:
           assert valid["continuous_native_actor"] is True, valid
           assert valid["actual_2d_ack"] is True, valid
           assert valid["minimum_native_actor_health"] > 0, valid
+          assert valid["native_hostile_target_prepared"] is True, valid
+          assert sum(w["native_hostile_swing_casts"] for w in windows) > 0, windows
+          assert sum(w["native_health_damage_events"] for w in windows) > 0, windows
           assert forged["forged_ack_rejected"] is True, forged
           print("WARLOCK_L20_GSIM_NATIVE_WORLD_ACK", json.dumps({
               "targets": valid["world_targets_killed"],
@@ -158,12 +181,14 @@ jobs:
           bridge = runpy.run_path("forever/integrations/mythicsim-rust/live_two_world_pulls.py",
                                   run_name="work1_decisions_smoke")
           report = bridge["run"](Path("target/debug/forever-engine"),
-                                 Path("/tmp/warlock-l20-prepared.json"),
+                                 Path("/tmp/warlock-l20-hostile-prepared.json"),
                                  mob_health=100, target_count=2,
                                  recovery_policy="decisions",
                                  health_threshold=1.0, mana_threshold=1.0)
           assert report["world_targets_killed"] == 2, report
           assert report["native_recovery_mode"] == "decisions_food_water", report
+          assert report["native_hostile_target_prepared"] is True, report
+          assert sum(w["native_hostile_swing_casts"] for w in report["native_windows"]) > 0, report
           rows = report["native_windows"]
           assert len(rows) == 2 and report["actual_2d_ack"] is True, report
           assert rows[1]["native_passive_recovery_ns"] > 0, rows
@@ -199,6 +224,8 @@ jobs:
           name: work1-warlock-l20-actor-paid
           path: |
             fixtures/warlock-l20-troll-native.request.json
+            fixtures/warlock-l20-troll-hostile-world.request.json
+            /tmp/warlock-l20-hostile-prepared.json
             /tmp/warlock-l20-prepared.json
             /tmp/warlock-l20-paid.json
           if-no-files-found: warn
