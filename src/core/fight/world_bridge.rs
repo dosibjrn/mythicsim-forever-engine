@@ -47,10 +47,42 @@ struct Bridge {
 }
 thread_local! {
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
+    static NATIVE_SPATIAL: RefCell<Option<spatial::NativeSpatialWorld>> =
+        const { RefCell::new(None) };
 }
 
 pub(crate) fn enabled() -> bool {
     std::env::var("FOREVER_GSIM_WORLD_BRIDGE").ok().as_deref() == Some("1")
+        || NATIVE_SPATIAL.with(|state| state.borrow().is_some())
+}
+
+/// Start one retained native actor with an in-process 2D mob ledger. Every
+/// applied event originates from Fight::deal_damage; no gsim stdin is needed.
+pub(crate) fn start_inprocess(
+    source_hash: &str,
+    target_count: usize,
+    target_health: f64,
+    engagement_range_yards: f64,
+) -> Result<(), &'static str> {
+    let world = spatial::NativeSpatialWorld::new(
+        target_count, target_health, engagement_range_yards,
+    )?;
+    NATIVE_SPATIAL.with(|slot| *slot.borrow_mut() = Some(world));
+    start(source_hash);
+    Ok(())
+}
+
+pub(crate) fn stop_inprocess() {
+    NATIVE_SPATIAL.with(|slot| *slot.borrow_mut() = None);
+    BRIDGE.with(|slot| *slot.borrow_mut() = None);
+}
+
+/// Physical walking time since the previous acknowledged target; this must
+/// be charged on the SAME native clock before combat resumes.
+pub(crate) fn inprocess_travel_ns() -> i64 {
+    NATIVE_SPATIAL.with(|state| state.borrow().as_ref().map_or(0, |world|
+        world.last_walk_ns()
+    ))
 }
 
 pub(crate) fn start(source_hash: &str) {
@@ -113,6 +145,14 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
             || bridge.last_health != Some(0.0) {
             return Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL");
         }
+        // The source-native lethal ACK authorizes this precise spatial
+        // transition. Refuse a route advance before any native lethal.
+        NATIVE_SPATIAL.with(|slot| {
+            if let Some(world) = slot.borrow_mut().as_mut() {
+                world.next_target()?;
+            }
+            Ok::<(), &'static str>(())
+        })?;
         bridge.iteration = bridge.iteration.checked_add(1)
             .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
         bridge.last_health = None; // new world target, not a healed old one
@@ -309,6 +349,33 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "RUST_WORLD_CLOCK_NOT_MONOTONIC");
     let events = std::mem::take(&mut bridge.pending);
     let event_ids: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
+    // In-process ACK: consume the exact same native damage event journal,
+    // maintaining a real per-mob health ledger, without JSON/stdin round trips.
+    // External gsim ACK handling below remains byte-for-byte unchanged.
+    let native = NATIVE_SPATIAL.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let Some(world) = slot.as_mut() else { return None };
+        let distance = world.distance_yards();
+        for event in &events {
+            world.apply_native_damage(event.damage)
+                .expect("NATIVE_SPATIAL_SOURCE_DAMAGE_INVALID");
+        }
+        Some((distance, world.target_health()))
+    });
+    if let Some((distance, health)) = native {
+        assert!(distance.is_finite() && (0.0..=100.0).contains(&distance),
+            "NATIVE_SPATIAL_DISTANCE_INVALID");
+        bridge.last_health = Some(health);
+        // Native source SHA is an internal ACK token here, not a fabricated
+        // gsim world SHA. The monotonically increasing sequence and event
+        // ledger are both retained for the next real target.
+        bridge.previous_ack_id = bridge.source_hash.clone();
+        bridge.last_tick_ns = clock_ns;
+        bridge.sequence += 1;
+        bridge.next_tick_ns = i64::MAX;
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge));
+        return (distance, true, false);
+    }
     let pid = std::process::id();
     send(&json!({
         "type": "native_rust_world_boundary_request",
@@ -459,6 +526,9 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
         let _ = exchange(clock, duration_ns, cumulative_damage);
     }
     mark_iteration_finished();
+    if NATIVE_SPATIAL.with(|state| state.borrow().is_some()) {
+        return;
+    }
     BRIDGE.with(|state| {
         let state = state.borrow();
         let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
@@ -674,5 +744,44 @@ mod iteration_teardown_tests {
     fn next_iteration_requires_a_finished_previous_iteration() {
         BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
         begin_iteration(1);
+    }
+}
+
+#[cfg(test)]
+mod inprocess_spatial_ack_tests {
+    use super::*;
+
+    #[test]
+    fn paid_spatial_transition_requires_actual_native_lethal_damage() {
+        let source = "f".repeat(64);
+        start_inprocess(&source, 8, 40.0, 5.0).unwrap();
+        begin_iteration(0);
+        assert_eq!(exchange(0, 100_000_000_000, 0.0).0, 5.0);
+        assert_eq!(
+            begin_next_target(1_000_000),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
+
+        record_damage(1_000_000, 15.0, false, true, false, DamageSource {
+            action: "source-spell".into(), target_label: "Mob".into(),
+            caster_type: "player".into(), caster_index: 0,
+            caster_label: "Warlock".into(),
+        });
+        exchange(1_000_000, 100_000_000_000, 15.0);
+        assert!(!acknowledged_lethal());
+
+        record_damage(2_000_000, 30.0, false, true, false, DamageSource {
+            action: "source-pet".into(), target_label: "Mob".into(),
+            caster_type: "pet".into(), caster_index: 1,
+            caster_label: "Imp".into(),
+        });
+        exchange(2_000_000, 100_000_000_000, 45.0);
+        assert!(acknowledged_lethal());
+        begin_next_target(3_000_000).unwrap();
+        // From x=5 to mob x=20, stop five yards short: pay ten yards.
+        assert_eq!(inprocess_travel_ns(), (10.0 / 7.0_f64 * 1e9).ceil() as i64);
+        assert!(!acknowledged_lethal());
+        assert_eq!(exchange(3_000_000, 100_000_000_000, 45.0).0, 5.0);
+        stop_inprocess();
     }
 }
