@@ -257,7 +257,10 @@ mod native_world_recovery_receipt_tests {
             strategy
         ));
         let mut missing = travel_only.clone();
-        missing.as_object_mut().unwrap().remove("decisions_full_recovery");
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("decisions_full_recovery");
         assert!(!native_world_recovery_paid(&missing, strategy));
         let mut refill_required = travel_only.clone();
         refill_required["decisions_full_recovery"] = json!(true);
