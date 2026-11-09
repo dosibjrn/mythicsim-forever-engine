@@ -49,6 +49,11 @@ thread_local! {
     // Source-native damage event counts, kept across retained targets and reset per iteration.
     static SOURCE_ACTION_COUNTS: RefCell<BTreeMap<String, u64>> =
         const { RefCell::new(BTreeMap::new()) };
+    // Raw damage from ACK-confirmed native events, keyed by the source's
+    // caster type. Preserve overkill: do not infer effective damage from
+    // the target's clamped lethal HP or classify pets in a Python model.
+    static SOURCE_CASTER_RAW_DAMAGE: RefCell<BTreeMap<String, f64>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn enabled() -> bool {
@@ -61,6 +66,7 @@ pub(crate) fn start(source_hash: &str) {
         "RUST_WORLD_INVALID_SOURCE"
     );
     SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
+    SOURCE_CASTER_RAW_DAMAGE.with(|totals| totals.borrow_mut().clear());
     BRIDGE.with(|state| {
         *state.borrow_mut() = Some(Bridge {
             iteration: 0,
@@ -117,6 +123,7 @@ pub(crate) fn begin_iteration(iteration: u32) {
         }
         assert!(bridge.pending.is_empty(), "RUST_WORLD_UNFLUSHED_EVENTS");
         SOURCE_ACTION_COUNTS.with(|counts| counts.borrow_mut().clear());
+        SOURCE_CASTER_RAW_DAMAGE.with(|totals| totals.borrow_mut().clear());
         bridge.iteration = iteration;
         bridge.sequence = 0;
         bridge.next_tick_ns = 0;
@@ -319,11 +326,23 @@ fn record_source_action(action: &str) {
 fn record_acknowledged_source_actions(events: &[DamageEvent]) {
     for event in events {
         record_source_action(&event.source_action_id);
+        SOURCE_CASTER_RAW_DAMAGE.with(|totals| {
+            *totals
+                .borrow_mut()
+                .entry(event.native_caster_type.clone())
+                .or_default() += event.damage;
+        });
     }
 }
 
 pub(crate) fn take_source_action_counts() -> Value {
     SOURCE_ACTION_COUNTS.with(|counts| json!(std::mem::take(&mut *counts.borrow_mut())))
+}
+
+/// Return and reset only damage with a verified native→world ACK. Raw native
+/// event amounts include lethal overkill; no synthetic effective-damage split.
+pub(crate) fn take_source_caster_raw_damage() -> Value {
+    SOURCE_CASTER_RAW_DAMAGE.with(|totals| json!(std::mem::take(&mut *totals.borrow_mut())))
 }
 
 fn append_damage_event(
@@ -683,7 +702,7 @@ mod iteration_teardown_tests {
     use super::{
         append_damage_event, assert_damage_acknowledgement, begin_iteration, begin_next_target,
         mark_iteration_finished, record_acknowledged_source_actions, take_source_action_counts,
-        test_damage_source, Bridge, BRIDGE,
+        take_source_caster_raw_damage, test_damage_source, Bridge, BRIDGE,
     };
 
     fn bridge(iteration_finished: bool) -> Bridge {
@@ -723,6 +742,7 @@ mod iteration_teardown_tests {
             assert_eq!(bridge.event_ordinal, 1);
         });
         assert_eq!(take_source_action_counts(), serde_json::json!({}));
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
 
         // This is the same take-and-ACK sequence used by exchange().
         let events = BRIDGE.with(|state| {
@@ -745,12 +765,14 @@ mod iteration_teardown_tests {
             take_source_action_counts(),
             serde_json::json!({"cleanup-proc": 1})
         );
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 5.0}));
 
         // Only after the matching ACK may finish close the iteration and the
         // next stochastic iteration begin.
         mark_iteration_finished();
         begin_iteration(1);
         assert_eq!(take_source_action_counts(), serde_json::json!({}));
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
         BRIDGE.with(|state| {
             let state = state.borrow();
             let bridge = state.as_ref().unwrap();
@@ -784,6 +806,7 @@ mod iteration_teardown_tests {
             take_source_action_counts(),
             serde_json::json!({"combat-proc": 1})
         );
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 7.0}));
         BRIDGE.with(|state| *state.borrow_mut() = None);
     }
 
@@ -808,6 +831,7 @@ mod iteration_teardown_tests {
             std::mem::take(&mut bridge.pending)
         });
         record_acknowledged_source_actions(&first);
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 58.0}));
 
         // A lethal ACK begins another distinct 2D mob on the same actor.
         // Unlike begin_iteration(), this must not reset accumulated actions.
@@ -830,6 +854,8 @@ mod iteration_teardown_tests {
             std::mem::take(&mut bridge.pending)
         });
         record_acknowledged_source_actions(&second);
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({"player": 58.0}));
+        assert_eq!(take_source_caster_raw_damage(), serde_json::json!({}));
 
         assert_eq!(
             take_source_action_counts(),
