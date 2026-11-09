@@ -64,6 +64,35 @@ jobs:
                  'last_kill_ns': r['windows'][-1]['native_kill_ns'],
                  'travel_ns': sum(w['native_spatial_travel_ns'] for w in r['windows'])})
           PY
+      - name: Execute eight native kills with no forced between-pull rest
+        run: |
+          cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 8 --rng-mode balanced --recovery-seconds 0 > /tmp/work1-spatial-no-rest.json
+          python3 - <<'PY'
+          import json
+          r = json.load(open('/tmp/work1-spatial-no-rest.json'))['result']
+          assert r['native_spatial_inprocess'] is True, r
+          assert r['world_targets_killed'] == 8, r
+          assert r['recovery_seconds_per_gap'] == 0, r
+          windows = r['windows']
+          assert len(windows) == 8, r
+          assert all(w['native_damage'] > 0 for w in windows), r
+          # One millisecond is the actual ACK/next-target clock transition;
+          # there must be no extra mandatory one-second rest. Spatial
+          # travel remains fully charged on the retained native clock.
+          assert all(w['native_passive_recovery_ns']
+                     == 1_000_000 + w['native_spatial_travel_ns']
+                     for w in windows[1:]), r
+          assert all(w['native_kill_ns'] > prev['native_kill_ns']
+                     for prev, w in zip(windows, windows[1:])), r
+          assert all(w['native_spatial_moving_samples'] > 0
+                     for w in windows[1:] if w['native_spatial_travel_ns'] > 0), r
+          print('WORK1_NATIVE_ZERO_REST_EIGHT_TARGETS',
+                {'kills': r['world_targets_killed'],
+                 'charged_gap_ns': sum(w['native_passive_recovery_ns']
+                                       for w in windows[1:]),
+                 'travel_ns': sum(w['native_spatial_travel_ns']
+                                  for w in windows[1:])})
+          PY
       - name: Exercise same native actor over one hundred serial spatial targets
         run: |
           cargo run --locked -- eval-leveling --infile /tmp/work1-spatial-smoke.json --targets 100 --rng-mode balanced --recovery-seconds 12 > /tmp/work1-spatial-100-out.json
