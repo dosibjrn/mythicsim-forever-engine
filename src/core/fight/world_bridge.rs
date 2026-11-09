@@ -245,12 +245,19 @@ pub(crate) fn record_damage(
     });
 }
 
-// These are *landed native damage events*, not casts or synthetic world actions.
+// Record only native damage events that survived the world ACK identity, event-set,
+// health and hash checks; a queued event is not yet confirmed world damage.
 fn record_source_action(action: &str) {
     if !action.is_empty() {
         SOURCE_ACTION_COUNTS.with(|counts| {
             *counts.borrow_mut().entry(action.to_owned()).or_default() += 1;
         });
+    }
+}
+
+fn record_acknowledged_source_actions(events: &[DamageEvent]) {
+    for event in events {
+        record_source_action(&event.source_action_id);
     }
 }
 
@@ -276,8 +283,7 @@ fn append_damage_event(
     } = source;
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
-    // Only a valid event admitted to the real world boundary counts as native damage.
-    record_source_action(&action);
+    // A pending event is not yet ACKed; count only after the world applied it.
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -406,6 +412,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
+    record_acknowledged_source_actions(&events);
     bridge.last_health = Some(ack_after);
     bridge.last_tick_ns = clock_ns;
     bridge.sequence += 1;
@@ -563,7 +570,8 @@ mod disabled_bridge_tests {
 mod iteration_teardown_tests {
     use super::{
         append_damage_event, assert_damage_acknowledgement, begin_iteration,
-        mark_iteration_finished, take_source_action_counts, test_damage_source, Bridge, BRIDGE,
+        mark_iteration_finished, record_acknowledged_source_actions, take_source_action_counts,
+        test_damage_source, Bridge, BRIDGE,
     };
 
     fn bridge(iteration_finished: bool) -> Bridge {
@@ -602,10 +610,7 @@ mod iteration_teardown_tests {
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.event_ordinal, 1);
         });
-        assert_eq!(
-            take_source_action_counts(),
-            serde_json::json!({"cleanup-proc": 1})
-        );
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
 
         // This is the same take-and-ACK sequence used by exchange().
         let events = BRIDGE.with(|state| {
@@ -623,6 +628,11 @@ mod iteration_teardown_tests {
             .map(serde_json::Value::String)
             .collect::<Vec<_>>();
         assert_damage_acknowledgement(&event_ids, &accepted);
+        record_acknowledged_source_actions(&events);
+        assert_eq!(
+            take_source_action_counts(),
+            serde_json::json!({"cleanup-proc": 1})
+        );
 
         // Only after the matching ACK may finish close the iteration and the
         // next stochastic iteration begin.
@@ -652,6 +662,12 @@ mod iteration_teardown_tests {
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
         });
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
+        let events = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            std::mem::take(&mut state.as_mut().unwrap().pending)
+        });
+        record_acknowledged_source_actions(&events);
         assert_eq!(take_source_action_counts(), serde_json::json!({"combat-proc": 1}));
         BRIDGE.with(|state| *state.borrow_mut() = None);
     }
