@@ -112,6 +112,105 @@ impl SpacedWorld {
     }
 }
 
+
+/**
+ * One in-process serial target ledger. The only damage supplied to this
+ * object is damage already emitted by the real native Fight scheduler.
+ * Navigation pays for actual Euclidean movement; it does not synthesize
+ * spells, enemy attacks, regeneration, or a kill.
+ */
+#[derive(Debug)]
+pub(super) struct NativeSpatialWorld {
+    layout: SpacedWorld,
+    route_cursor: usize,
+    player: Point,
+    engagement_range_yards: f64,
+    max_target_health: f64,
+    target_health: f64,
+    last_walk_ns: i64,
+}
+
+impl NativeSpatialWorld {
+    pub fn new(
+        targets: usize,
+        target_health: f64,
+        engagement_range_yards: f64,
+    ) -> Result<Self, &'static str> {
+        if !target_health.is_finite() || target_health <= 0.0 {
+            return Err("NATIVE_SPATIAL_TARGET_HEALTH_INVALID");
+        }
+        if !engagement_range_yards.is_finite()
+            || !(0.0..=100.0).contains(&engagement_range_yards)
+        {
+            return Err("NATIVE_SPATIAL_ENGAGEMENT_RANGE_INVALID");
+        }
+        let layout = SpacedWorld::new(targets)?;
+        Ok(Self {
+            layout,
+            route_cursor: 0,
+            player: Point { x: engagement_range_yards, y: 0.0 },
+            engagement_range_yards,
+            max_target_health: target_health,
+            target_health,
+            last_walk_ns: 0,
+        })
+    }
+
+    pub fn target_index(&self) -> usize {
+        self.layout.route[self.route_cursor]
+    }
+
+    pub fn target_health(&self) -> f64 {
+        self.target_health
+    }
+
+    pub fn distance_yards(&self) -> f64 {
+        self.player.distance(self.layout.positions[self.target_index()])
+    }
+
+    pub fn last_walk_ns(&self) -> i64 {
+        self.last_walk_ns
+    }
+
+    /// Ingest a real native damage event, not an inferred DPS or enemy reset.
+    /// Multiple native effects arriving at one scheduler boundary may overkill.
+    pub fn apply_native_damage(&mut self, damage: f64) -> Result<(), &'static str> {
+        if !damage.is_finite() || damage <= 0.0 {
+            return Err("NATIVE_SPATIAL_DAMAGE_INVALID");
+        }
+        self.target_health = (self.target_health - damage).max(0.0);
+        Ok(())
+    }
+
+    /// Advance only after a native lethal ACK. The player stops at its supplied
+    /// engagement range, then the native actor must pay for this walking time.
+    pub fn next_target(&mut self) -> Result<(), &'static str> {
+        if self.target_health > 0.0 {
+            return Err("NATIVE_SPATIAL_TARGET_NOT_LETHAL");
+        }
+        if self.route_cursor + 1 >= self.layout.route.len() {
+            return Err("NATIVE_SPATIAL_ROUTE_COMPLETE");
+        }
+        self.route_cursor += 1;
+        let target = self.layout.positions[self.target_index()];
+        let dx = target.x - self.player.x;
+        let dy = target.y - self.player.y;
+        let distance = dx.hypot(dy);
+        let walking_yards = (distance - self.engagement_range_yards).max(0.0);
+        if distance > 0.0 {
+            self.player.x += dx * walking_yards / distance;
+            self.player.y += dy * walking_yards / distance;
+        }
+        let ns = (walking_yards / MOVEMENT_SPEED_YARDS_S * 1_000_000_000.0).ceil();
+        if !ns.is_finite() || ns > i64::MAX as f64 {
+            return Err("NATIVE_SPATIAL_TRAVEL_TIME_OVERFLOW");
+        }
+        self.last_walk_ns = ns as i64;
+        self.target_health = self.max_target_health;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
