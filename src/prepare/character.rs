@@ -301,11 +301,24 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     Some(troll)
 }
 
-/// The CLI actor level is an explicit native preparation input. proto.Player
-/// does not define a level field, so default callers retain level 60; a
-/// requested lower-level actor is sourced only from the native level table.
+/// Legacy requests omit level and retain level 60. The selected source's
+/// Rust-only proto.Player.level scalar may specify a lower-level actor;
+/// an explicit CLI override must agree with the embedded level.
 fn requested_player_level(player: &Message, actor_level: Option<i32>) -> Result<i32, Refusal> {
-    let level = actor_level.unwrap_or(constants::CHARACTER_LEVEL);
+    let embedded = player.i32("level");
+    if let Some(external) = actor_level {
+        if embedded != 0 && embedded != external {
+            return Err(Refusal::new(
+                "level",
+                format!("native actor level {external} conflicts with request level {embedded}"),
+            ));
+        }
+    }
+    let level = actor_level.unwrap_or(if embedded == 0 {
+        constants::CHARACTER_LEVEL
+    } else {
+        embedded
+    });
     if level == constants::CHARACTER_LEVEL
         || base_stats_at_level(&player.enum_name("class"), &player.enum_name("race"), level).is_some()
     {
@@ -871,6 +884,28 @@ mod warlock_l20_actor_source_tests {
             requested_player_level(&player, Some(19)).unwrap_err().code,
             "level",
         );
+
+        // The selected engine accepts a Rust-only embedded level. It must not
+        // silently prepare a source L20 request at the legacy L60 default.
+        let embedded = Message::from_json_text(
+            "proto.Player",
+            r#"{"class":"ClassWarlock","race":"RaceTroll","level":20}"#,
+        )
+        .unwrap();
+        assert_eq!(requested_player_level(&embedded, None).unwrap(), 20);
+        assert_eq!(requested_player_level(&embedded, Some(20)).unwrap(), 20);
+        assert_eq!(
+            requested_player_level(&embedded, Some(60)).unwrap_err().code,
+            "level",
+        );
+        assert_eq!(
+            requested_player_level(&embedded, Some(19)).unwrap_err().code,
+            "level",
+        );
+        let mut embedded_sim = Sim::new();
+        let embedded_unit = embedded_sim.new_character(0, 0, &embedded, &[]).unwrap();
+        assert_eq!(embedded_sim.unit(embedded_unit).level, 20);
+        assert_eq!(embedded_sim.character(embedded_unit).base_stats[Stat::Health], 204.0);
 
         let mut sim = Sim::new();
         let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20)).unwrap();
