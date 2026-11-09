@@ -5865,6 +5865,7 @@ impl<A: Agent> Fight<A> {
         let mut previous_damage = 0.0;
         let mut previous_health_damage = 0.0_f64;
         let mut previous_health_damage_events = 0;
+        let mut previous_hostile_swings = 0_i64;
         let mut previous_mana_regen_gain = 0.0_f64;
         let mut previous_mana_regen_events = 0_i32;
 
@@ -5932,6 +5933,13 @@ impl<A: Agent> Fight<A> {
             // Health may regenerate between attacks; remaining HP is not damage taken.
             let health_damage = -self.resources[self.damage_taken_health].gain;
             let health_damage_events = self.resources[self.damage_taken_health].events;
+            // Count actual prepared target auto-attacks, even when a swing misses or
+            // is avoided. No enemy is manufactured for stationary/non-tanking inputs.
+            let hostile_swings = self.enemies.first()
+                .map(|enemy| i64::from(enemy.metrics.casts)).unwrap_or(0);
+            if hostile_swings < previous_hostile_swings {
+                return Err("RUST_WORLD_HOSTILE_SWING_RECEIPT_NONMONOTONIC");
+            }
             if health_damage < previous_health_damage
                 || health_damage_events < previous_health_damage_events
             {
@@ -5970,6 +5978,7 @@ impl<A: Agent> Fight<A> {
                 "actor_health": self.player.health,
                 "native_health_damage_taken": health_damage - previous_health_damage,
                 "native_health_damage_events": health_damage_events - previous_health_damage_events,
+                "native_hostile_swing_casts": hostile_swings - previous_hostile_swings,
                 "native_combat_mana_regen_actual_gain": combat_mana_regen_gain,
                 "native_combat_mana_regen_events": combat_mana_regen_events,
                 "native_rest_mana_regen_actual_gain": rest_mana_regen_gain,
@@ -5986,6 +5995,7 @@ impl<A: Agent> Fight<A> {
             previous_damage = total_damage;
             previous_health_damage = health_damage;
             previous_health_damage_events = health_damage_events;
+            previous_hostile_swings = hostile_swings;
             previous_mana_regen_gain = mana_regen_gain;
             previous_mana_regen_events = mana_regen_events;
         }
@@ -6001,6 +6011,7 @@ impl<A: Agent> Fight<A> {
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
+            "native_hostile_target_prepared": !self.enemies.is_empty(),
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
             "recovery_mode": match strategy {
