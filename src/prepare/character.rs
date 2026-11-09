@@ -1424,7 +1424,6 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(unsupported.code, "level");
         assert!(unsupported.reason.contains("Troll Warlock L20"));
 
-
         // The selected engine accepts a Rust-only embedded level. It must not
         // silently prepare a source L20 request at the legacy L60 default.
         let embedded = Message::from_json_text(
