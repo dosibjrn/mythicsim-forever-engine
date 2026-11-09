@@ -5935,9 +5935,14 @@ impl<A: Agent> Fight<A> {
                         let until = killed_at
                             .checked_add(i64::from(seconds) * crate::core::time::NS_PER_SECOND)
                             .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
-                        native_recovery_ticks = self.recover_native_world_actor_until(until)?;
+                        // Even an immediate next pull must start after the
+                        // prior lethal world ACK. Advance the actual actor/world
+                        // clock to that boundary, but do not report the
+                        // mandatory 1ms handshake as paid passive recovery.
+                        let next_at = until.max(world_started_at);
+                        native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
                         native_recovery_elapsed_ns = until - killed_at;
-                        until
+                        next_at
                     }
                     WorldRecoveryStrategy::Decisions {
                         health_fraction, mana_fraction
