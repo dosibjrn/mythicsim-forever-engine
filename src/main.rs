@@ -319,7 +319,7 @@ fn run() -> Result<(), Failure> {
             || args[3] != "--targets"
             || args[5] != "--rng-mode"
         {
-            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 1..120 | --recovery-policy decisions [--health-threshold 0..1 --mana-threshold 0..1]]".into());
+            return Err("native-world-pulls requires --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 0..120 | --recovery-policy decisions [--health-threshold 0..1 --mana-threshold 0..1]]".into());
         }
         let decisions = if args.len() == 9 || args.len() == 13 {
             match args[7].as_str() {
@@ -341,8 +341,8 @@ fn run() -> Result<(), Failure> {
         } else {
             0
         };
-        if !decisions && !(1..=120).contains(&recovery_seconds) {
-            return Err("native-world-pulls requires --recovery-seconds 1..120".into());
+        if !decisions && recovery_seconds > 120 {
+            return Err("native-world-pulls requires --recovery-seconds 0..120".into());
         }
         let (health_threshold, mana_threshold) = if decisions && args.len() == 13 {
             if args[9] != "--health-threshold" || args[11] != "--mana-threshold" {
