@@ -350,7 +350,7 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_
 pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode, recovery_seconds: u32)
     -> Result<serde_json::Value, PreparedError>
 {
-    if !(1..=120).contains(&recovery_seconds) {
+    if recovery_seconds > 120 {
         return Err(PreparedError::Invalid("RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned()));
     }
     check(prepared)?;
@@ -378,7 +378,7 @@ pub fn native_inprocess_world_targets_with_recovery(
     rng_mode: crate::core::rng::RngMode,
     recovery_seconds: u32,
 ) -> Result<serde_json::Value, PreparedError> {
-    if !(1..=120).contains(&recovery_seconds) {
+    if recovery_seconds > 120 {
         return Err(PreparedError::Invalid(
             "RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned(),
         ));
