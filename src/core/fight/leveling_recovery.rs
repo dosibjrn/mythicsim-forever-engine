@@ -24,7 +24,7 @@ impl WorldRecoveryStrategy {
     /// The same thresholds are checked defensively by the recovery executor.
     pub(crate) fn validate(self) -> Result<(), &'static str> {
         match self {
-            Self::Fixed(seconds) if !(1..=120).contains(&seconds) =>
+            Self::Fixed(seconds) if seconds > 120 =>
                 Err("RUST_WORLD_RECOVERY_SECONDS_INVALID"),
             Self::Decisions { health_fraction, mana_fraction }
                 if !health_fraction.is_finite()
@@ -230,8 +230,9 @@ mod tests {
 
     #[test]
     fn invalid_world_recovery_scenario_is_refused_before_first_combat() {
-        assert_eq!(WorldRecoveryStrategy::Fixed(0).validate(),
-            Err("RUST_WORLD_RECOVERY_SECONDS_INVALID"));
+        // Zero pause is a real immediate chain pull, not a paid recovery receipt.
+        // Native combat, movement and target ACK clocks still advance normally.
+        assert_eq!(WorldRecoveryStrategy::Fixed(0).validate(), Ok(()));
         assert_eq!(WorldRecoveryStrategy::Fixed(121).validate(),
             Err("RUST_WORLD_RECOVERY_SECONDS_INVALID"));
         for fraction in [-1.0, 1.1, f64::NAN, f64::INFINITY] {
