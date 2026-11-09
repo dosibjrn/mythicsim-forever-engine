@@ -271,7 +271,7 @@ fn record_acknowledged_source_actions(events: &[DamageEvent]) {
     }
 }
 
-fn take_source_action_counts() -> Value {
+pub(crate) fn take_source_action_counts() -> Value {
     SOURCE_ACTION_COUNTS.with(|counts| json!(std::mem::take(&mut *counts.borrow_mut())))
 }
 
@@ -579,7 +579,7 @@ mod disabled_bridge_tests {
 #[cfg(test)]
 mod iteration_teardown_tests {
     use super::{
-        append_damage_event, assert_damage_acknowledgement, begin_iteration,
+        append_damage_event, assert_damage_acknowledgement, begin_iteration, begin_next_target,
         mark_iteration_finished, record_acknowledged_source_actions, take_source_action_counts,
         test_damage_source, Bridge, BRIDGE,
     };
@@ -679,6 +679,48 @@ mod iteration_teardown_tests {
         });
         record_acknowledged_source_actions(&events);
         assert_eq!(take_source_action_counts(), serde_json::json!({"combat-proc": 1}));
+        BRIDGE.with(|state| *state.borrow_mut() = None);
+    }
+
+    #[test]
+    fn retained_world_chain_preserves_and_drains_acknowledged_source_actions() {
+        BRIDGE.with(|state| *state.borrow_mut() = Some(bridge(false)));
+
+        // Only source-native damage confirmed by gsim ACK contributes to the
+        // final retained-actor receipt. Admission to the pending queue does not.
+        let first = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            append_damage_event(
+                bridge, 5, 58.0, false, true, false,
+                test_damage_source("shadow-bolt"),
+            );
+            std::mem::take(&mut bridge.pending)
+        });
+        record_acknowledged_source_actions(&first);
+
+        // A lethal ACK begins another distinct 2D mob on the same actor.
+        // Unlike begin_iteration(), this must not reset accumulated actions.
+        BRIDGE.with(|state| {
+            state.borrow_mut().as_mut().unwrap().last_health = Some(0.0);
+        });
+        assert_eq!(begin_next_target(6), Ok(()));
+        let second = BRIDGE.with(|state| {
+            let mut state = state.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            append_damage_event(
+                bridge, 7, 58.0, false, true, false,
+                test_damage_source("shadow-bolt"),
+            );
+            std::mem::take(&mut bridge.pending)
+        });
+        record_acknowledged_source_actions(&second);
+
+        assert_eq!(
+            take_source_action_counts(),
+            serde_json::json!({"shadow-bolt": 2})
+        );
+        assert_eq!(take_source_action_counts(), serde_json::json!({}));
         BRIDGE.with(|state| *state.borrow_mut() = None);
     }
 
