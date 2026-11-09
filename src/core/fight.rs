@@ -5839,7 +5839,15 @@ impl<A: Agent> Fight<A> {
                     .checked_add(native_spatial_travel_ns)
                     .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
                 let next_at = recovery_until.max(walked_until);
-                native_recovery_ticks = self.recover_native_world_actor_until(next_at)?;
+                // Sample the true walk-start clock before the 100ms recovery
+                // stepping loop. Otherwise short paid walks can finish before
+                // any native world exchange observes moving=true, even while
+                // the spatial clock and position do advance correctly.
+                if native_spatial_travel_ns > 0 {
+                    native_recovery_ticks +=
+                        self.recover_native_world_actor_until(world_started_at)?;
+                }
+                native_recovery_ticks += self.recover_native_world_actor_until(next_at)?;
                 native_recovery_elapsed_ns = next_at - killed_at;
                 let next_end = next_at
                     .checked_add(self.config.base_duration)
