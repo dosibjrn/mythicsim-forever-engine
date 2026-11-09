@@ -7,6 +7,7 @@ on:
       - src/prepare/character.rs
       - src/classes/warlock/prepare/spells.rs
       - src/engine/coverage.rs
+      - src/classes/warlock/prepare/export.rs
       - .github/workflows/warlock-l10-l40-native-route.yml
   workflow_dispatch:
 
