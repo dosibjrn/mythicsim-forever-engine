@@ -352,7 +352,10 @@ mod tests {
         let l20 = spells.highest_for_level(20, Rules::Forever);
         assert!(!l20.is_nil());
         assert!(i32::from(l20.spell_level) <= 20);
-        assert!(spells.ranks.iter().any(|spell| spell.spell_level > l20.spell_level));
+        assert!(spells
+            .ranks
+            .iter()
+            .any(|spell| spell.spell_level > l20.spell_level));
         assert_eq!(
             spells.highest_for_level(60, Rules::Forever).id,
             spells.highest_for(Rules::Forever).id

@@ -283,7 +283,10 @@ impl WarlockAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<WarlockAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<WarlockAgent>, String> {
         let auras = class_auras(prepared);
         let mut fight = Fight::new(
             prepared,

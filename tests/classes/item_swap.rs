@@ -36,7 +36,8 @@ fn first_fight_log(mut value: Value) -> String {
     value["sim"]["iterations"] = json!(1);
     value["sim"]["debug_first_iteration"] = json!(true);
     let prepared: PreparedV2 = serde_json::from_value(value).unwrap();
-    let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+    let report =
+        forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
     report.result["logs"].as_str().unwrap().to_string()
 }
 
@@ -210,7 +211,9 @@ fn warrior_swaps_match_go_every_iteration() {
     for name in WARRIOR_SWAPS {
         let prepared = warrior_prepared(&warrior_request(name), name);
         assert_eq!(prepared_coverage(&prepared), Vec::<String>::new(), "{name}");
-        let report = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap();
+        let report =
+            forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+                .unwrap();
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("fixtures/warrior/item-swap/{name}.go-dps.json"));
         let go: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
@@ -272,7 +275,9 @@ fn mortal_strike_hits_with_the_swapped_two_hander() {
     request["simOptions"]["iterations"] = json!(1);
     request["simOptions"]["debugFirstIteration"] = json!(true);
     let prepared = warrior_prepared(&request, name);
-    let logs = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result["logs"]
+    let logs = forever_engine::simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+        .unwrap()
+        .result["logs"]
         .as_str()
         .unwrap()
         .to_string();
@@ -473,7 +478,6 @@ fn seal_of_righteousness_hits_with_the_swapped_one_hander() {
     }
 }
 
-
 /// P3's actual source Feral L60 actor changes its off-hand equipment while the
 /// pre-existing Manual Crowd Pummeler opener also swaps the two-handed main hand.
 /// The native exporter must carry both slots through preparation and combat,
@@ -509,12 +513,12 @@ fn feral_l60_p3_offhand_alternative_with_two_hand_swap_executes() {
         .clone();
     assert_eq!(slots, json!(["ItemSlotMainHand", "ItemSlotOffHand"]));
     let actor: PreparedV2 = serde_json::from_value(prepared).unwrap();
-    assert!(prepared_coverage(&actor).is_empty(), "native offhand request must be executable");
-    let scored = forever_engine::simulate_prepared(
-        &actor,
-        forever_engine::RngMode::Balanced,
-    )
-    .expect("changed offhand must execute in native Rust");
+    assert!(
+        prepared_coverage(&actor).is_empty(),
+        "native offhand request must be executable"
+    );
+    let scored = forever_engine::simulate_prepared(&actor, forever_engine::RngMode::Balanced)
+        .expect("changed offhand must execute in native Rust");
     assert!(scored.result["raidMetrics"]["dps"]["avg"]
         .as_f64()
         .expect("native DPS")

@@ -367,7 +367,9 @@ fn unsealed_wrath_replays_stored_seals() {
     let hits = |talents: &str| {
         let prepared = prepare(&request(RETRIBUTION, talents), "rust").unwrap();
         check_prepared(&prepared).unwrap();
-        let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap().result;
+        let result = simulate_prepared(&prepared, forever_engine::RngMode::Stochastic)
+            .unwrap()
+            .result;
         let actions = result["raidMetrics"]["parties"][0]["players"][0]["actions"]
             .as_array()
             .unwrap()

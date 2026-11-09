@@ -202,13 +202,8 @@ impl Environment {
             ));
         }
         let player_message = players[0].clone();
-        let player = sim.new_character_at_level(
-            0,
-            0,
-            &player_message,
-            &encounter.area_types,
-            actor_level,
-        )?;
+        let player =
+            sim.new_character_at_level(0, 0, &player_message, &encounter.area_types, actor_level)?;
         let agent = factory(&mut sim, player, &player_message)?;
         // Go `NewAgent` then runs the gear pet constructors.
         super::classic_whelp::construct_gear_pets(&mut sim, player);

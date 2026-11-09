@@ -453,15 +453,24 @@ impl WarriorAgent {
     }
 
     /// Build a fight for a prepared input that passed the coverage gate.
-    pub(crate) fn fight(prepared: &PreparedV2, rng_mode: crate::core::rng::RngMode) -> Result<Fight<WarriorAgent>, String> {
+    pub(crate) fn fight(
+        prepared: &PreparedV2,
+        rng_mode: crate::core::rng::RngMode,
+    ) -> Result<Fight<WarriorAgent>, String> {
         let auras = Self::auras(prepared);
         let spell = |exported: &ExportedSpell| WarriorAgent::spell(prepared, exported);
-        let mut fight = Fight::new(prepared, rng_mode, WarriorAgent::default(), spell, |unit, label| {
-            auras
-                .iter()
-                .find(|(side, name, _)| *side == unit && name == label)
-                .map(|(_, _, kind)| *kind)
-        })?;
+        let mut fight = Fight::new(
+            prepared,
+            rng_mode,
+            WarriorAgent::default(),
+            spell,
+            |unit, label| {
+                auras
+                    .iter()
+                    .find(|(side, name, _)| *side == unit && name == label)
+                    .map(|(_, _, kind)| *kind)
+            },
+        )?;
         fight.agent.main_hand_mask = prepared
             .player
             .spells

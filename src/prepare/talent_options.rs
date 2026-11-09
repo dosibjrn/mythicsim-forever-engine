@@ -64,8 +64,7 @@ mod tests {
     use std::collections::HashMap;
 
     const CLASSES: [&str; 9] = [
-        "druid", "hunter", "mage", "paladin", "priest", "rogue",
-        "shaman", "warlock", "warrior",
+        "druid", "hunter", "mage", "paladin", "priest", "rogue", "shaman", "warlock", "warrior",
     ];
 
     #[test]
@@ -79,10 +78,15 @@ mod tests {
             assert_eq!(trees.len(), 3, "{class}");
             for tree in trees {
                 let entries = tree["talents"].as_array().unwrap();
-                let fields: HashMap<&str, u64> = entries.iter().map(|talent| {
-                    (talent["field_name"].as_str().unwrap(),
-                     talent["max_rank"].as_u64().unwrap())
-                }).collect();
+                let fields: HashMap<&str, u64> = entries
+                    .iter()
+                    .map(|talent| {
+                        (
+                            talent["field_name"].as_str().unwrap(),
+                            talent["max_rank"].as_u64().unwrap(),
+                        )
+                    })
+                    .collect();
                 assert_eq!(fields.len(), entries.len(), "{class}: {}", tree["name"]);
                 for (index, talent) in entries.iter().enumerate() {
                     talents += 1;
@@ -94,8 +98,12 @@ mod tests {
                         edges += 1;
                         let field = prerequisite["field_name"].as_str().unwrap();
                         let required_rank = prerequisite["required_rank"].as_u64().unwrap();
-                        assert_eq!(Some(&required_rank), fields.get(field),
-                                   "{class}: {} needs {field}", talent["field_name"]);
+                        assert_eq!(
+                            Some(&required_rank),
+                            fields.get(field),
+                            "{class}: {} needs {field}",
+                            talent["field_name"]
+                        );
                     }
                 }
             }
@@ -106,12 +114,18 @@ mod tests {
 
     #[test]
     fn level_budget_and_same_row_prerequisite_are_exposed() {
-        assert_eq!(native_talent_options("ClassDruid", 20)["points_available"], 11);
+        assert_eq!(
+            native_talent_options("ClassDruid", 20)["points_available"],
+            11
+        );
         assert_eq!(native_talent_options("druid", 60)["points_available"], 51);
         assert_eq!(native_talent_options("druid", 1)["points_available"], 0);
         let options = native_talent_options("paladin", 40);
         let holy = &options["trees"][0]["talents"];
-        let precision = holy.as_array().unwrap().iter()
+        let precision = holy
+            .as_array()
+            .unwrap()
+            .iter()
             .find(|talent| talent["field_name"] == "boundlessLight")
             .unwrap();
         assert_eq!(precision["prerequisite"]["field_name"], "holyShock");
@@ -121,9 +135,13 @@ mod tests {
 
     #[test]
     fn invalid_queries_are_explicitly_refused() {
-        assert_eq!(native_talent_options("druid", 61)["refusal"]["code"],
-                   "NATIVE_TALENT_OPTIONS_INVALID_LEVEL");
-        assert_eq!(native_talent_options("evoker", 60)["refusal"]["code"],
-                   "NATIVE_TALENT_OPTIONS_UNSUPPORTED_CLASS");
+        assert_eq!(
+            native_talent_options("druid", 61)["refusal"]["code"],
+            "NATIVE_TALENT_OPTIONS_INVALID_LEVEL"
+        );
+        assert_eq!(
+            native_talent_options("evoker", 60)["refusal"]["code"],
+            "NATIVE_TALENT_OPTIONS_UNSUPPORTED_CLASS"
+        );
     }
 }

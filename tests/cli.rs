@@ -456,7 +456,6 @@ fn priest_l20_native_actor_prepares_and_casts_rank_one_smite() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-
 /// End-to-end native actor-level contract for Work1's Druid L20 P7.1 path.
 /// This is a one-fight smoke, NOT the 1,000-stochastic P7.1 gate.
 #[test]
@@ -472,7 +471,10 @@ fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
     assert_eq!(player["class"], "ClassDruid");
     assert_eq!(player["race"], "RaceNightElf");
     assert!(player.get("level").is_none());
-    assert_eq!(player["rotation"]["priorityList"][0]["action"]["castSpell"]["spellId"]["spellId"], 5176);
+    assert_eq!(
+        player["rotation"]["priorityList"][0]["action"]["castSpell"]["spellId"]["spellId"],
+        5176
+    );
     assert_eq!(request["encounter"]["duration"], 120);
     assert_eq!(request["encounter"]["durationVariation"], 0);
     assert_eq!(request["encounter"]["targets"][0]["level"], 20);
@@ -512,7 +514,14 @@ fn druid_l20_native_actor_prepares_and_executes_source_wrath() {
     let simulation = Command::new(env!("CARGO_BIN_EXE_forever-engine"))
         .args(["sim", "--request"])
         .arg(&input)
-        .args(["--actor-level", "20", "--gate", "--rng-mode", "balanced", "--outfile"])
+        .args([
+            "--actor-level",
+            "20",
+            "--gate",
+            "--rng-mode",
+            "balanced",
+            "--outfile",
+        ])
         .arg(&report_path)
         .output()
         .unwrap();

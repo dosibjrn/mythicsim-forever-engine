@@ -910,7 +910,10 @@ fn item_swap_limits(
     // set dual-wields. Native preparation still rejects an actual off-hand
     // weapon, and the coverage checks below enforce callback/state fidelity.
     let off_hand = slots.as_slice() == ["ItemSlotMainHand", "ItemSlotOffHand"]
-        && matches!(prepared.player.class.as_str(), "ClassWarrior" | "ClassDruid")
+        && matches!(
+            prepared.player.class.as_str(),
+            "ClassWarrior" | "ClassDruid"
+        )
         && !prepared.melee.dual_wielding;
     if slots.as_slice() != ["ItemSlotMainHand"] && !off_hand {
         reasons.push(format!("an item swap of slots {slots:?} is unsupported"));
@@ -2036,7 +2039,10 @@ fn runtime_limits(spell: &Spell, class_spell: bool) -> Vec<&'static str> {
 /// native preparation. Unsupported races/builds still receive native refusals.
 fn sourced_actor_level(class: &str, level: i32) -> bool {
     match level {
-        20 => matches!(class, "ClassPriest" | "ClassRogue" | "ClassDruid" | "ClassWarlock"),
+        20 => matches!(
+            class,
+            "ClassPriest" | "ClassRogue" | "ClassDruid" | "ClassWarlock"
+        ),
         30 => class == "ClassDruid",
         _ => false,
     }

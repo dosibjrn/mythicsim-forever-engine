@@ -116,7 +116,9 @@ impl Warlock {
     /// ramps: the snapshot pays half the tick, and the other half is added back every four
     /// ticks.
     pub(super) fn register_curse_of_agony(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().bane_of_agony.highest_for_level(sim.unit(unit).level, sim.rules);
+        let rank = spell_data()
+            .bane_of_agony
+            .highest_for_level(sim.unit(unit).level, sim.rules);
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,

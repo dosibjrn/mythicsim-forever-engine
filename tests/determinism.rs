@@ -81,7 +81,9 @@ fn run_in_process(job: &Job) -> String {
     let input = fs::read(&job.path).unwrap();
     let text = if job.prepared {
         let prepared: PreparedV2 = serde_json::from_slice(&input).unwrap();
-        serde_json::to_string_pretty(&simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap())
+        serde_json::to_string_pretty(
+            &simulate_prepared(&prepared, forever_engine::RngMode::Stochastic).unwrap(),
+        )
     } else {
         let request: Request = serde_json::from_slice(&input).unwrap();
         serde_json::to_string_pretty(&simulate(&request, true).unwrap())
@@ -268,7 +270,10 @@ fn the_seed_changes_the_result_and_timing_is_the_only_noise() {
     prepared["sim"]["seed"] = (seed + 1).into();
     let reseeded: PreparedV2 = serde_json::from_value(prepared).unwrap();
     let other = without_timing(
-        &serde_json::to_string_pretty(&simulate_prepared(&reseeded, forever_engine::RngMode::Stochastic).unwrap()).unwrap(),
+        &serde_json::to_string_pretty(
+            &simulate_prepared(&reseeded, forever_engine::RngMode::Stochastic).unwrap(),
+        )
+        .unwrap(),
     );
     assert!(original != other, "another seed gave the same report");
 

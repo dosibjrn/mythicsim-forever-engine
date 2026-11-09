@@ -163,9 +163,13 @@ pub fn prepare_json_with_actor_level(
             request = known;
         }
     }
-    let mut env =
-        env::Environment::with_rules_at_level(request.message(), crate::classes::prepare_agent, rules, actor_level)
-            .map_err(PrepareError::Refused)?;
+    let mut env = env::Environment::with_rules_at_level(
+        request.message(),
+        crate::classes::prepare_agent,
+        rules,
+        actor_level,
+    )
+    .map_err(PrepareError::Refused)?;
     export::export(&mut env, &digest, scenario).map_err(PrepareError::Refused)
 }
 
