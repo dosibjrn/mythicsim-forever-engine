@@ -370,6 +370,27 @@ fn run() -> Result<(), Failure> {
             serde_json::json!({
                 "engine": "forever-engine",
                 "source_sha256": prepared.request_sha256,
+                // A 100-mob route scorer must not identify two executions using
+                // only the original request hash: balanced/stochastic modes,
+                // scenario, native seed, target count and execution protocol
+                // also change the actual observed route.
+                //
+                // This is execution provenance, NOT a complete cache key:
+                // callers must additionally pin the running engine commit
+                // and hash the exact prepared input and recovery policy.
+                "native_execution": {
+                    "protocol": if inprocess {
+                        "native-inprocess-spatial-v1"
+                    } else {
+                        "external-gsim-world-v1"
+                    },
+                    "rng_mode": &args[6],
+                    "seed": prepared.sim.seed,
+                    "scenario_id": &prepared.scenario_id,
+                    "declared_reference_revision": &prepared.reference.engine_revision,
+                    "target_count": target_count,
+                    "complete_cache_key": false,
+                },
                 "result": report, "checkpoint_certified": false,
             })
         );
