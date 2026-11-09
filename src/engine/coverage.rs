@@ -2032,6 +2032,33 @@ fn runtime_limits(spell: &Spell, class_spell: bool) -> Vec<&'static str> {
     limits
 }
 
+/// Match only native source-backed actor-level coverage already accepted by
+/// native preparation. Unsupported races/builds still receive native refusals.
+fn sourced_actor_level(class: &str, level: i32) -> bool {
+    match level {
+        20 => matches!(class, "ClassPriest" | "ClassRogue" | "ClassDruid" | "ClassWarlock"),
+        30 => class == "ClassDruid",
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod sourced_level_gate_tests {
+    use super::sourced_actor_level;
+
+    #[test]
+    fn selected_native_checkpoint_levels_reach_coverage() {
+        for class in ["ClassDruid", "ClassPriest", "ClassRogue", "ClassWarlock"] {
+            assert!(sourced_actor_level(class, 20), "{class} L20");
+        }
+        assert!(sourced_actor_level("ClassDruid", 30));
+        assert!(!sourced_actor_level("ClassWarlock", 30));
+        assert!(!sourced_actor_level("ClassRogue", 30));
+        assert!(!sourced_actor_level("ClassMage", 20));
+        assert!(!sourced_actor_level("ClassDruid", 40));
+    }
+}
+
 pub(crate) fn prepared_coverage(
     prepared: &PreparedV2,
     rotation: Option<&Rotation>,
@@ -2044,11 +2071,10 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    // The selected native Troll Warlock L20 source now prepares a real L20
-    // actor. This is a runtime coverage decision, not a Warcraft legality
-    // check or a new gate. Keep all other unsupported levels refused.
-    let native_warlock_l20 = player.class == "ClassWarlock" && player.level == 20;
-    if player.level != 60 && !native_warlock_l20 {
+    // Native preparation owns source-backed actor identity. Avoid rejecting
+    // the already-supported selected checkpoint levels before combat executes.
+    let sourced_checkpoint = sourced_actor_level(&player.class, player.level);
+    if player.level != 60 && !sourced_checkpoint {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2065,9 +2091,9 @@ pub(crate) fn prepared_coverage(
             ),
         ));
     }
-    if !(60..=63).contains(&prepared.target.level)
-        && !(native_warlock_l20 && prepared.target.level == 20)
-    {
+    let target_level_supported = (60..=63).contains(&prepared.target.level)
+        || (sourced_checkpoint && prepared.target.level == player.level);
+    if !target_level_supported {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("target level {} is not supported", prepared.target.level),
