@@ -44,6 +44,7 @@ jobs:
           cargo test --locked retained_world_chain_preserves_and_drains_acknowledged_source_actions -- --nocapture
           cargo test --locked world_bridge -- --nocapture
           cargo test --locked leveling_recovery -- --nocapture
+          cargo test --locked warlock_wand_registers_native_shoot_for_apl_and_combat -- --nocapture
           cargo test --locked retained_world_regen_receipts_do_not_count_paid_rest_as_combat -- --nocapture
           cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
           cargo test --locked lower_level_actor_does_not_register_high_level_warlock_actions -- --nocapture
