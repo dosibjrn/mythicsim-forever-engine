@@ -24,6 +24,7 @@ jobs:
         run: |
           cargo test --locked --lib inprocess_spatial_ack_tests -- --nocapture
           cargo test --locked --lib native_spatial_chain_refuses_dead_actor_before_next_native_action -- --nocapture
+          cargo test --locked --lib native_paid_recovery_never_resurrects_a_dead_actor -- --nocapture
           cargo test --locked --lib matches_gsim_eight_target_chebyshev_ring_and_route
           cargo check --locked --bin forever-engine
       - name: Run same-process eight-target source-prepared Warlock smoke
