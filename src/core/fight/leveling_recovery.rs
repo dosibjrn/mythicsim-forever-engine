@@ -5,7 +5,7 @@
 //! remain the only authorities for health, mana, cooldowns and recovery time.
 //! Neither food nor water is applied during a 2D world movement step.
 
-use super::{world_bridge, reads, Action, Agent, Fight, ResourceKind};
+use super::{native_world_actor_alive, world_bridge, reads, Action, Agent, Fight, ResourceKind};
 use crate::contracts::prepared_v2::ActionId;
 use crate::core::time::NS_PER_SECOND;
 
@@ -127,6 +127,9 @@ impl<A: Agent> Fight<A> {
         {
             return Err("RUST_WORLD_DECISIONS_THRESHOLDS_INVALID");
         }
+        // Food/water must not bring a dead retained actor back to life. The
+        // same native survival/refusal contract governs combat and downtime.
+        native_world_actor_alive(self.player.health)?;
         let food = food_tier(self.config.player_level)
             .ok_or("RUST_WORLD_DECISIONS_FOOD_TIER_UNAVAILABLE")?;
         let water = water_tier(self.config.player_level)

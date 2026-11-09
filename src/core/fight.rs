@@ -99,6 +99,41 @@ mod native_world_actor_survival_tests {
     use super::native_world_actor_alive;
 
     #[test]
+    fn native_world_recovery_refuses_dead_actor_before_food_or_passive_ticks() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        let before = fight.now;
+        let (food, water) = fight.register_world_food_water_metrics();
+        for health in [0.0, -1.0, f64::NAN] {
+            fight.player.health = health;
+            let reason = if health.is_finite() {
+                "RUST_MULTI_WORLD_ACTOR_DIED"
+            } else {
+                "RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID"
+            };
+            assert_eq!(
+                fight.recover_native_world_actor_until(before + 1_000_000),
+                Err(reason)
+            );
+            assert_eq!(
+                fight.recover_native_world_actor_decisions(0.5, 0.5, food, water),
+                Err(reason)
+            );
+            assert_eq!(fight.now, before, "refusal must not advance native clock");
+        }
+    }
+
+    #[test]
     fn terminal_native_world_step_must_not_accept_a_dead_or_invalid_actor() {
         assert_eq!(native_world_actor_alive(1.0), Ok(()));
         assert_eq!(native_world_actor_alive(0.0), Err("RUST_MULTI_WORLD_ACTOR_DIED"));
@@ -6136,6 +6171,10 @@ impl<A: Agent> Fight<A> {
     fn recover_native_world_actor_until(&mut self, until_ns: i64)
         -> Result<usize, &'static str>
     {
+        // A defeated retained actor cannot be resurrected by between-pull
+        // passive ticks or travel. The preceding target's ACK is not a
+        // player-survival receipt.
+        native_world_actor_alive(self.player.health)?;
         if until_ns < self.now {
             return Err("RUST_WORLD_RECOVERY_CLOCK_REWOUND");
         }
