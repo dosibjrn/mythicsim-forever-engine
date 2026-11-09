@@ -81,6 +81,35 @@ use crate::{
     mechanics::mana::RegenInputs,
 };
 
+/// A finished world target is not evidence that the retained native player lives.
+/// This check is used on both sides of every scheduler step, including the
+/// terminal step that stops at the gsim world lethal ACK.
+fn native_world_actor_alive(health: f64) -> Result<(), &'static str> {
+    if !health.is_finite() {
+        return Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID");
+    }
+    if health <= 0.0 {
+        return Err("RUST_MULTI_WORLD_ACTOR_DIED");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod native_world_actor_survival_tests {
+    use super::native_world_actor_alive;
+
+    #[test]
+    fn terminal_native_world_step_must_not_accept_a_dead_or_invalid_actor() {
+        assert_eq!(native_world_actor_alive(1.0), Ok(()));
+        assert_eq!(native_world_actor_alive(0.0), Err("RUST_MULTI_WORLD_ACTOR_DIED"));
+        assert_eq!(native_world_actor_alive(-1.0), Err("RUST_MULTI_WORLD_ACTOR_DIED"));
+        assert_eq!(
+            native_world_actor_alive(f64::NAN),
+            Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID")
+        );
+    }
+}
+
 /// Separate paid between-pull mana ticks from ticks earned during the fight.
 /// Metrics are cumulative over the retained actor, so each boundary must be
 /// sampled at the actual end of recovery / beginning of the next combat.
@@ -5834,17 +5863,15 @@ impl<A: Agent> Fight<A> {
     }
 
     /// A lethal world-target ACK does not establish that the retained player survived.
-    /// Reject death before any further native action or pull; a dead actor must not
-    /// complete a 100-mob chain by relying on ordinary time-bounded simulation.
+    /// Check both before and AFTER each scheduler step: the final step can
+    /// simultaneously finish the target and deal a fatal hit to the player.
+    /// Without the post-step check that dead actor could be scored as a kill.
     fn advance_living_native_world_actor(&mut self) -> Result<(), &'static str> {
+        native_world_actor_alive(self.player.health)?;
         loop {
-            if !self.player.health.is_finite() {
-                return Err("RUST_MULTI_WORLD_ACTOR_HEALTH_INVALID");
-            }
-            if self.player.health <= 0.0 {
-                return Err("RUST_MULTI_WORLD_ACTOR_DIED");
-            }
-            if !self.step() {
+            let continues = self.step();
+            native_world_actor_alive(self.player.health)?;
+            if !continues {
                 return Ok(());
             }
         }
