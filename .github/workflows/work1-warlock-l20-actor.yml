@@ -260,6 +260,46 @@ jobs:
               "gate_pass_claimed": False,
           }, sort_keys=True), flush=True)
           PY
+      - name: Run exact-source equipped Warlock L20 P3 without recording gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          # Reuse Forever's real P3 evaluator, not a second native scoring
+          # implementation or the former 237-candidate optimizer search.
+          root = Path("forever").resolve()
+          sys.path.insert(0, str(root))
+          from tools.wf_gate_p3_live import run_live
+
+          os.environ["FOREVER_P3_NATIVE_ITEM_OPTIONS_BIN"] = str(
+              Path("target/debug/forever-engine").resolve())
+          os.environ["FOREVER_P3_NATIVE_WARLOCK_L20_REQUEST"] = str(
+              Path("fixtures/warlock-l20-troll-best-paid.request.json").resolve())
+          result = run_live(root, "warlock", 20, spec="unrestricted")
+          receipt = Path("/tmp/warlock-l20-equipped-p3-no-record.json")
+          receipt.write_text(json.dumps(result, indent=2, sort_keys=True) + "\\n")
+          paid = result.get("native_equipped_paid_attempts", 0)
+          print("WARLOCK_L20_EQUIPPED_P3_NO_RECORD", json.dumps({
+              "status": result.get("status"),
+              "reasons": result.get("reasons"),
+              "engine": result.get("production_engine"),
+              "paid_attempts": paid,
+              "source_slots": result.get("source_occupied_slots"),
+              "scored_slots": result.get("real_catalogue_slots_scored"),
+              "recorded": False,
+          }, sort_keys=True), flush=True)
+          # Verify that the paid, native source path was actually exercised.
+          # An approved gate PASS is not inferred from this workflow.
+          assert result.get("production_engine") == "mythicsim_rust", result
+          assert type(paid) is int and 1 <= paid <= 44, result
+          native = result.get("native_equipped_paid_receipt") or {}
+          assert native.get("actor_checkpoint_verified") is True, native
+          PY
       - name: Preserve authentic request, prepared actor and paid output
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -271,5 +311,6 @@ jobs:
             /tmp/warlock-l20-hostile-prepared.json
             /tmp/warlock-l20-prepared.json
             /tmp/warlock-l20-paid.json
+            /tmp/warlock-l20-equipped-p3-no-record.json
           if-no-files-found: warn
           retention-days: 14
