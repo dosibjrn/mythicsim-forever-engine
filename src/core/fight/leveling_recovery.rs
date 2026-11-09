@@ -89,6 +89,13 @@ pub(crate) fn needs_full_recovery(
         || (maximum_mana > 0.0 && mana < maximum_mana * mana_fraction)
 }
 
+/// A world boundary supplies movement at the end of a paid step. A movement
+/// transition to stationary does not make the preceding interval stationary:
+/// never grant food/water for a step that includes world travel.
+fn vendor_recovery_step_stationary(moving_before: bool, moving_after: bool) -> bool {
+    !moving_before && !moving_after
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 pub(crate) struct WorldRecoveryReceipt {
     pub(crate) passive_ticks: usize,
@@ -152,6 +159,7 @@ impl<A: Agent> Fight<A> {
                 }
             }
             self.advance_to(boundary);
+            let moving_before_step = self.player.moving;
             let (distance, front, moving) =
                 world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken);
             if distance != self.config.distance {
@@ -167,7 +175,7 @@ impl<A: Agent> Fight<A> {
                 self.changed(reads::CASTS);
             }
 
-            if full && !moving {
+            if full && vendor_recovery_step_stationary(moving_before_step, moving) {
                 // Each channel is credited only while it has a deficit and
                 // the actor is stationary. Passive native mana/health ticks
                 // have already run on this same step and count toward full.
@@ -257,6 +265,16 @@ mod tests {
         assert!(!needs_full_recovery(600.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(499.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(600.0, 1000.0, 99.0, 1000.0, 0.5, 0.1));
+    }
+
+    #[test]
+    fn vendor_recovery_never_credits_a_moving_interval() {
+        assert!(vendor_recovery_step_stationary(false, false));
+        assert!(!vendor_recovery_step_stationary(false, true));
+        // Arrival only changes movement state at the boundary: the interval
+        // ending at that boundary was still travel, not paid vendor recovery.
+        assert!(!vendor_recovery_step_stationary(true, false));
+        assert!(!vendor_recovery_step_stationary(true, true));
     }
 
     #[test]
