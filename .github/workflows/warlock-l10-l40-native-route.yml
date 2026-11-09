@@ -5,6 +5,7 @@ on:
     paths:
       - data/warlock-l10-l40-actor-source.json
       - src/prepare/character.rs
+      - src/classes/warlock/prepare/spells.rs
       - .github/workflows/warlock-l10-l40-native-route.yml
   workflow_dispatch:
 
@@ -71,7 +72,8 @@ jobs:
               json.dumps({"kind":"source_native_actor_prepares_not_route_or_100mob",
                           "results":rows},indent=2)+"\n")
           assert all(r["exit_code"]==0 and r.get("native_actor_level")==r["level"]
-                     for r in rows), "One or more source-backed Warlock level preparations failed"
+                     and r.get("native_class")=="ClassWarlock"
+                     for r in rows), "One or more real source-native L10-40 Warlock actor preparations failed"
           PY
       - name: Propose a native-prepared legal L20 to L21 talent continuation
         run: |
