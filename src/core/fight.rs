@@ -6121,7 +6121,7 @@ impl<A: Agent> Fight<A> {
                 .min(until_ns);
             while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
                 boundary,
-                |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }),
+                // Already-scheduled source item periodic mana effects must continue\n                // on the retained actor during paid rest. They use the native\n                // ItemManaTick action/metrics; no synthetic food or mana refill.\n                |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }\n                    | Action::ItemManaTick { .. }),
             ) {
                 if at > self.now {
                     self.advance_to(at);
@@ -7081,6 +7081,63 @@ mod tests {
                 assert!(fight.player.health.is_nan());
             }
         }
+    }
+
+    #[test]
+    fn native_paid_recovery_processes_existing_source_item_mana_ticks() {
+        use super::{Action, Periodic, PRIORITY_REGEN};
+
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+
+        // A source-prepared item's periodic mana gain has already been
+        // scheduled by the real engine before this paid between-mob gap.
+        // Previously only passive ticks ran here and both item ticks were
+        // deferred until the next combat (at the wrong clock).
+        fight.player.mana = 0.0;
+        let start = fight.now;
+        let second = crate::core::time::NS_PER_SECOND;
+        let metrics = fight.mana_regen_not_casting;
+        let events_before = fight.resources[metrics].events;
+        fight.schedule(
+            start + second,
+            PRIORITY_REGEN,
+            Action::ItemManaTick {
+                amount: 17.0,
+                metrics,
+                periodic: Periodic {
+                    tag: 0,
+                    period: second,
+                    num_ticks: 2,
+                    done: 0,
+                    priority: PRIORITY_REGEN,
+                },
+            },
+        );
+        let end = start + 2 * second;
+        let executed = fight.recover_native_world_actor_until(end).unwrap();
+        assert!(executed >= 2, "item recovery was not executed on the paid clock");
+        assert!(fight.resources[metrics].events >= events_before + 2);
+        assert!(fight.player.mana >= 34.0, "the source item ticks restored no mana");
+        assert_eq!(fight.now, end);
+        assert!(
+            fight.queue.pop_next_matching_through(
+                end,
+                |action| matches!(action, Action::ItemManaTick { .. }),
+            ).is_none(),
+            "source item mana ticks were deferred past their paid recovery time"
+        );
     }
 
     #[test]
