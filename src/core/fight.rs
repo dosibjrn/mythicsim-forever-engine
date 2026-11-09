@@ -6121,7 +6121,11 @@ impl<A: Agent> Fight<A> {
                 .min(until_ns);
             while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
                 boundary,
-                // Already-scheduled source item periodic mana effects must continue\n                // on the retained actor during paid rest. They use the native\n                // ItemManaTick action/metrics; no synthetic food or mana refill.\n                |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }\n                    | Action::ItemManaTick { .. }),
+                // Already-scheduled source item periodic mana effects must continue
+                // on the retained actor during paid rest. They use the native
+                // ItemManaTick action/metrics; no synthetic food or mana refill.
+                |action| matches!(action, Action::ManaTick | Action::HealthRegenTick { .. }
+                    | Action::ItemManaTick { .. }),
             ) {
                 if at > self.now {
                     self.advance_to(at);
