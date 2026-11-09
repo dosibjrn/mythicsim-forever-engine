@@ -29,14 +29,21 @@ serializations. Only the optimizer-candidate boundary should cross into Python.
 
 ## Fast evaluator contract
 
-Proposed CLI (not implemented by this first spatial-geometry PR):
+Implemented initial native CLI on this draft branch (source-prepared v2
+scenario, **not** raw request preparation or an accepted gate):
 
 ```text
-forever-engine eval-leveling --request l30-warlock.json \
-  --scenario ordinary-l30-spaced-pulls.json \
-  --targets 8 --rng-mode balanced \
-  --out results.json
+forever-engine eval-leveling --infile PREPARED_V2.json \
+  --targets 8 --rng-mode balanced --recovery-seconds 12 > result.json
 ```
+
+The initial serial-target geometry is the fixed 20-yard Chebyshev layout,
+7-yard/s travel, using the prepared player's engagement range and the
+source-prepared target HP. A single Rust process retains actor state, consumes
+native damage into an internal lethal ACK, and charges the larger of passive
+rest or walking on its native clock. The original external gsim ACK route is
+still available as `native-world-pulls`, and must not be confused with the
+new in-process spatial ACK.
 
 `--targets 100` is the same evaluator, not a special scoring or recovery
 implementation. The scenario must explicitly source target level, HP, location,
@@ -47,12 +54,14 @@ When the next pull is not survivable, evaluate alternative paid recovery
 actions (rest/eat/drink) under the same native semantics. HP and mana may
 recover simultaneously, but never for free or via synthetic resets.
 
-Results: `scenario_id`, `engine_sha`, `build_hash`, `targets_requested`,
-`targets_killed`, `elapsed_s`, `died`, `death_index`, per-target
-`{kill_clock, hp_before/after, mana_before/after, native_casts, target_xy,
-travel_s, food_s, drink_s, recovery_receipts}`, and complete
-`{gear, talents, pet, apl}` identity. The same request / seed must be
-reproducible. Full 100-mob results are the only full-chain labels.
+Current result fields include `native_spatial_inprocess=true`,
+`actual_2d_ack=false`, `world_targets_killed`, `windows` with
+`native_kill_ns`, `native_damage`, `actor_health`, `actor_mana`,
+`native_spatial_travel_ns`, and paid passive recovery receipts. There is
+**no food/drink inventory, native food/drink action receipt, full-route death
+report, source/gearing path, or verified full 100-target elapsed route yet**.
+The richer route/cast/item/acquisition result described below is a future
+product contract and is not silently inferred from these fields.
 
 ## Incremental native implementation
 
@@ -92,8 +101,12 @@ reproducible. Full 100-mob results are the only full-chain labels.
 
 ## Scope limits
 
-The first spatial module is only a data-structure port and unit test;
-it does **not** claim the single-process evaluator exists yet.
+The first single-call API/CLI and a minimal native-damage in-process
+spatial ACK ledger are now implemented on this draft branch; **only the
+focused native regression and eight-mob smoke confirm execution if their
+exact-head CI actually succeeds**. This is not a fully equivalent or
+certified 100-mob gsim/Warlock route, and fixed passive regeneration cannot
+stand in for source-owned food/water.
 Serial ordinary mobs with zero enemy movement are the first supported
 spatial scenario. Aggro, multi-mob concurrent combat and full arbitrary
 gsim world semantics need their own equivalence work, not silent simplification.
