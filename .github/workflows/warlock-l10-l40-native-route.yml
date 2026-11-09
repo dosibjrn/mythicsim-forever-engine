@@ -6,6 +6,7 @@ on:
       - data/warlock-l10-l40-actor-source.json
       - src/prepare/character.rs
       - src/classes/warlock/prepare/spells.rs
+      - src/engine/coverage.rs
       - .github/workflows/warlock-l10-l40-native-route.yml
   workflow_dispatch:
 
@@ -36,6 +37,7 @@ jobs:
           git rev-parse HEAD
           git -C forever rev-parse HEAD
           cargo test --locked troll_warlock_l10_to_l40_uses_all_source_rows_without_l60_substitution -- --nocapture
+          cargo test --locked selected_native_checkpoint_levels_reach_coverage -- --nocapture
           cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
           cargo test --locked explicit_warlock_l20_actor_level_preserves_default_l60_and_refuses_unsourced_levels -- --nocapture
       - name: Build source-backed native Rust
