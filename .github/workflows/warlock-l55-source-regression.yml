@@ -30,3 +30,64 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Execute complete native Rust library regression tests
         run: cargo test --locked --lib
+      - name: Compile real native executable for L21 spent-talent probe
+        run: cargo build --locked --bin forever-engine
+      - name: Checkout existing native-option Warlock candidate producer
+        uses: actions/checkout@v4
+        with:
+          repository: dosibjrn/forever-sim
+          ref: ad1771e3bb79ac238a537f785fcf13d45dfe5122
+          path: forever
+      - name: Prepare real L21 Warlock with one newly spent talent and original L20 gear
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee warlock-l21-probe-engine-sha.txt
+          python3 -u forever/tools/wf_warlock_next_level_source.py \
+            --binary target/debug/forever-engine \
+            --source fixtures/warlock-l20-troll-best-paid.request.json \
+            --from-level 20 --to-level 21 --max-proposals 30 \
+            --out warlock-l21-rating-probe
+      - name: Execute native balanced combat on the actual newly-spent L21 actor
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, shutil
+          root=pathlib.Path("warlock-l21-rating-probe")
+          proposal=json.loads((root/"proposal.json").read_text())
+          assert proposal["status"]=="NATIVE_PREPARED_NOT_YET_PAID",proposal
+          source=json.loads(pathlib.Path("fixtures/warlock-l20-troll-best-paid.request.json").read_text())
+          chosen=json.loads((root/"source_request.json").read_text())
+          base=source["raid"]["parties"][0]["players"][0]
+          actor=chosen["raid"]["parties"][0]["players"][0]
+          count=lambda s: sum(int(v) for tree in s.split("-") for v in tree)
+          assert count(actor["talentsString"])==count(base["talentsString"])+1
+          assert actor["equipment"]==base["equipment"],"source equipment must be preserved"
+          index=proposal["attempted"]
+          prepared=root/"candidate_attempts"/f"candidate_{index:02d}.prepared.json"
+          assert prepared.is_file(),prepared
+          native=json.loads(prepared.read_text())["player"]
+          assert native["level"]==21 and native["class"]=="ClassWarlock",native
+          shutil.copyfile(prepared,root/"selected.prepared.json")
+          print("L21_NEW_TALENT_NATIVE_PREPARED",
+                json.dumps({"actor_level":21,"talents":actor["talentsString"],
+                            "original_gear_items":len(actor["equipment"]["items"]),
+                            "native_prepared_file":str(prepared)}),flush=True)
+          PY
+          target/debug/forever-engine sim \
+            --infile warlock-l21-rating-probe/selected.prepared.json \
+            --rng-mode balanced \
+            --outfile warlock-l21-rating-probe/native-balanced-combat.json
+          target/debug/forever-engine native-world-pulls \
+            --infile warlock-l21-rating-probe/selected.prepared.json \
+            --targets 2 --rng-mode balanced --recovery-seconds 0 \
+            > warlock-l21-rating-probe/native-two-target-world.json
+      - name: Save actual native L21 proposal, refusals and executable combat receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warlock-l21-spent-talent-source-native-${{ github.run_id }}
+          path: |
+            warlock-l21-probe-engine-sha.txt
+            warlock-l21-rating-probe/
+          if-no-files-found: warn
+          retention-days: 7
