@@ -767,7 +767,11 @@ impl Sim {
     /// Go `updateCachedEquipStats`.
     fn update_cached_equip_stats(&mut self, unit: UnitId) {
         if !self.character(unit).equip_cache_valid {
-            let cached = self.compute_equip_stats(unit);
+            let mut cached = self.compute_equip_stats(unit);
+            // Item swaps and equipment mutations invalidate this cache after
+            // initial preparation. Reapply the same lower-level source policy
+            // so later recomputation cannot restore unsourced rating stats.
+            strip_unsourced_rating_stats(&mut cached, self.unit(unit).level);
             let character = self.character_mut(unit);
             character.cached_equip_stats = cached;
             character.equip_cache_valid = true;
@@ -1421,6 +1425,33 @@ mod level_contract_tests {
         max_level[Stat::SpellHitRating] = 12.0;
         strip_unsourced_rating_stats(&mut max_level, 60);
         assert_eq!(max_level[Stat::SpellHitRating], 12.0);
+    }
+
+    #[test]
+    fn l21_rebuilt_equipment_cache_preserves_damage_but_not_unsourced_ratings() {
+        let player = Message::from_json_text(
+            "proto.Player",
+            r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+        )
+        .unwrap();
+        let mut sim = Sim::new();
+        let unit = sim
+            .new_character_at_level(0, 0, &player, &[], Some(21))
+            .unwrap();
+        {
+            let character = sim.character_mut(unit);
+            // Reproduce an equipment-change cache invalidation with a mixed
+            // supported damage + level-unsourced rating stat bundle.
+            character.bonus_stats[Stat::SpellDamage] = 32.0;
+            character.bonus_stats[Stat::SpellHitRating] = 12.0;
+            character.bonus_stats[Stat::SpellCritRating] = 9.0;
+            character.equip_cache_valid = false;
+        }
+        let refreshed = sim.equip_stats(unit);
+        assert_eq!(refreshed[Stat::SpellDamage], 32.0);
+        assert_eq!(refreshed[Stat::SpellHitRating], 0.0);
+        assert_eq!(refreshed[Stat::SpellCritRating], 0.0);
+        assert_eq!(sim.equip_stats(unit)[Stat::SpellDamage], 32.0);
     }
 
     #[test]
