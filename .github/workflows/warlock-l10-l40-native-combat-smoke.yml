@@ -5,6 +5,7 @@ on:
     paths:
       - src/classes/warlock/prepare/export.rs
       - src/prepare/character.rs
+      - src/engine/coverage.rs
       - data/warlock-l41-l59-actor-source.json
       - .github/workflows/warlock-l10-l40-native-combat-smoke.yml
   workflow_dispatch:
