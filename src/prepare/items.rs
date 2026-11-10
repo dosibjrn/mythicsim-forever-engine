@@ -1302,11 +1302,19 @@ mod native_item_options_contract_tests {
         let mut levels = synthetic_levels();
         levels.insert(21183, 20);
         levels.insert(20033, 20);
-        let response =
-            native_item_options_with_required_levels("warlock", 20, "unrestricted", "chest", &levels);
+        let response = native_item_options_with_required_levels(
+            "warlock",
+            20,
+            "unrestricted",
+            "chest",
+            &levels,
+        );
         assert_eq!(response.status, "ok", "{:?}", response.refusal);
         for (id, stat) in [(21183, "SpellCritPercent"), (20033, "SpellHitPercent")] {
-            let item = response.items.iter().find(|item| item.item_id == id)
+            let item = response
+                .items
+                .iter()
+                .find(|item| item.item_id == id)
                 .unwrap_or_else(|| panic!("missing sourced item {id}"));
             assert!(
                 item.stats.get(stat).copied().unwrap_or(0.0) > 0.0,
