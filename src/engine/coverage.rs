@@ -307,7 +307,21 @@ pub(crate) fn implemented_effects() -> &'static [&'static str] {
 }
 
 /// The gate of the prepared player's class, if Rust implements it.
-pub(crate) fn class_gate(class: &str) -> Option<&'static ClassGate> {
+pub(crate) /// Match only native source-backed actor-level coverage already accepted by
+/// native preparation. Unsupported races/builds still receive native refusals.
+fn sourced_actor_level(class: &str, level: i32) -> bool {
+    match level {
+        20 => matches!(
+            class,
+            "ClassPriest" | "ClassRogue" | "ClassDruid" | "ClassWarlock"
+        ),
+        30 => class == "ClassDruid",
+        _ => false,
+    }
+}
+
+
+fn class_gate(class: &str) -> Option<&'static ClassGate> {
     gates().into_iter().find(|gate| gate.class == class)
 }
 
@@ -2043,7 +2057,9 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    if player.level != 60 {
+    // The native prepare path already verified the sourced actor identity.
+    let sourced_checkpoint = sourced_actor_level(&player.class, player.level);
+    if player.level != 60 && !sourced_checkpoint {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2060,7 +2076,9 @@ pub(crate) fn prepared_coverage(
             ),
         ));
     }
-    if !(60..=63).contains(&prepared.target.level) {
+    let target_level_supported = (60..=63).contains(&prepared.target.level)
+        || (sourced_checkpoint && prepared.target.level == player.level);
+    if !target_level_supported {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("target level {} is not supported", prepared.target.level),
