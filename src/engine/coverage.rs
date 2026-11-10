@@ -306,8 +306,7 @@ pub(crate) fn implemented_effects() -> &'static [&'static str] {
     })
 }
 
-/// The gate of the prepared player's class, if Rust implements it.
-pub(crate) /// Match only native source-backed actor-level coverage already accepted by
+/// Match only native source-backed actor-level coverage already accepted by
 /// native preparation. Unsupported races/builds still receive native refusals.
 fn sourced_actor_level(class: &str, level: i32) -> bool {
     match level {
@@ -320,8 +319,8 @@ fn sourced_actor_level(class: &str, level: i32) -> bool {
     }
 }
 
-
-fn class_gate(class: &str) -> Option<&'static ClassGate> {
+/// The gate of the prepared player's class, if Rust implements it.
+pub(crate) fn class_gate(class: &str) -> Option<&'static ClassGate> {
     gates().into_iter().find(|gate| gate.class == class)
 }
 
