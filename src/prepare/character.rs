@@ -753,9 +753,13 @@ impl Sim {
 
     fn compute_equip_stats(&self, unit: UnitId) -> Stats {
         let character = self.character(unit);
-        let mut stats = items::equipment_stats(&character.equipment).add(&character.bonus_stats);
-        normalize_forever_hit_crit_item_percents(&mut stats, self.unit(unit).level);
-        stats
+        // Only the imported Forever *equipment* indices denote direct hit/crit
+        // percentages. Explicit player bonus_stats are not item source data:
+        // retain their rating fields so native preparation can refuse them
+        // when the actor level has no sourced rating conversion.
+        let mut item_stats = items::equipment_stats(&character.equipment);
+        normalize_forever_hit_crit_item_percents(&mut item_stats, self.unit(unit).level);
+        item_stats.add(&character.bonus_stats)
     }
 
     /// Go `updateCachedEquipStats`.
@@ -1471,6 +1475,31 @@ mod warlock_l20_actor_source_tests {
             constants::SPELL_HIT_RATING_PER_HIT_PERCENT
         );
         assert_eq!(max_level[Stat::SpellHitPercent], 0.0);
+    }
+
+    #[test]
+    fn player_bonus_rating_is_not_silently_converted_to_item_hit_percent_at_l20() {
+        // The imported item index is a direct Forever percentage, but a
+        // separately requested player bonus rating is not an equipped item.
+        // Without a sourced L20 conversion it must still receive the existing
+        // native 'level' refusal, even alongside an accepted hit chest.
+        let mut bonus = vec![0.0; Stats::default().0.len()];
+        bonus[Stat::SpellHitRating as usize] =
+            constants::SPELL_HIT_RATING_PER_HIT_PERCENT;
+        let request = serde_json::json!({
+            "class": "ClassWarlock",
+            "race": "RaceTroll",
+            "equipment": {"items": [{"id": 20033}]},
+            "bonus_stats": {"stats": bonus}
+        })
+        .to_string();
+        let player = Message::from_json_text("proto.Player", &request).unwrap();
+        let mut sim = Sim::new();
+        let refusal = sim
+            .new_character_at_level(0, 0, &player, &[], Some(20))
+            .unwrap_err();
+        assert_eq!(refusal.code, "level");
+        assert!(refusal.reason.contains("combat-rating stats"));
     }
 
     #[test]
