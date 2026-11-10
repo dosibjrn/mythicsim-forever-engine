@@ -586,8 +586,15 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     if (class, race, level) != ("ClassWarlock", "RaceTroll", 20) {
         return base_stats_for_level(class, race, level);
     }
-    let source: serde_json::Value =
-        serde_json::from_str(include_str!("../../data/warlock-l20-actor-source.json")).ok()?;
+    // L20 is also a high-frequency optimizer preparation checkpoint. Cache
+    // only the immutable pinned source JSON; leave native level/source checks,
+    // gear, and combat effects untouched. Preserve the old parse-refusal path.
+    static SOURCE_L20: OnceLock<Option<serde_json::Value>> = OnceLock::new();
+    let source = SOURCE_L20
+        .get_or_init(|| {
+            serde_json::from_str(include_str!("../../data/warlock-l20-actor-source.json")).ok()
+        })
+        .as_ref()?;
     if source["class"].as_str()? != class
         || source["race"].as_str()? != race
         || source["level"].as_i64()? != i64::from(level)
@@ -1658,7 +1665,7 @@ mod warlock_l20_actor_source_tests {
         // The optimizer repeatedly prepares the same level with different
         // native build axes. A cached source must produce exactly the same
         // actor stats on every call, including both source-range boundaries.
-        for level in [10, 21, 40, 41, 55, 59] {
+        for level in [10, 20, 21, 40, 41, 55, 59] {
             let first = base_stats_at_level("ClassWarlock", "RaceTroll", level).unwrap();
             for _ in 0..3 {
                 let again = base_stats_at_level("ClassWarlock", "RaceTroll", level).unwrap();
