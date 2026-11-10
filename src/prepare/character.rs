@@ -546,7 +546,8 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
             )
         };
         let source: serde_json::Value = serde_json::from_str(source_json).ok()?;
-        if source["class"].as_str()? != class || source["race"].as_str()? != race
+        if source["class"].as_str()? != class
+            || source["race"].as_str()? != race
             || source["level_start"].as_i64()? != start
             || source["level_end"].as_i64()? != end
         {
