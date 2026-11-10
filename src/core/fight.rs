@@ -56,7 +56,7 @@ mod thunderfury;
 mod whelp;
 
 use std::collections::{BTreeMap, HashMap};
-use leveling_recovery::{WorldRecoveryReceipt, WorldRecoveryStrategy};
+use leveling_recovery::{native_world_gap_paid, WorldRecoveryReceipt, WorldRecoveryStrategy};
 
 pub(crate) use aura::{AuraBehavior, AuraRef, Tracker};
 pub(crate) use damage::{
@@ -5923,10 +5923,8 @@ impl<A: Agent> Fight<A> {
         // retained actor between ACKed world kills. Time alone, an assumed
         // refill or a completed movement schedule is not regeneration proof.
         let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
-            window["native_passive_recovery_ns"]
-                .as_i64().is_some_and(|ns| ns > 0)
-                && window["native_passive_recovery_ticks"]
-                    .as_u64().is_some_and(|ticks| ticks > 0)
+            native_world_gap_paid(
+                window, matches!(strategy, WorldRecoveryStrategy::Decisions { .. }))
         });
         // With the source-native Decisions 100%/100% policy the terminal
         // horizon includes actual post-last-kill rest. Do not ask the external
