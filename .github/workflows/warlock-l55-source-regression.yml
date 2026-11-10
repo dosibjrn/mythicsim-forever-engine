@@ -1,0 +1,32 @@
+name: Warlock L55 source and native regressions
+on:
+  push:
+    branches:
+      - work/warlock-l55-native-full-optimization-20261110
+    paths:
+      - data/manifest.json
+      - data/warlock-l41-l59-actor-source.json
+      - data/warlock-l10-l40-actor-source.json
+      - tools/rust_data.py
+      - src/prepare/character.rs
+      - src/engine/coverage.rs
+      - .github/workflows/warlock-l55-source-regression.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Verify manifest and native source hashes
+        run: python3 tools/rust_data.py check
+      - name: Verify Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Execute complete native Rust library regression tests
+        run: cargo test --locked --lib
