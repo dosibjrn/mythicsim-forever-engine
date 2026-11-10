@@ -1,0 +1,187 @@
+name: Source-backed Warlock L10-40 + real L21 paid continuation
+on:
+  push:
+    branches: [work/warlock-10-40-sourced-native-20261109]
+    paths:
+      - data/warlock-l10-l40-actor-source.json
+      - src/prepare/character.rs
+      - src/classes/warlock/prepare/spells.rs
+      - src/engine/coverage.rs
+      - src/classes/warlock/prepare/export.rs
+      - .github/workflows/warlock-l10-l40-native-route.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-backed-l10-l40-and-paid-l21:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout exact engine proposal
+        uses: actions/checkout@v4
+      - name: Checkout actual Forever paid world/route producer
+        uses: actions/checkout@v4
+        with:
+          repository: dosibjrn/forever-sim
+          ref: ad1771e3bb79ac238a537f785fcf13d45dfe5122
+          path: forever
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install real gsim spatial world dependencies
+        run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4' 'pytest==8.3.5'
+      - name: Verify exact source pin and regression over every level 10-40
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          git -C forever rev-parse HEAD
+          cargo test --locked troll_warlock_l10_to_l40_uses_all_source_rows_without_l60_substitution -- --nocapture
+          cargo test --locked selected_native_checkpoint_levels_reach_coverage -- --nocapture
+          cargo test --locked troll_warlock_l20_has_actual_level_bound_resources_and_native_racial_projection -- --nocapture
+          cargo test --locked explicit_warlock_l20_actor_level_preserves_default_l60_and_refuses_unsourced_levels -- --nocapture
+      - name: Build source-backed native Rust
+        run: cargo build --locked --bin forever-engine
+      - name: Rust PREPARE actual Troll Warlock at each level 10-40
+        run: |
+          mkdir -p warlock-10-40-actual-prepares
+          python3 - <<'PY'
+          import copy, json, subprocess
+          from pathlib import Path
+          original=json.loads(Path("fixtures/warlock-l20-troll-native.request.json").read_text())
+          rows=[]
+          for level in range(10,41):
+              request=copy.deepcopy(original)
+              actor=request["raid"]["parties"][0]["players"][0]
+              actor.pop("level",None)
+              actor["talentsString"]="0-0-0"
+              request["encounter"]["targets"][0]["level"]=level
+              path=Path(f"warlock-10-40-actual-prepares/L{level}.request.json")
+              outfile=path.with_suffix(".prepared.json")
+              path.write_text(json.dumps(request,indent=2)+"\n")
+              proc=subprocess.run(["target/debug/forever-engine","prepare",
+                      "--request",str(path),"--actor-level",str(level),
+                      "--outfile",str(outfile)],capture_output=True,text=True)
+              row={"level":level,"exit_code":proc.returncode,
+                   "refusal":(proc.stderr or proc.stdout)[-800:] if proc.returncode else None}
+              if not proc.returncode:
+                  native=json.loads(outfile.read_text())["player"]
+                  row.update(native_actor_level=native.get("level"),
+                             native_class=native.get("class"))
+              rows.append(row)
+              print("REAL_NATIVE_LEVEL_PREPARE",json.dumps(row),flush=True)
+          Path("warlock-10-40-actual-prepares/summary.json").write_text(
+              json.dumps({"kind":"source_native_actor_prepares_not_route_or_100mob",
+                          "results":rows},indent=2)+"\n")
+          assert all(r["exit_code"]==0 and r.get("native_actor_level")==r["level"]
+                     and r.get("native_class")=="ClassWarlock"
+                     for r in rows), "One or more real source-native L10-40 Warlock actor preparations failed"
+          PY
+      - name: Propose a native-prepared L20 to L21 talent continuation
+        id: adjacent
+        continue-on-error: true
+        run: |
+          python -u forever/tools/wf_warlock_next_level_source.py \
+            --binary target/debug/forever-engine \
+            --source fixtures/warlock-l20-troll-best-paid.request.json \
+            --from-level 20 --to-level 21 \
+            --out warlock-l21-source
+      - name: Preserve source refusal and select Rust-preparable L21 items without invented rating conversions
+        if: steps.adjacent.outcome == 'failure'
+        run: |
+          python3 - <<'PY'
+          import copy, json, subprocess
+          from pathlib import Path
+          folder=Path("warlock-l21-source")
+          # A failed talent proposal may exit before creating its output directory.
+          # This fallback must still run the native-accepted gear search.
+          folder.mkdir(parents=True, exist_ok=True)
+          original=folder/"proposal.json"
+          if original.exists():
+              refused=json.loads(original.read_text())
+              explanations=[r["reason"] for r in refused.get("native_refusals",[])]
+              print("NATIVE_PROPOSAL_REFUSAL",json.dumps({
+                  "status":refused.get("status"),"attempted":len(explanations),
+                  "distinct_reasons":sorted(set(explanations))[:10]}),flush=True)
+          source=json.loads(Path("fixtures/warlock-l20-troll-best-paid.request.json").read_text())
+          actor=source["raid"]["parties"][0]["players"][0]
+          actor["level"]=21
+          source["encounter"]["targets"][0]["level"]=21
+          items=list(actor["equipment"]["items"])
+          actor["equipment"]["items"]=[{"id":0} for _ in items]
+          request=folder/"source_request.json"
+          prepared=folder/"l21_frozen_l20.prepared.json"
+          def native_prepare():
+              request.write_text(json.dumps(source,indent=2)+"\n")
+              return subprocess.run(["target/debug/forever-engine","prepare",
+                      "--request",str(request),"--actor-level","21",
+                      "--outfile",str(prepared)],capture_output=True,text=True)
+          empty=native_prepare()
+          if empty.returncode:
+              raise RuntimeError("Rust does not prepare L21 even without equipment: "+
+                                 (empty.stderr or empty.stdout)[-1500:])
+          kept,excluded=[],[]
+          for index,item in enumerate(items):
+              actor["equipment"]["items"][index]=copy.deepcopy(item)
+              attempt=native_prepare()
+              if attempt.returncode:
+                  actor["equipment"]["items"][index]={"id":0}
+                  excluded.append({"slot":index,"id":item.get("id"),
+                      "native_refusal":(attempt.stderr or attempt.stdout)[-700:]})
+              else:
+                  kept.append({"slot":index,"id":item.get("id")})
+          result=native_prepare()
+          if result.returncode:
+              raise RuntimeError("Native final safe-item build refused: "+
+                                 (result.stderr or result.stdout)[-1500:])
+          player=json.loads(prepared.read_text())["player"]
+          assert player.get("level")==21 and player.get("class")=="ClassWarlock",player
+          receipt={
+              "kind":"rust_paid_candidate_frozen_l20_build_with_native_gear_subset",
+              "level":21,"native_prepared_actor_level":21,
+              "native_prepared_class":player["class"],
+              "talents":actor["talentsString"],
+              "gear_kept":kept,"gear_excluded":excluded,
+              "policy":"L20 talent ranks retained; L21 point unspent; each equipped item was tested with authoritative Rust prepare at L21; no invented rating conversion",
+              "optimization_claimed":False,
+              "not_a_continuous_10_40_route":True
+          }
+          (folder/"fallback_policy.json").write_text(json.dumps(receipt,indent=2)+"\n")
+          print("FROZEN_L20_BUILD_L21_REAL_PREPARE",json.dumps(receipt),flush=True)
+          PY
+      - name: Execute true hostile 100-target paid gsim/Rust at L21, publish route coverage
+        working-directory: forever
+        run: |
+          python -u tools/wf_warlock_route_guide.py \
+            --execute-native --actor-level 21 \
+            --binary ../target/debug/forever-engine \
+            --source ../warlock-l21-source/source_request.json \
+            --health-threshold 0.7 --mana-threshold 0.25 \
+            --baseline-observations data/warlock/native_route_observations.json \
+            --trial sourced-warlock-L21-first-paid \
+            --out ../warlock-l21-native-route
+      - name: Inspect whether actual 100/100 L21 was measured
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path("warlock-l21-native-route/route.json").read_text())
+          print("ACTUAL_WARLOCK_NATIVE_ROUTE_COVERAGE",
+                {"measured_levels":p["measured_levels"],
+                 "unmeasured_levels":p["unmeasured_levels"],
+                 "full_native_replay":p["full_10_60_native_replay_executed"]},flush=True)
+          assert 21 in p["measured_levels"], "L21 native route was not completed"
+          assert not p["full_10_60_native_replay_executed"], "Do not misclaim a continuous full route"
+          PY
+      - name: Preserve actual Rust preparations, L21 source/candidates/paid receipts and guide
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warlock-10-40-source-l21-paid-${{ github.run_id }}
+          path: |
+            warlock-10-40-actual-prepares/
+            warlock-l21-source/
+            warlock-l21-native-route/
+          if-no-files-found: warn
+          retention-days: 7

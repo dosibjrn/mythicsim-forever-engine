@@ -228,11 +228,6 @@ impl Warlock {
         }
         // drain_life.go: a channeled dot scaled by Soul Siphon, which counts every registered
         // Affliction aura on the target (warlock.go AfflictionCount), and healing for each tick.
-        let mut drain = warlock_tick(
-            data.drain_life.highest_for_level(level, env.rules),
-            level,
-            unrepresented,
-        );
         let mut soul_siphon = 1.0;
         let soul_siphon_points = talents.i32("soul_siphon");
         if soul_siphon_points > 0 {
@@ -242,12 +237,18 @@ impl Warlock {
                 .fraction_at(soul_siphon_points)
                 .mul_add(Warlock::affliction_count(sim, target).min(3.0), 1.0);
         }
-        drain.insert("soul_siphon".into(), json!(soul_siphon));
-        drain.insert(
-            "self_healing_multiplier".into(),
-            json!(sim.unit(unit).pseudo_stats.self_healing_multiplier),
-        );
-        effects.push(with_kind("drain_life", drain));
+        // Do not export a fictional spell_id=0 Drain Life effect for L10-13.
+        // Native registration already omits this unlearned rank. A prepared
+        // effect without an actual registered spell crashes the real Fight.
+        if let Some(rank) = prepared_rank(&data.drain_life, sim, unit) {
+            let mut drain = warlock_tick(rank, level, unrepresented);
+            drain.insert("soul_siphon".into(), json!(soul_siphon));
+            drain.insert(
+                "self_healing_multiplier".into(),
+                json!(sim.unit(unit).pseudo_stats.self_healing_multiplier),
+            );
+            effects.push(with_kind("drain_life", drain));
+        }
         if talents.bool("wrack") {
             // wrack.go: a channel scaled by Soul Siphon and a bonus on two dots' ticks
             let row = data.wrack.highest_for_level(level, env.rules);
