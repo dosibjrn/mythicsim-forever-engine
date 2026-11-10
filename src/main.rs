@@ -73,6 +73,25 @@ fn write_atomically(path: &str, contents: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Explicit native-paid recovery choices belong to execution identity. Two
+/// 100-mob calls with the same prepared actor, seed and RNG but different
+/// between-kill waits are *different* measurements. This is only a policy
+/// receipt, not a complete cache key (engine SHA and prepared bytes still matter).
+fn native_recovery_policy(
+    target_count: usize,
+    default_seconds: u32,
+    schedule_seconds: Option<&[u32]>,
+) -> serde_json::Value {
+    let effective_seconds_per_gap = schedule_seconds.map_or_else(
+        || vec![default_seconds; target_count.saturating_sub(1)],
+        |schedule| schedule.to_vec(),
+    );
+    serde_json::json!({
+        "explicit_schedule": schedule_seconds.is_some(),
+        "effective_seconds_per_gap": effective_seconds_per_gap,
+    })
+}
+
 /// What ended a run without its output, and the exit status that tells a caller which.
 ///
 /// Status 1 is any error. With `sim --gate`, the coverage gate's refusal and an input that
@@ -389,6 +408,9 @@ fn run() -> Result<(), Failure> {
                     "scenario_id": &prepared.scenario_id,
                     "declared_reference_revision": &prepared.reference.engine_revision,
                     "target_count": target_count,
+                    "recovery_policy": native_recovery_policy(
+                        target_count, recovery_seconds, recovery_schedule.as_deref(),
+                    ),
                     "complete_cache_key": false,
                 },
                 "result": report, "checkpoint_certified": false,
@@ -673,7 +695,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::write_atomically;
+    use super::{native_recovery_policy, write_atomically};
+
+    #[test]
+    fn native_recovery_execution_identity_tracks_per_gap_policy() {
+        let fixed = native_recovery_policy(3, 12, None);
+        let varied = native_recovery_policy(3, 12, Some(&[0, 9]));
+        assert_eq!(fixed["explicit_schedule"], false);
+        assert_eq!(fixed["effective_seconds_per_gap"], serde_json::json!([12, 12]));
+        assert_eq!(varied["explicit_schedule"], true);
+        assert_eq!(varied["effective_seconds_per_gap"], serde_json::json!([0, 9]));
+        assert_ne!(fixed, varied); // Same source/seed but different paid recovery.
+    }
     use std::fs;
 
     fn scratch(label: &str) -> std::path::PathBuf {
