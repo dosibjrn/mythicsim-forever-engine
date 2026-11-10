@@ -32,6 +32,7 @@ jobs:
           cargo test --locked --lib native_paid_recovery_processes_existing_source_item_mana_ticks -- --nocapture
           cargo test --locked --lib native_inprocess_idle_recovery_keeps_source_ticks_without_movement_samples -- --nocapture
           cargo test --locked --lib matches_gsim_eight_target_chebyshev_ring_and_route
+          cargo test --locked --bin forever-engine native_recovery_execution_identity_tracks_per_gap_policy -- --nocapture
           cargo check --locked --bin forever-engine
       - name: Run same-process eight-target source-prepared Warlock smoke
         run: |
@@ -63,6 +64,10 @@ jobs:
               'scenario_id': source['scenario_id'],
               'declared_reference_revision': source['reference']['engine_revision'],
               'target_count': 8,
+              'recovery_policy': {
+                  'explicit_schedule': False,
+                  'effective_seconds_per_gap': [12] * 7,
+              },
               'complete_cache_key': False,
           }, execution
           assert o['source_sha256'] == source['request_sha256'], o
@@ -189,7 +194,12 @@ jobs:
           python3 - <<'PY'
           import json, subprocess
           schedule = [0, 12, 0, 12, 0, 12, 0]
-          r = json.load(open('/tmp/work1-scheduled-out.json'))['result']
+          o = json.load(open('/tmp/work1-scheduled-out.json'))
+          r = o['result']
+          assert o['native_execution']['recovery_policy'] == {
+              'explicit_schedule': True,
+              'effective_seconds_per_gap': schedule,
+          }, o['native_execution']
           assert r['world_targets_killed'] == 8, r
           assert r['recovery_seconds_per_gap'] is None, r
           assert r['recovery_schedule_seconds_per_gap'] == schedule, r
@@ -224,6 +234,10 @@ jobs:
           assert o['native_execution']['target_count'] == 100, o['native_execution']
           assert o['native_execution']['protocol'] == 'native-inprocess-spatial-v1', o
           assert o['native_execution']['rng_mode'] == 'balanced', o
+          assert o['native_execution']['recovery_policy'] == {
+              'explicit_schedule': False,
+              'effective_seconds_per_gap': [12] * 99,
+          }, o['native_execution']
           assert r['native_spatial_inprocess'] is True, r
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 100, r
