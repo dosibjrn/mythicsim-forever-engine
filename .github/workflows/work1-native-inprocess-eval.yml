@@ -27,6 +27,7 @@ jobs:
           cargo test --locked --lib native_spatial_chain_refuses_actor_killed_during_hostile_step -- --nocapture
           cargo test --locked --lib native_paid_recovery_never_resurrects_a_dead_actor -- --nocapture
           cargo test --locked --lib native_paid_recovery_processes_existing_source_item_mana_ticks -- --nocapture
+          cargo test --locked --lib native_inprocess_idle_recovery_keeps_source_ticks_without_movement_samples -- --nocapture
           cargo test --locked --lib matches_gsim_eight_target_chebyshev_ring_and_route
           cargo check --locked --bin forever-engine
       - name: Run same-process eight-target source-prepared Warlock smoke
