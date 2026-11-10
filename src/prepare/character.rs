@@ -532,20 +532,34 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     // Troll-minus-Orc racial deltas, as for the existing sourced L20 actor.
     // Keep L20 on its established, independently checked source path.
     if class == "ClassWarlock" && race == "RaceTroll" && (10..=59).contains(&level) && level != 20 {
-        let (source_json, start, end) = if level <= 40 {
+        // Preparing candidate builds is a hot path in native talent/gear/APL
+        // searches. Keep the same pinned data and source checks, but parse
+        // each immutable level range only once instead of once per candidate.
+        let (source, start, end) = if level <= 40 {
+            static SOURCE_L10_L40: OnceLock<serde_json::Value> = OnceLock::new();
             (
-                include_str!("../../data/warlock-l10-l40-actor-source.json"),
+                SOURCE_L10_L40.get_or_init(|| {
+                    serde_json::from_str(include_str!(
+                        "../../data/warlock-l10-l40-actor-source.json"
+                    ))
+                    .expect("pinned Warlock L10-L40 actor source parses")
+                }),
                 10,
                 40,
             )
         } else {
+            static SOURCE_L41_L59: OnceLock<serde_json::Value> = OnceLock::new();
             (
-                include_str!("../../data/warlock-l41-l59-actor-source.json"),
+                SOURCE_L41_L59.get_or_init(|| {
+                    serde_json::from_str(include_str!(
+                        "../../data/warlock-l41-l59-actor-source.json"
+                    ))
+                    .expect("pinned Warlock L41-L59 actor source parses")
+                }),
                 41,
                 59,
             )
         };
-        let source: serde_json::Value = serde_json::from_str(source_json).ok()?;
         if source["class"].as_str()? != class
             || source["race"].as_str()? != race
             || source["level_start"].as_i64()? != start
@@ -1637,6 +1651,30 @@ mod warlock_l20_actor_source_tests {
             923.0
         );
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_some());
+    }
+
+    #[test]
+    fn repeated_warlock_prepares_reuse_sourced_level_stats() {
+        // The optimizer repeatedly prepares the same level with different
+        // native build axes. A cached source must produce exactly the same
+        // actor stats on every call, including both source-range boundaries.
+        for level in [10, 21, 40, 41, 55, 59] {
+            let first = base_stats_at_level("ClassWarlock", "RaceTroll", level).unwrap();
+            for _ in 0..3 {
+                let again = base_stats_at_level("ClassWarlock", "RaceTroll", level).unwrap();
+                for stat in [
+                    Stat::Health,
+                    Stat::Mana,
+                    Stat::Strength,
+                    Stat::Agility,
+                    Stat::Stamina,
+                    Stat::Intellect,
+                    Stat::Spirit,
+                ] {
+                    assert_eq!(first[stat], again[stat], "L{level} {}", stat.name());
+                }
+            }
+        }
     }
 
     #[test]
