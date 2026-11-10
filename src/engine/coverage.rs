@@ -3801,7 +3801,10 @@ mod sourced_level_gate_tests {
         }
         assert!(sourced_actor_level("ClassDruid", 30));
         for level in 10..=59 {
-            assert!(sourced_actor_level("ClassWarlock", level), "Warlock L{level}");
+            assert!(
+                sourced_actor_level("ClassWarlock", level),
+                "Warlock L{level}"
+            );
         }
         assert!(!sourced_actor_level("ClassWarlock", 9));
         assert!(!sourced_actor_level("ClassWarlock", 61));
