@@ -64,6 +64,18 @@ pub(crate) fn start_inprocess(
     target_health: f64,
     engagement_range_yards: f64,
 ) -> Result<(), &'static str> {
+    // A native route execution must never silently replace a previous
+    // in-flight source/ACK chain or an external gsim world peer. In particular,
+    // overwriting either thread-local state would let the next evaluator
+    // attribute retained actor/world observations to the wrong source.
+    if std::env::var("FOREVER_GSIM_WORLD_BRIDGE").ok().as_deref() == Some("1") {
+        return Err("NATIVE_SPATIAL_EXTERNAL_GSIM_BRIDGE_CONFLICT");
+    }
+    if BRIDGE.with(|slot| slot.borrow().is_some())
+        || NATIVE_SPATIAL.with(|slot| slot.borrow().is_some())
+    {
+        return Err("NATIVE_SPATIAL_BRIDGE_ALREADY_ACTIVE");
+    }
     let world = spatial::NativeSpatialWorld::new(
         target_count, target_health, engagement_range_yards,
     )?;
@@ -75,6 +87,42 @@ pub(crate) fn start_inprocess(
 pub(crate) fn stop_inprocess() {
     NATIVE_SPATIAL.with(|slot| *slot.borrow_mut() = None);
     BRIDGE.with(|slot| *slot.borrow_mut() = None);
+}
+
+#[cfg(test)]
+mod inprocess_bridge_lifetime_tests {
+    use super::*;
+
+    #[test]
+    fn nested_native_spatial_start_refuses_without_overwriting_paid_source() {
+        let original = "a".repeat(64);
+        let competing = "b".repeat(64);
+        start_inprocess(&original, 2, 80.0, 5.0).unwrap();
+        begin_iteration(0);
+        let before = inprocess_position_receipt().unwrap();
+
+        // Before this guard, start_inprocess silently replaced both source
+        // identity and the target ledger even though the first run was live.
+        assert_eq!(
+            start_inprocess(&competing, 3, 140.0, 10.0),
+            Err("NATIVE_SPATIAL_BRIDGE_ALREADY_ACTIVE"),
+        );
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            let active = state.as_ref().unwrap();
+            assert_eq!(active.source_hash, original);
+            assert_eq!(active.iteration, 0);
+        });
+        assert_eq!(inprocess_position_receipt(), Some(before));
+        stop_inprocess();
+
+        // Explicit teardown permits a new, independent source-native request.
+        start_inprocess(&competing, 3, 140.0, 10.0).unwrap();
+        BRIDGE.with(|slot| {
+            assert_eq!(slot.borrow().as_ref().unwrap().source_hash, competing);
+        });
+        stop_inprocess();
+    }
 }
 
 /// Physical walking time since the previous acknowledged target; this must
