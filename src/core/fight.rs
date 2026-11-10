@@ -6019,7 +6019,17 @@ impl<A: Agent> Fight<A> {
                         "is_long_cooldown": cooldown_ns >= 30 * crate::core::time::NS_PER_SECOND,
                     }))
                 }).collect();
+            // The route scorer must not infer paid combat duration from
+            // cumulative kill clocks: each gap contains native recovery,
+            // movement, and the committed next-target ACK transition.
+            // Publish the exact native pull start and combat interval so
+            // a caller can reconcile its elapsed objective without a
+            // second clock/gameplay model.
+            let native_combat_elapsed_ns = self.now.checked_sub(self.pull_started_at)
+                .ok_or("RUST_WORLD_COMBAT_CLOCK_REWOUND")?;
             windows.push(serde_json::json!({
+                "native_pull_started_ns": self.pull_started_at,
+                "native_combat_elapsed_ns": native_combat_elapsed_ns,
                 "native_spell_cast_receipts": cast_receipts,
                 "native_mana_spent": spent.max(0.0),
                 "native_mana_gained": gained.max(0.0),
