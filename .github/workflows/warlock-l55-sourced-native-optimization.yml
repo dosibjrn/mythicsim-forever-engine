@@ -1,0 +1,70 @@
+name: Warlock L55 native sourced gear talents APL optimization
+on:
+  push:
+    branches:
+      - work/warlock-l55-native-full-optimization-20261110
+    paths:
+      - data/warlock-l41-l59-actor-source.json
+      - src/prepare/character.rs
+      - src/engine/coverage.rs
+      - .github/workflows/warlock-l55-sourced-native-optimization.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warlock-l55:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - name: Checkout exact source-backed Rust head
+        uses: actions/checkout@v4
+        with:
+          path: engine
+      - name: Checkout paid Warlock optimizer with native Decisions recovery parity
+        uses: actions/checkout@v4
+        with:
+          repository: dosibjrn/forever-sim
+          ref: ad1771e3bb79ac238a537f785fcf13d45dfe5122
+          path: project
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install real world dependencies
+        run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4' 'pytest==8.3.5'
+      - name: Compile and check source-native L41-L59 actor and combat
+        working-directory: engine
+        run: |
+          set -euo pipefail
+          cargo test --locked --lib troll_warlock_l41_to_l59_uses_exact_source_rows
+          cargo test --locked --lib selected_native_checkpoint_levels_reach_coverage
+          cargo build --locked --bin forever-engine
+      - name: Record exact engine and optimizer sources
+        run: |
+          mkdir -p warlock-l55-native-results
+          git -C engine rev-parse HEAD > warlock-l55-native-results/engine_sha.txt
+          git -C project rev-parse HEAD > warlock-l55-native-results/forever_sha.txt
+          cp engine/data/warlock-l41-l59-actor-source.json warlock-l55-native-results/
+          engine/target/debug/forever-engine options --class warlock --level 55 > warlock-l55-native-results/rust_options_l55.json
+          python -m py_compile project/tools/wf_warlock_native_optimizer.py
+      - name: Search native L55 equipment and talents x APL; measure 100 continuous hostile mobs
+        working-directory: project
+        run: |
+          set -uo pipefail
+          python3 -u tools/wf_warlock_native_optimizer.py \
+            --binary ../engine/target/debug/forever-engine \
+            --level 55 \
+            --source ../engine/fixtures/warlock-l20-troll-best-paid.request.json \
+            --engine-tools ../engine/tools \
+            --out ../warlock-l55-native-results \
+            --max-finalists 12 --seed 10916 2>&1 | tee ../warlock-l55-native-results/optimizer.log
+          exit ${PIPESTATUS[0]}
+      - name: Keep all paid scores, native item refusals, finalists and failure receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warlock-l55-source-gear-talents-apl-100mob
+          path: warlock-l55-native-results/
+          if-no-files-found: warn
+          retention-days: 14
