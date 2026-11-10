@@ -2,6 +2,11 @@ name: Native Decisions food-water recovery
 on:
   push:
     branches: [work/decisions-food-water-native-world-20261108]
+  pull_request:
+    paths:
+      - 'src/core/fight.rs'
+      - 'src/core/fight/leveling_recovery.rs'
+      - '.github/workflows/decisions-food-water-rust.yml'
   workflow_dispatch:
 
 permissions:
@@ -16,7 +21,94 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Compile native Rust engine
         run: cargo check --locked --all-targets
-      - name: Test decisions food/water source parity
-        run: cargo test --locked leveling_recovery -- --nocapture
+      - name: Test source-native terminal recovery and paid movement
+        run: |
+          cargo test --locked --lib terminal_rest_charges_native_clock_and_restores_both_resources -- --nocapture
+          cargo test --locked --lib vendor_recovery_is_not_credited_on_a_gsim_arrival_tick -- --nocapture
+          cargo test --locked --lib terminal_native_resources_must_be_finite_and_within_source_caps -- --nocapture
       - name: Confirm command is built
         run: cargo build --locked --bin forever-engine
+
+  warlock-three-hostile-recovered:
+    # One real selected-Rust + gsim/2D scorer integration, not M1 acceptance.
+    # Use the same generic target count and recovery policy as Work2's optimizer.
+    # Never replace this with the old 100-mob first-preparable route replay.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Checkout current Forever scorer and gsim world consumer
+        uses: actions/checkout@v4
+        with:
+          repository: dosibjrn/forever-sim
+          ref: main
+          path: forever
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install existing gsim runtime dependency
+        run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4'
+      - name: Compile exact PR source-native recovery engine
+        run: cargo build --locked --bin forever-engine
+      - name: Prepare an actual hostile L20 source candidate using only Rust
+        run: |
+          set -euo pipefail
+          mkdir -p work1-three-hostile
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = json.loads(Path('forever/fixtures/warlock-l20-p71.request.json').read_text())
+          # The saved P7 reference is explicitly non-attacking. Change the
+          # *scenario*, never the actor/Warcraft legality, to a hostile mob.
+          target = source['encounter']['targets'][0]
+          target['name'] = 'Work1 hostile L20 native/2D scorer target'
+          target['minBaseDamage'] = 40
+          source['simOptions']['iterations'] = 1
+          Path('work1-three-hostile/hostile-l20.request.json').write_text(
+              json.dumps(source, indent=2) + '\n')
+          PY
+          python forever/tools/wf_warlock_native_start_source.py \
+            --binary target/debug/forever-engine \
+            --source work1-three-hostile/hostile-l20.request.json \
+            --actor-level 20 --out work1-three-hostile/source
+          target/debug/forever-engine prepare \
+            --request work1-three-hostile/source/source_request.json \
+            --actor-level 20 \
+            --outfile work1-three-hostile/l20.prepared.json
+          printf 'RUST_SHA=%s\nFOREVER_SHA=%s\n' \
+            "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \
+            > work1-three-hostile/versions.txt
+      - name: Charge real three hostile native/2D ACK kills and final full HP/mana
+        run: |
+          set -euo pipefail
+          PYTHONPATH=forever python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from tools.wf_warlock_native_candidate_scoring import compare_prepared_candidates
+          from src.scenarios.leveling_targets import representative_hp
+          output = Path('work1-three-hostile')
+          result = compare_prepared_candidates(
+              binary=Path('target/debug/forever-engine'),
+              prepared_paths={'source_native_l20': output / 'l20.prepared.json'},
+              actor_level=20, mob_count=3,
+              target_hp=representative_hp(20), artifact_dir=output)
+          (output / 'comparison.json').write_text(
+              json.dumps(result, indent=2, allow_nan=False) + '\n')
+          print('WORK1_REAL_L20_THREE_HOSTILE_RECOVERED', json.dumps(result), flush=True)
+          row = result['candidates'][0]
+          assert row['status'] == 'MEASURED_NATIVE_FULLY_RECOVERED', row
+          assert row['elapsed_seconds'] > 0, row
+          assert row['acked_world_kills'] == 3, row
+          # One paid candidate is a baseline; do not mislabel it optimized.
+          assert result['comparable_candidates'] == 1
+          assert result['winner_candidate_id'] is None
+          PY
+      - name: Retain genuine source, native ACK and terminal-recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: work1-native-three-hostile-${{ github.run_id }}
+          path: work1-three-hostile/
+          if-no-files-found: warn
+          retention-days: 14
