@@ -2,7 +2,7 @@ use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
     native_player_context, native_talent_options, native_two_pull_windows,
     native_inprocess_world_targets_with_recovery_schedule,
-    native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals,
+    native_two_world_targets_with_recovery_schedule, prepare_json_with_actor_level, prepared_refusals,
     simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated, OptionsClass,
     PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
@@ -339,10 +339,10 @@ fn run() -> Result<(), Failure> {
             || args[3] != "--targets"
             || args[5] != "--rng-mode"
             || (args.len() == 9 && args[7] != "--recovery-seconds"
-                && !(inprocess && args[7] == "--recovery-schedule"))
+                && args[7] != "--recovery-schedule")
         {
             return Err(
-                "native-world-pulls requires --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 0..120]".into(),
+                "native-world-pulls/eval-leveling require --infile PREPARED_V2.json --targets 2..100 --rng-mode MODE [--recovery-seconds 0..120 | --recovery-schedule FILE]".into(),
             );
         }
         let recovery_seconds = if args.len() == 9 && args[7] == "--recovery-seconds" {
@@ -366,10 +366,10 @@ fn run() -> Result<(), Failure> {
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
         let recovery_schedule: Option<Vec<u32>> =
-            if inprocess && args.len() == 9 && args[7] == "--recovery-schedule" {
+            if args.len() == 9 && args[7] == "--recovery-schedule" {
                 let bytes = fs::read(&args[8]).map_err(|err| err.to_string())?;
                 Some(serde_json::from_slice(&bytes)
-                    .map_err(|_| "eval-leveling recovery schedule must be a JSON integer array")?)
+                    .map_err(|_| "native world recovery schedule must be a JSON integer array")?)
             } else {
                 None
             };
@@ -379,8 +379,9 @@ fn run() -> Result<(), Failure> {
                 recovery_schedule.as_deref(),
             )
         } else {
-            native_two_world_targets_with_recovery(
+            native_two_world_targets_with_recovery_schedule(
                 &prepared, target_count, mode, recovery_seconds,
+                recovery_schedule.as_deref(),
             )
         }
         .map_err(|err| err.to_string())?;
@@ -696,6 +697,27 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{native_recovery_policy, write_atomically};
+
+    #[test]
+    fn external_gsim_schedule_refusal_precedes_bridge_start() {
+        // Transport only: no external stdin/ACK session may start if the
+        // per-gap schedule is malformed. No game legality is revalidated.
+        let prepared: forever_engine::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/affliction-warlock-broad.prepared.json"
+            ))).unwrap();
+        let invalid_length = super::native_two_world_targets_with_recovery_schedule(
+            &prepared, 3, forever_engine::RngMode::Stochastic, 12, Some(&[5]),
+        ).unwrap_err();
+        assert!(invalid_length.to_string().contains(
+            "RUST_WORLD_RECOVERY_SCHEDULE_LENGTH_INVALID"));
+        let invalid_seconds = super::native_two_world_targets_with_recovery_schedule(
+            &prepared, 3, forever_engine::RngMode::Stochastic, 12, Some(&[0, 121]),
+        ).unwrap_err();
+        assert!(invalid_seconds.to_string().contains(
+            "RUST_WORLD_RECOVERY_SECONDS_INVALID"));
+    }
 
     #[test]
     fn native_recovery_execution_identity_tracks_per_gap_policy() {

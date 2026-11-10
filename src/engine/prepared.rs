@@ -350,6 +350,33 @@ pub fn native_two_world_targets(prepared: &PreparedV2, target_count: usize, rng_
 pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_count: usize, rng_mode: crate::core::rng::RngMode, recovery_seconds: u32)
     -> Result<serde_json::Value, PreparedError>
 {
+    native_two_world_targets_with_recovery_schedule(
+        prepared, target_count, rng_mode, recovery_seconds, None,
+    )
+}
+
+/// External gsim routes can select a native paid wait per source-ACK kill.
+/// Refuse invalid schedules BEFORE starting the external ACK bridge, so a
+/// malformed request cannot leave a partially attached session.
+pub fn native_two_world_targets_with_recovery_schedule(
+    prepared: &PreparedV2,
+    target_count: usize,
+    rng_mode: crate::core::rng::RngMode,
+    recovery_seconds: u32,
+    recovery_schedule_seconds: Option<&[u32]>,
+) -> Result<serde_json::Value, PreparedError> {
+    if let Some(schedule) = recovery_schedule_seconds {
+        if schedule.len() != target_count.saturating_sub(1) {
+            return Err(PreparedError::Invalid(
+                "RUST_WORLD_RECOVERY_SCHEDULE_LENGTH_INVALID".to_owned(),
+            ));
+        }
+        if schedule.iter().any(|seconds| *seconds > 120) {
+            return Err(PreparedError::Invalid(
+                "RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned(),
+            ));
+        }
+    }
     if recovery_seconds > 120 {
         return Err(PreparedError::Invalid("RUST_WORLD_RECOVERY_SECONDS_INVALID".to_owned()));
     }
@@ -363,8 +390,10 @@ pub fn native_two_world_targets_with_recovery(prepared: &PreparedV2, target_coun
             "RUST_MULTI_WORLD_TARGET_COUNT_INVALID".to_owned()));
     }
     crate::core::fight::world_bridge::start(&prepared.request_sha256);
-    crate::classes::native_two_world_targets_with_recovery(prepared, target_count, rng_mode, recovery_seconds)
-        .map_err(PreparedError::Invalid)
+    crate::classes::native_world_targets_with_recovery_schedule(
+        prepared, target_count, rng_mode, recovery_seconds, recovery_schedule_seconds,
+    )
+    .map_err(PreparedError::Invalid)
 }
 
 /// One native Rust request executes multiple sequential spatial world targets

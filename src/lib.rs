@@ -31,7 +31,7 @@ pub use engine::prepared::{
     native_inprocess_world_targets_with_recovery,
     native_inprocess_world_targets_with_recovery_schedule,
     native_two_world_targets, native_two_world_targets_with_recovery,
-    native_two_pull_windows,
+    native_two_world_targets_with_recovery_schedule, native_two_pull_windows,
     simulate as simulate_prepared, simulate_gated as simulate_prepared_gated,
     validate as validate_prepared, EngineIdentity, Gated, PreparedError, PreparedReport, Refusal,
     CLIENT_BUILD, REFUSAL_CODES,

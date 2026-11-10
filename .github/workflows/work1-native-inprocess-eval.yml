@@ -33,6 +33,7 @@ jobs:
           cargo test --locked --lib native_inprocess_idle_recovery_keeps_source_ticks_without_movement_samples -- --nocapture
           cargo test --locked --lib matches_gsim_eight_target_chebyshev_ring_and_route
           cargo test --locked --bin forever-engine native_recovery_execution_identity_tracks_per_gap_policy -- --nocapture
+          cargo test --locked --bin forever-engine external_gsim_schedule_refusal_precedes_bridge_start -- --nocapture
           cargo check --locked --bin forever-engine
       - name: Run same-process eight-target source-prepared Warlock smoke
         run: |
