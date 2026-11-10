@@ -20,15 +20,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Compile native Rust engine
-        run: cargo check --locked --all-targets
+        # Product integration compiles with rustc's normal warning policy;
+        # strict lint CI remains separate and is not reclassified as gameplay.
+        run: env RUSTFLAGS='' cargo check --locked --all-targets
       - name: Test source-native terminal recovery and paid movement
         run: |
           cargo test --locked --lib warlock_l20_actor_source_tests -- --nocapture
-          cargo test --locked --lib terminal_rest_charges_native_clock_and_restores_both_resources -- --nocapture
-          cargo test --locked --lib vendor_recovery_is_not_credited_on_a_gsim_arrival_tick -- --nocapture
-          cargo test --locked --lib terminal_native_resources_must_be_finite_and_within_source_caps -- --nocapture
+          env RUSTFLAGS='' cargo test --locked --lib terminal_rest_charges_native_clock_and_restores_both_resources -- --nocapture
+          env RUSTFLAGS='' cargo test --locked --lib vendor_recovery_is_not_credited_on_a_gsim_arrival_tick -- --nocapture
+          env RUSTFLAGS='' cargo test --locked --lib terminal_native_resources_must_be_finite_and_within_source_caps -- --nocapture
       - name: Confirm command is built
-        run: cargo build --locked --bin forever-engine
+        run: env RUSTFLAGS='' cargo build --locked --bin forever-engine
 
   warlock-three-hostile-recovered:
     # One real selected-Rust + gsim/2D scorer integration, not M1 acceptance.
@@ -53,7 +55,7 @@ jobs:
       - name: Install existing gsim runtime dependency
         run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4'
       - name: Compile exact PR source-native recovery engine
-        run: cargo build --locked --bin forever-engine
+        run: env RUSTFLAGS='' cargo build --locked --bin forever-engine
       - name: Build source-native hostile L20 scenario, not a gameplay proxy
         run: |
           set -euo pipefail
