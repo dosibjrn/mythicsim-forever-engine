@@ -5933,9 +5933,8 @@ impl<A: Agent> Fight<A> {
         // gsim peer for a next-target tick: the final target is dead and its
         // lethal ACK is already committed. Do not create a free resource reset.
         let terminal_recovery = match strategy {
-            WorldRecoveryStrategy::Decisions {
-                health_fraction: 1.0, mana_fraction: 1.0,
-            } => {
+            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction }
+                if health_fraction == 1.0 && mana_fraction == 1.0 => {
                 if !self.player.health.is_finite() || self.player.health <= 0.0
                     || !self.player.mana.is_finite()
                 {
