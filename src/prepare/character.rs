@@ -1478,7 +1478,7 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(requested_player_level(&player, Some(60)).unwrap(), 60);
         let unsupported = requested_player_level(&player, Some(9)).unwrap_err();
         assert_eq!(unsupported.code, "level");
-        assert!(unsupported.reason.contains("Troll Warlock L10-L40"));
+        assert!(unsupported.reason.contains("Troll Warlock L10-L59"));
 
         // The selected engine accepts a Rust-only embedded level. It must not
         // silently prepare a source L20 request at the legacy L60 default.
@@ -1573,7 +1573,7 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 10).unwrap()[Stat::Health], 108.0);
         assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 21).unwrap()[Stat::Health], 223.0);
         assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 40).unwrap()[Stat::Mana], 923.0);
-        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_some());
     }
 
     #[test]
