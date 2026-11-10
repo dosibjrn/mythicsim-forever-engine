@@ -50,6 +50,12 @@ const WATER: [VendorTier; 6] = [
     VendorTier { required_level: 45, amount: 2934.0, duration_s: 30.0 },
 ];
 
+/// An ACKed arrival applies at the end of the world tick. Food and water
+/// cannot be earned during the same tick that the actor was still walking.
+fn can_consume_vendor(full_rest: bool, moving_at_start: bool, moving_at_end: bool) -> bool {
+    full_rest && !moving_at_start && !moving_at_end
+}
+
 fn tier(rows: &[VendorTier], level: i32) -> Option<VendorTier> {
     rows.iter().copied().rfind(|tier| tier.required_level <= level)
 }
@@ -165,6 +171,10 @@ impl<A: Agent> Fight<A> {
             if self.now - initial_ns >= MAX_REST_NS {
                 return Err("RUST_WORLD_DECISIONS_RECOVERY_TIMEOUT");
             }
+            // A gsim movement completion is observed at this boundary.
+            // Remember that the player was moving throughout the preceding
+            // interval; the arrival tick itself cannot earn vendor regen.
+            let moving_at_step_start = self.player.moving;
             let boundary = self.now.checked_add(STEP_NS)
                 .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
             while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
@@ -200,7 +210,7 @@ impl<A: Agent> Fight<A> {
                 self.changed(reads::CASTS);
             }
 
-            if full && !moving {
+            if can_consume_vendor(full, moving_at_step_start, moving) {
                 // Each channel is credited only while it has a deficit and
                 // the actor is stationary. Passive native mana/health ticks
                 // have already run on this same step and count toward full.
@@ -295,6 +305,17 @@ mod tests {
             "decisions_full_recovery": true,
         });
         assert!(native_world_gap_paid(&food, true));
+    }
+
+    #[test]
+    fn vendor_recovery_is_not_credited_on_a_gsim_arrival_tick() {
+        // The native clock pays for the walk, but food/water can only start
+        // on an interval observed stationary at BOTH ends.
+        assert!(!can_consume_vendor(true, true, true));
+        assert!(!can_consume_vendor(true, true, false));
+        assert!(!can_consume_vendor(true, false, true));
+        assert!(!can_consume_vendor(false, false, false));
+        assert!(can_consume_vendor(true, false, false));
     }
 
     #[test]
