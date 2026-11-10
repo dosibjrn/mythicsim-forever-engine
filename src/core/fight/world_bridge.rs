@@ -13,6 +13,13 @@ use serde_json::{json, Value};
 
 const TICK_NS: i64 = 100_000_000;
 
+// Source identity is a SHA-256 digest, not an arbitrary 64-byte label.
+// Validate before mutating native/gsim ACK state; this is wire provenance,
+// not a second validation of MythicSim's Warcraft rules.
+fn valid_source_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 #[derive(Clone, Serialize)]
 struct DamageEvent {
     event_id: String,
@@ -79,7 +86,7 @@ pub(crate) fn start_inprocess(
     // Validate the existing native source-hash contract *before* installing
     // either thread-local. Otherwise start() panics after NATIVE_SPATIAL is
     // installed and leaves a half-started world behind.
-    if source_hash.len() != 64 {
+    if !valid_source_hash(source_hash) {
         return Err("RUST_WORLD_INVALID_SOURCE");
     }
     let world = spatial::NativeSpatialWorld::new(
@@ -143,6 +150,16 @@ mod inprocess_bridge_lifetime_tests {
         // only *after* installing the spatial ledger.
         assert_eq!(
             start_inprocess("short", 2, 80.0, 5.0),
+            Err("RUST_WORLD_INVALID_SOURCE"),
+        );
+        assert!(!inprocess_enabled());
+        assert!(BRIDGE.with(|slot| slot.borrow().is_none()));
+
+        // Exactly 64 characters is not enough: previously an arbitrary label
+        // could be published as the native source SHA-256. Reject it before
+        // allocating a world or altering the external ACK journal.
+        assert_eq!(
+            start_inprocess(&"g".repeat(64), 2, 80.0, 5.0),
             Err("RUST_WORLD_INVALID_SOURCE"),
         );
         assert!(!inprocess_enabled());
@@ -224,7 +241,7 @@ pub(crate) fn inprocess_position_receipt() -> Option<Value> {
 }
 
 pub(crate) fn start(source_hash: &str) {
-    assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
+    assert!(enabled() && valid_source_hash(source_hash), "RUST_WORLD_INVALID_SOURCE");
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
         last_health: None, previous_ack_id: String::new(),
