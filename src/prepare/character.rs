@@ -252,12 +252,29 @@ fn normalize_forever_hit_crit_item_percents(stats: &mut Stats, level: i32) {
     }
     use constants::*;
     for (rating, percent, per_percent) in [
-        (Stat::MeleeHitRating, Stat::PhysicalHitPercent, PHYSICAL_HIT_RATING_PER_HIT_PERCENT),
-        (Stat::SpellHitRating, Stat::SpellHitPercent, SPELL_HIT_RATING_PER_HIT_PERCENT),
-        (Stat::MeleeCritRating, Stat::PhysicalCritPercent, PHYSICAL_CRIT_RATING_PER_CRIT_PERCENT),
-        (Stat::SpellCritRating, Stat::SpellCritPercent, SPELL_CRIT_RATING_PER_CRIT_PERCENT),
+        (
+            Stat::MeleeHitRating,
+            Stat::PhysicalHitPercent,
+            PHYSICAL_HIT_RATING_PER_HIT_PERCENT,
+        ),
+        (
+            Stat::SpellHitRating,
+            Stat::SpellHitPercent,
+            SPELL_HIT_RATING_PER_HIT_PERCENT,
+        ),
+        (
+            Stat::MeleeCritRating,
+            Stat::PhysicalCritPercent,
+            PHYSICAL_CRIT_RATING_PER_CRIT_PERCENT,
+        ),
+        (
+            Stat::SpellCritRating,
+            Stat::SpellCritPercent,
+            SPELL_CRIT_RATING_PER_CRIT_PERCENT,
+        ),
     ] {
-        stats[percent] += stats[rating] / per_percent;
+        let amount = stats[rating] / per_percent;
+        stats[percent] += amount;
         stats[rating] = 0.0;
     }
 }
@@ -1449,25 +1466,39 @@ mod warlock_l20_actor_source_tests {
         let mut max_level = Stats::default();
         max_level[Stat::SpellHitRating] = constants::SPELL_HIT_RATING_PER_HIT_PERCENT;
         normalize_forever_hit_crit_item_percents(&mut max_level, 60);
-        assert_eq!(max_level[Stat::SpellHitRating], constants::SPELL_HIT_RATING_PER_HIT_PERCENT);
+        assert_eq!(
+            max_level[Stat::SpellHitRating],
+            constants::SPELL_HIT_RATING_PER_HIT_PERCENT
+        );
         assert_eq!(max_level[Stat::SpellHitPercent], 0.0);
     }
 
     #[test]
     fn real_forever_crit_and_hit_chests_prepare_at_l20_with_percent_stats() {
-        for (item_id, relevant_percent) in [
-            (21183, Stat::SpellCritPercent),
-            (20033, Stat::SpellHitPercent),
+        for (item_id, request, relevant_percent) in [
+            (
+                21183,
+                r#"{"class":"ClassWarlock","race":"RaceTroll","equipment":{"items":[{"id":21183}]}}"#,
+                Stat::SpellCritPercent,
+            ),
+            (
+                20033,
+                r#"{"class":"ClassWarlock","race":"RaceTroll","equipment":{"items":[{"id":20033}]}}"#,
+                Stat::SpellHitPercent,
+            ),
         ] {
-            let request = format!(
-                r#"{{"class":"ClassWarlock","race":"RaceTroll","equipment":{{"items":[{{"id":{item_id}}}]}}}}"#
-            );
-            let player = Message::from_json_text("proto.Player", &request).unwrap();
+            let player = Message::from_json_text("proto.Player", request).unwrap();
             let mut sim = Sim::new();
-            let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20))
-                .unwrap_or_else(|refusal| panic!("Forever item {item_id} must prepare at L20: {refusal:?}"));
+            let unit = sim
+                .new_character_at_level(0, 0, &player, &[], Some(20))
+                .unwrap_or_else(|refusal| {
+                    panic!("Forever item {item_id} must prepare at L20: {refusal:?}")
+                });
             let stats = sim.equip_stats(unit);
-            assert!(stats[relevant_percent] > 0.0, "item {item_id} must retain native direct % bonus");
+            assert!(
+                stats[relevant_percent] > 0.0,
+                "item {item_id} must retain native direct % bonus"
+            );
             assert_eq!(stats[Stat::SpellHitRating], 0.0);
             assert_eq!(stats[Stat::SpellCritRating], 0.0);
         }
