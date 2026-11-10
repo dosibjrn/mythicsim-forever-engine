@@ -1249,11 +1249,18 @@ impl<A: Agent> Fight<A> {
                     Side::Pet(index) => ("pet", index as u32, self.label_of(caster)),
                     _ => panic!("RUST_WORLD_UNSUPPORTED_DAMAGE_CASTER"),
                 };
-                super::world_bridge::record_damage(
-                    self.now, result.damage, result.crit(), result.landed(), periodic,
-                    format!("{:?}", self.spells[spell].id), self.label_of(result.target),
-                    caster_type, caster_index, caster_label,
-                );
+                super::world_bridge::record_damage(super::world_bridge::DamageInput {
+                    time_ns: self.now,
+                    damage: result.damage,
+                    crit: result.crit(),
+                    landed: result.landed(),
+                    periodic,
+                    action: format!("{:?}", self.spells[spell].id),
+                    target_label: self.label_of(result.target),
+                    caster_type,
+                    caster_index,
+                    caster_label,
+                });
             }
         }
         if self.log.is_some() && !self.spells[spell].flags.no_logs {

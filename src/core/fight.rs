@@ -5689,7 +5689,7 @@ impl<A: Agent> Fight<A> {
             // Go keeps one buffer: every iteration with debug, otherwise only the first.
             let logged = self.config.debug || (iteration == 0 && self.config.debug_first_iteration);
             self.log = logged.then(Vec::new);
-            if world_bridge::enabled() { world_bridge::begin_iteration(iteration as u32); }
+            if world_bridge::enabled() { world_bridge::begin_iteration(iteration); }
             self.run_once();
             if let Some(lines) = self.log.take() {
                 logs.extend(lines);
@@ -5944,10 +5944,12 @@ impl<A: Agent> Fight<A> {
                 let (food, water) = food_water_metrics.expect("Decisions source metrics");
                 let receipt = self.recover_native_world_actor_terminal(food, water)?;
                 let end_clock_ns = self.now;
+                let max_health = self.player_max_health();
+                let max_mana = self.player.powers.max_mana;
                 if end_clock_ns < start_clock_ns
                     || end_clock_ns - start_clock_ns != receipt.elapsed_ns
-                    || (self.player.health - self.player_max_health()).abs() > 1e-6
-                    || (self.player.mana - self.player.powers.max_mana).abs() > 1e-6
+                    || (self.player.health - max_health).abs() > 1e-6
+                    || (self.player.mana - max_mana).abs() > 1e-6
                 {
                     return Err("RUST_MULTI_WORLD_TERMINAL_FULL_RECOVERY_UNPAID");
                 }
@@ -5960,6 +5962,7 @@ impl<A: Agent> Fight<A> {
                     "health_before": health_before, "mana_before": mana_before,
                     "health_after": self.player.health,
                     "mana_after": self.player.mana,
+                    "max_health": max_health, "max_mana": max_mana,
                     "food_seconds": receipt.food_ns as f64 / 1e9,
                     "water_seconds": receipt.water_ns as f64 / 1e9,
                     "food_health_gain": receipt.food_health_gain,
@@ -6972,7 +6975,8 @@ mod tests {
         let now = fight.now;
         let cap = fight.end_of_combat;
         assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        // Prepull may start before the nonnegative gsim world clock.
+        let early = (now + 1_000_000).max(0);
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));

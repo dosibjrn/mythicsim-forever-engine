@@ -207,72 +207,53 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
     })
 }
 
-pub(crate) fn record_damage(
-    time_ns: i64,
-    damage: f64,
-    crit: bool,
-    landed: bool,
-    periodic: bool,
-    action: String,
-    target_label: String,
-    caster_type: &str,
-    caster_index: u32,
-    caster_label: String,
-) {
+/// Owned native event facts passed as one argument across the combat/world boundary.
+/// The bridge owns ACK identity and serializes source damage unchanged.
+pub(crate) struct DamageInput {
+    pub(crate) time_ns: i64,
+    pub(crate) damage: f64,
+    pub(crate) crit: bool,
+    pub(crate) landed: bool,
+    pub(crate) periodic: bool,
+    pub(crate) action: String,
+    pub(crate) target_label: String,
+    pub(crate) caster_type: &'static str,
+    pub(crate) caster_index: u32,
+    pub(crate) caster_label: String,
+}
+
+pub(crate) fn record_damage(event: DamageInput) {
     if !enabled() {
         return;
     }
-    assert!(damage.is_finite() && damage > 0.0 && landed, "RUST_WORLD_DAMAGE_INVALID");
+    assert!(event.damage.is_finite() && event.damage > 0.0 && event.landed,
+        "RUST_WORLD_DAMAGE_INVALID");
     BRIDGE.with(|state| {
         let mut state = state.borrow_mut();
         let bridge = state.as_mut().expect("RUST_WORLD_NOT_STARTED");
-        append_damage_event(
-            bridge,
-            time_ns,
-            damage,
-            crit,
-            landed,
-            periodic,
-            action,
-            target_label,
-            caster_type,
-            caster_index,
-            caster_label,
-        );
+        append_damage_event(bridge, event);
     });
 }
 
-fn append_damage_event(
-    bridge: &mut Bridge,
-    time_ns: i64,
-    damage: f64,
-    crit: bool,
-    landed: bool,
-    periodic: bool,
-    action: String,
-    target_label: String,
-    caster_type: &str,
-    caster_index: u32,
-    caster_label: String,
-) {
+fn append_damage_event(bridge: &mut Bridge, event: DamageInput) {
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
-        native_time_ns: time_ns,
-        damage,
-        source_action_id: action,
+        native_time_ns: event.time_ns,
+        damage: event.damage,
+        source_action_id: event.action,
         rank: 0,
-        landed,
-        crit,
-        periodic,
+        landed: event.landed,
+        crit: event.crit,
+        periodic: event.periodic,
         native_target_index: 0,
         native_target_unit_index: 0,
-        native_target_label: target_label,
-        native_caster_type: caster_type.to_owned(),
-        native_caster_unit_index: caster_index,
-        native_caster_label: caster_label,
+        native_target_label: event.target_label,
+        native_caster_type: event.caster_type.to_owned(),
+        native_caster_unit_index: event.caster_index,
+        native_caster_label: event.caster_label,
     });
 }
 
