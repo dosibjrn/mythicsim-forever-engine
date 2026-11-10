@@ -95,6 +95,31 @@ impl<A: Agent> Fight<A> {
         &mut self, health_fraction: f64, mana_fraction: f64,
         food_metrics: usize, water_metrics: usize,
     ) -> Result<WorldRecoveryReceipt, &'static str> {
+        self.recover_native_world_actor_decisions_mode(
+            health_fraction, mana_fraction, food_metrics, water_metrics, false)
+    }
+
+    /// Recover after the final ACKed lethal hit. There is no living next
+    /// world target to exchange range ticks with. Only Rust's scheduled
+    /// passive ticks and source-native vendor food/water advance the clock.
+    /// Fully supplied actors need no extra clock advance or free reset.
+    pub(crate) fn recover_native_world_actor_terminal(
+        &mut self, food_metrics: usize, water_metrics: usize,
+    ) -> Result<WorldRecoveryReceipt, &'static str> {
+        if !needs_full_recovery(
+            self.player.health, self.player_max_health(),
+            self.player.mana, self.player.powers.max_mana, 1.0, 1.0,
+        ) {
+            return Ok(WorldRecoveryReceipt::default());
+        }
+        self.recover_native_world_actor_decisions_mode(
+            1.0, 1.0, food_metrics, water_metrics, true)
+    }
+
+    fn recover_native_world_actor_decisions_mode(
+        &mut self, health_fraction: f64, mana_fraction: f64,
+        food_metrics: usize, water_metrics: usize, terminal: bool,
+    ) -> Result<WorldRecoveryReceipt, &'static str> {
         if !health_fraction.is_finite() || !mana_fraction.is_finite()
             || !(0.0..=1.0).contains(&health_fraction)
             || !(0.0..=1.0).contains(&mana_fraction)
@@ -133,8 +158,13 @@ impl<A: Agent> Fight<A> {
                 }
             }
             self.advance_to(boundary);
-            let (distance, front, moving) =
-                world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken);
+            // A terminally defeated target has no valid health/range tick:
+            // never ask gsim to resurrect it for another movement ACK.
+            let (distance, front, moving) = if terminal {
+                (self.config.distance, self.config.melee.in_front_of_target, false)
+            } else {
+                world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken)
+            };
             if distance != self.config.distance {
                 self.config.distance = distance;
                 self.changed(reads::CASTS);
@@ -217,6 +247,41 @@ mod tests {
         assert!(!needs_full_recovery(600.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(499.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(600.0, 1000.0, 99.0, 1000.0, 0.5, 0.1));
+    }
+
+    #[test]
+    fn terminal_rest_charges_native_clock_and_restores_both_resources() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared, crate::core::rng::RngMode::Balanced,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+        let (food, water) = fight.register_world_food_water_metrics();
+        let max_health = fight.player_max_health();
+        let max_mana = fight.player.powers.max_mana;
+        fight.player.health = max_health * 0.8;
+        fight.player.mana = max_mana * 0.6;
+        let at_kill = fight.now;
+        let paid = fight.recover_native_world_actor_terminal(food, water).unwrap();
+        assert!(paid.full_recovery);
+        assert!(paid.elapsed_ns > 0);
+        assert_eq!(fight.now, at_kill + paid.elapsed_ns);
+        assert!((fight.player.health - max_health).abs() <= 1e-6);
+        assert!((fight.player.mana - max_mana).abs() <= 1e-6);
+        assert!(paid.food_health_gain > 0.0 || paid.passive_ticks > 0);
+        assert!(paid.water_mana_gain > 0.0 || paid.passive_ticks > 0);
+
+        let no_debt_at = fight.now;
+        let no_debt = fight.recover_native_world_actor_terminal(food, water).unwrap();
+        assert_eq!(no_debt.elapsed_ns, 0);
+        assert_eq!(fight.now, no_debt_at);
     }
 
     #[test]
