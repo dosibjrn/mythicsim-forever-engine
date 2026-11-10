@@ -1484,8 +1484,7 @@ mod warlock_l20_actor_source_tests {
         // Without a sourced L20 conversion it must still receive the existing
         // native 'level' refusal, even alongside an accepted hit chest.
         let mut bonus = vec![0.0; Stats::default().0.len()];
-        bonus[Stat::SpellHitRating as usize] =
-            constants::SPELL_HIT_RATING_PER_HIT_PERCENT;
+        bonus[Stat::SpellHitRating as usize] = constants::SPELL_HIT_RATING_PER_HIT_PERCENT;
         let request = serde_json::json!({
             "class": "ClassWarlock",
             "race": "RaceTroll",
