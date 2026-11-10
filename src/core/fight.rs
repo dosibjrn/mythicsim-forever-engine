@@ -5928,11 +5928,55 @@ impl<A: Agent> Fight<A> {
                 && window["native_passive_recovery_ticks"]
                     .as_u64().is_some_and(|ticks| ticks > 0)
         });
+        // With the source-native Decisions 100%/100% policy the terminal
+        // horizon includes actual post-last-kill rest. Do not ask the external
+        // gsim peer for a next-target tick: the final target is dead and its
+        // lethal ACK is already committed. Do not create a free resource reset.
+        let terminal_recovery = match strategy {
+            WorldRecoveryStrategy::Decisions {
+                health_fraction: 1.0, mana_fraction: 1.0,
+            } => {
+                if !self.player.health.is_finite() || self.player.health <= 0.0
+                    || !self.player.mana.is_finite()
+                {
+                    return Err("RUST_MULTI_WORLD_TERMINAL_ACTOR_INVALID");
+                }
+                let start_clock_ns = self.now;
+                let health_before = self.player.health;
+                let mana_before = self.player.mana;
+                let (food, water) = food_water_metrics.expect("Decisions source metrics");
+                let receipt = self.recover_native_world_actor_terminal(food, water)?;
+                let end_clock_ns = self.now;
+                if end_clock_ns < start_clock_ns
+                    || end_clock_ns - start_clock_ns != receipt.elapsed_ns
+                    || (self.player.health - self.player_max_health()).abs() > 1e-6
+                    || (self.player.mana - self.player.powers.max_mana).abs() > 1e-6
+                {
+                    return Err("RUST_MULTI_WORLD_TERMINAL_FULL_RECOVERY_UNPAID");
+                }
+                // Cleanup must not rewind the actor clock to last kill.
+                self.duration = self.duration.max(end_clock_ns);
+                Some(serde_json::json!({
+                    "paid": true, "native_clock_accounted": true,
+                    "start_clock_ns": start_clock_ns, "end_clock_ns": end_clock_ns,
+                    "health_before": health_before, "mana_before": mana_before,
+                    "health_after": self.player.health,
+                    "mana_after": self.player.mana,
+                    "food_seconds": receipt.food_ns as f64 / 1e9,
+                    "water_seconds": receipt.water_ns as f64 / 1e9,
+                    "food_health_gain": receipt.food_health_gain,
+                    "water_mana_gain": receipt.water_mana_gain,
+                    "native_passive_ticks": receipt.passive_ticks,
+                }))
+            }
+            _ => None,
+        };
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
+            "terminal_recovery": terminal_recovery,
             "recovery_mode": match strategy {
                 WorldRecoveryStrategy::Fixed(_) => "fixed_passive",
                 WorldRecoveryStrategy::Decisions { .. } => "decisions_food_water",
