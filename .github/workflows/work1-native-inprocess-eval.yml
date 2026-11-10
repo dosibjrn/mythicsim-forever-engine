@@ -75,6 +75,16 @@ jobs:
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 8, r
           assert len(r['windows']) == 8, r
+          # Every native source-paid target reports a genuine combat interval,
+          # not a guessed fraction of the kill-to-kill timeline. Across the
+          # retained route, prior kill + charged recovery == next pull start.
+          windows = r['windows']
+          assert all(w['native_combat_elapsed_ns'] > 0 and
+                     w['native_pull_started_ns'] + w['native_combat_elapsed_ns']
+                     == w['native_kill_ns'] for w in windows), r
+          assert all(current['native_pull_started_ns']
+                     == previous['native_kill_ns'] + current['native_passive_recovery_ns']
+                     for previous, current in zip(windows, windows[1:])), r
           # Measure actual native regeneration across each paid gap. A World
           # optimizer must not substitute its own health/mana recovery model.
           import math
@@ -242,6 +252,13 @@ jobs:
           assert r['actual_2d_ack'] is False, r
           assert r['world_targets_killed'] == 100, r
           assert len(r['windows']) == 100, r
+          windows = r['windows']
+          assert all(w['native_combat_elapsed_ns'] > 0 and
+                     w['native_pull_started_ns'] + w['native_combat_elapsed_ns']
+                     == w['native_kill_ns'] for w in windows), r
+          assert all(current['native_pull_started_ns']
+                     == previous['native_kill_ns'] + current['native_passive_recovery_ns']
+                     for previous, current in zip(windows, windows[1:])), r
           assert all(w['native_damage'] > 0 for w in r['windows']), r
           import math
           # The native source counters are partitioned at each real pull:
