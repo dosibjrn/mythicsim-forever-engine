@@ -38,6 +38,11 @@ jobs:
           repository: dosibjrn/forever-sim
           ref: ad1771e3bb79ac238a537f785fcf13d45dfe5122
           path: forever
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install native gsim/2D bridge dependencies
+        run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4' 'pytest==8.3.5'
       - name: Prepare real L21 Warlock with one newly spent talent and original L20 gear
         run: |
           set -euo pipefail
@@ -73,20 +78,40 @@ jobs:
                             "original_gear_items":len(actor["equipment"]["items"]),
                             "native_prepared_file":str(prepared)}),flush=True)
           PY
-          # World-chain requests are owned by native-world-pulls, not sim:
-          # sim --infile deliberately refuses RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM.
-          # Execute two actual hostile targets with the same retained actor
-          # and source-native Decisions recovery, not an unsupported sim mode.
-          target/debug/forever-engine native-world-pulls \
-            --infile warlock-l21-rating-probe/selected.prepared.json \
-            --targets 2 --rng-mode balanced --recovery-policy decisions \
-            --health-threshold 0.7 --mana-threshold 0.25 \
-            > warlock-l21-rating-probe/native-two-target-world.json
+          # This native world command REQUIRES gsim causal ACKs on stdin.
+          # The established Forever producer owns spatial movement and sets
+          # FOREVER_GSIM_WORLD_BRIDGE=1; running the Rust binary alone refuses
+          # RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM. Preserve the original
+          # equipped talent-bearing request and pay two hostile real kills.
+          python3 -u forever/tools/wf_warlock_l20_100mob.py \
+            --binary target/debug/forever-engine \
+            --source warlock-l21-rating-probe/source_request.json \
+            --out warlock-l21-rating-probe/paid-two-target \
+            --targets 2 --actor-level 21 --variant best_apl \
+            --hostile-player-tank --recovery-policy decisions \
+            --health-threshold 0.7 --mana-threshold 0.25
           python3 - <<'PY'
           import json, pathlib
-          p=pathlib.Path("warlock-l21-rating-probe/native-two-target-world.json")
-          result=json.loads(p.read_text())
-          print("REAL_L21_NATIVE_TWO_TARGET_RESULT",json.dumps(result)[:2500],flush=True)
+          root=pathlib.Path("warlock-l21-rating-probe")
+          summary=json.loads((root/"paid-two-target/summary.json").read_text())
+          assert summary["target_count_requested"] == 2
+          assert summary["actor_level"] == 21
+          run=summary["results"][0]
+          assert run["status"] == "COMPLETED_2_REAL_NATIVE_GSIM_KILLS",run
+          assert run["native_actor"]["level"] == 21
+          assert run["native_actor_continuity_receipt_complete"] is True
+          original=json.loads((root/"source_request.json").read_text())
+          actual=json.loads((root/"paid-two-target/best_apl/source_request.json").read_text())
+          expected=original["raid"]["parties"][0]["players"][0]
+          observed=actual["raid"]["parties"][0]["players"][0]
+          assert observed["talentsString"]==expected["talentsString"]
+          assert observed["equipment"]==expected["equipment"]
+          print("L21_NEW_TALENT_PAID_TWO_TARGET_GSIM",json.dumps({
+              "status":run["status"],"kills":run["killed"],
+              "actor_level":run["native_actor"]["level"],
+              "talents":observed["talentsString"],
+              "elapsed_s":run["elapsed_s"],"retained_native_actor":True
+          }),flush=True)
           PY
       - name: Save actual native L21 proposal, refusals and executable combat receipts
         if: always()
