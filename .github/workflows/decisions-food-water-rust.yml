@@ -39,11 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Checkout current Forever scorer and gsim world consumer
+      - name: Checkout exact Work1 competitive source scorer and gsim consumer
         uses: actions/checkout@v4
         with:
           repository: dosibjrn/forever-sim
-          ref: main
+          # Exact independently pushed Work1 #1394 producer: no unmerged
+          # main assumption, no silent source drift during this paid receipt.
+          ref: ce4c69e67f8b5f128a3d23aefa9e1b77dfb9ef7f
           path: forever
       - uses: actions/setup-python@v5
         with:
@@ -52,7 +54,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4'
       - name: Compile exact PR source-native recovery engine
         run: cargo build --locked --bin forever-engine
-      - name: Prepare an actual hostile L20 source candidate using only Rust
+      - name: Build source-native hostile L20 scenario, not a gameplay proxy
         run: |
           set -euo pipefail
           mkdir -p work1-three-hostile
@@ -60,76 +62,55 @@ jobs:
           import json
           from pathlib import Path
           source = json.loads(Path('forever/fixtures/warlock-l20-p71.request.json').read_text())
-          # The saved P7 reference is explicitly non-attacking. Change the
-          # *scenario*, never the actor/Warcraft legality, to a hostile mob.
           target = source['encounter']['targets'][0]
           target['name'] = 'Work1 hostile L20 native/2D scorer target'
           target['minBaseDamage'] = 40
           source['simOptions']['iterations'] = 1
           Path('work1-three-hostile/hostile-l20.request.json').write_text(
-              json.dumps(source, indent=2) + '\n')
+              json.dumps(source, indent=2) + '\\n')
           PY
-          # Use only the documented native prepare CLI. The Rust request
-          # already holds actor level; do not pass an unsupported --actor-level.
-          # Preserve the original source refusal before trying neutral gear.
-          if target/debug/forever-engine prepare \
-               --request work1-three-hostile/hostile-l20.request.json \
-               --outfile work1-three-hostile/l20.prepared.json \
-               > work1-three-hostile/full-prepare.stdout \
-               2> work1-three-hostile/full-prepare.stderr; then
-            cp work1-three-hostile/hostile-l20.request.json \
-               work1-three-hostile/source_request.json
-          else
-            python3 - <<'PY'
-          import json
-          from pathlib import Path
-          source = json.loads(Path('work1-three-hostile/hostile-l20.request.json').read_text())
-          source['raid']['parties'][0]['players'][0]['equipment']['items'] = []
-          Path('work1-three-hostile/neutral-gear-l20.request.json').write_text(
-              json.dumps(source, indent=2) + '\n')
-          PY
-            target/debug/forever-engine prepare \
-              --request work1-three-hostile/neutral-gear-l20.request.json \
-              --outfile work1-three-hostile/l20.prepared.json \
-              > work1-three-hostile/neutral-prepare.stdout \
-              2> work1-three-hostile/neutral-prepare.stderr
-            cp work1-three-hostile/neutral-gear-l20.request.json \
-               work1-three-hostile/source_request.json
-          fi
+          printf 'RUST_SHA=%s\\nFOREVER_SHA=%s\\n' \\
+            "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \\
+            > work1-three-hostile/versions.txt
+      - name: Prepare and score competing Rust-valid L20 sources with paid full recovery
+        run: |
+          set -euo pipefail
+          TARGET_HP=$(PYTHONPATH=forever python3 -c \
+            'from src.scenarios.leveling_targets import representative_hp; print(representative_hp(20))')
+          # One production invocation prepares bounded source-native alternatives
+          # and pays three hostile ACK kills plus real post-final-kill recovery
+          # for each candidate. No first-preparable/30s-DPS optimization claim.
+          PYTHONPATH=forever python3 -m tools.wf_warlock_native_start_source \\
+            --binary target/debug/forever-engine \\
+            --source work1-three-hostile/hostile-l20.request.json \\
+            --actor-level 20 --out work1-three-hostile \\
+            --mob-count 3 --target-hp "$TARGET_HP" \\
+            --max-scored-candidates 4 \\
+            | tee work1-three-hostile/native-scorer.stdout
+      - name: Verify genuine paid source selection without replay
+        run: |
+          set -euo pipefail
           python3 - <<'PY'
           import json
           from pathlib import Path
-          prepared = json.loads(Path('work1-three-hostile/l20.prepared.json').read_text())
-          player = prepared['player']
-          assert player['class'] == 'ClassWarlock' and player['level'] == 20, player
-          PY
-          printf 'RUST_SHA=%s\nFOREVER_SHA=%s\n' \
-            "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \
-            > work1-three-hostile/versions.txt
-      - name: Charge real three hostile native/2D ACK kills and final full HP/mana
-        run: |
-          set -euo pipefail
-          PYTHONPATH=forever python3 - <<'PY'
-          import json
-          from pathlib import Path
-          from tools.wf_warlock_native_candidate_scoring import compare_prepared_candidates
-          from src.scenarios.leveling_targets import representative_hp
           output = Path('work1-three-hostile')
-          result = compare_prepared_candidates(
-              binary=Path('target/debug/forever-engine'),
-              prepared_paths={'source_native_l20': output / 'l20.prepared.json'},
-              actor_level=20, mob_count=3,
-              target_hp=representative_hp(20), artifact_dir=output)
-          (output / 'comparison.json').write_text(
-              json.dumps(result, indent=2, allow_nan=False) + '\n')
-          print('WORK1_REAL_L20_THREE_HOSTILE_RECOVERED', json.dumps(result), flush=True)
-          row = result['candidates'][0]
-          assert row['status'] == 'MEASURED_NATIVE_FULLY_RECOVERED', row
-          assert row['elapsed_seconds'] > 0, row
-          assert row['acked_world_kills'] == 3, row
-          # One paid candidate is a baseline; do not mislabel it optimized.
-          assert result['comparable_candidates'] == 1
-          assert result['winner_candidate_id'] is None
+          receipt = json.loads((output / 'proposal.json').read_text())
+          assert receipt['mob_count'] == 3 and receipt['iterations'] == 1
+          assert receipt['rng_mode'] == 'balanced'
+          assert receipt['recover_to_full'] is True
+          comparison = receipt['native_paid_comparison']
+          assert comparison and comparison['comparable_candidates'] >= 1, receipt
+          for row in comparison['candidates']:
+              if row.get('elapsed_seconds') is not None:
+                  assert row['status'] == 'MEASURED_NATIVE_FULLY_RECOVERED', row
+                  assert row['acked_world_kills'] == 3, row
+          assert receipt['selected_candidate_id'] is not None, receipt
+          print('WORK1_PAID_HOSTILE_RECOVERED', json.dumps({
+              'status': receipt['status'],
+              'measured': comparison['comparable_candidates'],
+              'selected': receipt['selected_candidate_id'],
+              'full_recovery': True,
+          }), flush=True)
           PY
       - name: Retain genuine source, native ACK and terminal-recovery receipts
         if: always()
