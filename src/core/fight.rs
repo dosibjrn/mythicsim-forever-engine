@@ -5951,8 +5951,9 @@ impl<A: Agent> Fight<A> {
                 {
                     return Err("RUST_MULTI_WORLD_TERMINAL_FULL_RECOVERY_UNPAID");
                 }
-                // Cleanup must not rewind the actor clock to last kill.
-                self.duration = self.duration.max(end_clock_ns);
+                // The paid native terminal clock is the true end horizon:
+                // do not let cleanup charge an unplayed configured fight tail.
+                self.duration = end_clock_ns.max(1);
                 Some(serde_json::json!({
                     "paid": true, "native_clock_accounted": true,
                     "start_clock_ns": start_clock_ns, "end_clock_ns": end_clock_ns,
