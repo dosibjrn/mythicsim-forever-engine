@@ -76,6 +76,18 @@ pub(crate) fn needs_full_recovery(
         || (maximum_mana > 0.0 && mana < maximum_mana * mana_fraction)
 }
 
+/// A terminal full-resource ACK must start from a credible, finite native
+/// actor. Otherwise NaN/over-cap values can bypass the deficit comparison
+/// and masquerade as a zero-time full rest.
+fn terminal_resource_bounds_valid(
+    health: f64, max_health: f64, mana: f64, max_mana: f64,
+) -> bool {
+    health.is_finite() && max_health.is_finite() && max_health > 0.0
+        && health > 0.0 && health <= max_health + RESOURCE_EPSILON
+        && mana.is_finite() && max_mana.is_finite() && max_mana >= 0.0
+        && mana >= 0.0 && mana <= max_mana + RESOURCE_EPSILON
+}
+
 /// A between-pull world gap is paid when the native source clock advanced
 /// and either native regeneration ran, vendor recovery ran, or Decisions
 /// explicitly chose travel-only recovery. No-refill is not a free reset.
@@ -128,6 +140,12 @@ impl<A: Agent> Fight<A> {
     pub(crate) fn recover_native_world_actor_terminal(
         &mut self, food_metrics: usize, water_metrics: usize,
     ) -> Result<WorldRecoveryReceipt, &'static str> {
+        if !terminal_resource_bounds_valid(
+            self.player.health, self.player_max_health(),
+            self.player.mana, self.player.powers.max_mana,
+        ) {
+            return Err("RUST_WORLD_TERMINAL_RESOURCES_INVALID");
+        }
         if !needs_full_recovery(
             self.player.health, self.player_max_health(),
             self.player.mana, self.player.powers.max_mana, 1.0, 1.0,
@@ -305,6 +323,20 @@ mod tests {
             "decisions_full_recovery": true,
         });
         assert!(native_world_gap_paid(&food, true));
+    }
+
+    #[test]
+    fn terminal_native_resources_must_be_finite_and_within_source_caps() {
+        assert!(terminal_resource_bounds_valid(80.0, 100.0, 40.0, 100.0));
+        assert!(terminal_resource_bounds_valid(100.0, 100.0, 0.0, 0.0));
+        assert!(!terminal_resource_bounds_valid(f64::NAN, 100.0, 40.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, f64::NAN, 40.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, 40.0, f64::NAN));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, f64::INFINITY, 100.0));
+        assert!(!terminal_resource_bounds_valid(101.0, 100.0, 40.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, -1.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, 101.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(0.0, 100.0, 40.0, 100.0));
     }
 
     #[test]
