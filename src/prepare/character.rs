@@ -241,6 +241,27 @@ fn has_level_dependent_rating_stats(stats: &Stats) -> bool {
         .any(|stat| stats[stat] != 0.0)
 }
 
+/// The imported Go item stat array uses rating-named indices as transport for
+/// Forever's direct hit/crit percentages. The existing Forever equipment
+/// unification uses these exact Go unit constants regardless of actor level.
+/// For a lower-level actor, move those bonuses to explicit percent stats rather
+/// than applying max-level stat dependencies or refusing a real item.
+fn normalize_forever_hit_crit_item_percents(stats: &mut Stats, level: i32) {
+    if level == constants::CHARACTER_LEVEL {
+        return;
+    }
+    use constants::*;
+    for (rating, percent, per_percent) in [
+        (Stat::MeleeHitRating, Stat::PhysicalHitPercent, PHYSICAL_HIT_RATING_PER_HIT_PERCENT),
+        (Stat::SpellHitRating, Stat::SpellHitPercent, SPELL_HIT_RATING_PER_HIT_PERCENT),
+        (Stat::MeleeCritRating, Stat::PhysicalCritPercent, PHYSICAL_CRIT_RATING_PER_CRIT_PERCENT),
+        (Stat::SpellCritRating, Stat::SpellCritPercent, SPELL_CRIT_RATING_PER_CRIT_PERCENT),
+    ] {
+        stats[percent] += stats[rating] / per_percent;
+        stats[rating] = 0.0;
+    }
+}
+
 /// Go `Character.addUniversalStatDependencies`.
 pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: UnitId) {
     add_rating_conversions(sim, unit);
@@ -715,7 +736,9 @@ impl Sim {
 
     fn compute_equip_stats(&self, unit: UnitId) -> Stats {
         let character = self.character(unit);
-        items::equipment_stats(&character.equipment).add(&character.bonus_stats)
+        let mut stats = items::equipment_stats(&character.equipment).add(&character.bonus_stats);
+        normalize_forever_hit_crit_item_percents(&mut stats, self.unit(unit).level);
+        stats
     }
 
     /// Go `updateCachedEquipStats`.
@@ -1408,6 +1431,46 @@ mod warlock_l20_actor_source_tests {
         assert!(!has_level_dependent_rating_stats(&equipment));
         equipment[Stat::SpellHitRating] = 1.0;
         assert!(has_level_dependent_rating_stats(&equipment));
+    }
+
+    #[test]
+    fn forever_l20_hit_crit_fields_are_direct_percent_bonuses() {
+        let mut stats = Stats::default();
+        stats[Stat::SpellHitRating] = constants::SPELL_HIT_RATING_PER_HIT_PERCENT * 2.0;
+        stats[Stat::SpellCritRating] = constants::SPELL_CRIT_RATING_PER_CRIT_PERCENT * 3.0;
+        stats[Stat::SpellHitPercent] = 0.5;
+        normalize_forever_hit_crit_item_percents(&mut stats, 20);
+        assert_eq!(stats[Stat::SpellHitPercent], 2.5);
+        assert_eq!(stats[Stat::SpellCritPercent], 3.0);
+        assert_eq!(stats[Stat::SpellHitRating], 0.0);
+        assert_eq!(stats[Stat::SpellCritRating], 0.0);
+        assert!(!has_level_dependent_rating_stats(&stats));
+
+        let mut max_level = Stats::default();
+        max_level[Stat::SpellHitRating] = constants::SPELL_HIT_RATING_PER_HIT_PERCENT;
+        normalize_forever_hit_crit_item_percents(&mut max_level, 60);
+        assert_eq!(max_level[Stat::SpellHitRating], constants::SPELL_HIT_RATING_PER_HIT_PERCENT);
+        assert_eq!(max_level[Stat::SpellHitPercent], 0.0);
+    }
+
+    #[test]
+    fn real_forever_crit_and_hit_chests_prepare_at_l20_with_percent_stats() {
+        for (item_id, relevant_percent) in [
+            (21183, Stat::SpellCritPercent),
+            (20033, Stat::SpellHitPercent),
+        ] {
+            let request = format!(
+                r#"{{"class":"ClassWarlock","race":"RaceTroll","equipment":{{"items":[{{"id":{item_id}}}]}}}}"#
+            );
+            let player = Message::from_json_text("proto.Player", &request).unwrap();
+            let mut sim = Sim::new();
+            let unit = sim.new_character_at_level(0, 0, &player, &[], Some(20))
+                .unwrap_or_else(|refusal| panic!("Forever item {item_id} must prepare at L20: {refusal:?}"));
+            let stats = sim.equip_stats(unit);
+            assert!(stats[relevant_percent] > 0.0, "item {item_id} must retain native direct % bonus");
+            assert_eq!(stats[Stat::SpellHitRating], 0.0);
+            assert_eq!(stats[Stat::SpellCritRating], 0.0);
+        }
     }
 
     #[test]
