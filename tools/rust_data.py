@@ -42,6 +42,8 @@ PRESERVED_NATIVE_DATA = (
     "warlock-equipment-skills.manifest.json",
     "paladin-l20-source-context.json",
     "warlock-l20-actor-source.json",
+    "warlock-l10-l40-actor-source.json",
+    "warlock-l41-l59-actor-source.json",
     "priest-l20-base-stats.json",
     "rogue-l20-base-stats.json",
     "druid-l20-base-stats.json",
