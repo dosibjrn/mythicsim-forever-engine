@@ -45,7 +45,7 @@ jobs:
           repository: dosibjrn/forever-sim
           # Exact independently pushed Work1 #1394 producer: no unmerged
           # main assumption, no silent source drift during this paid receipt.
-          ref: ce4c69e67f8b5f128a3d23aefa9e1b77dfb9ef7f
+          ref: 1e8a734f7a5c7b6fa2521705b4b69b279b20afee
           path: forever
       - uses: actions/setup-python@v5
         with:
