@@ -76,6 +76,12 @@ pub(crate) fn start_inprocess(
     {
         return Err("NATIVE_SPATIAL_BRIDGE_ALREADY_ACTIVE");
     }
+    // Validate the existing native source-hash contract *before* installing
+    // either thread-local. Otherwise start() panics after NATIVE_SPATIAL is
+    // installed and leaves a half-started world behind.
+    if source_hash.len() != 64 {
+        return Err("RUST_WORLD_INVALID_SOURCE");
+    }
     let world = spatial::NativeSpatialWorld::new(
         target_count, target_health, engagement_range_yards,
     )?;
@@ -85,6 +91,12 @@ pub(crate) fn start_inprocess(
 }
 
 pub(crate) fn stop_inprocess() {
+    // A rejected in-process start never owns the external gsim BRIDGE.
+    // In particular, its cleanup must not discard a paid external peer's
+    // source hash, event journal, or lethal ACK lineage.
+    if !inprocess_enabled() {
+        return;
+    }
     NATIVE_SPATIAL.with(|slot| *slot.borrow_mut() = None);
     BRIDGE.with(|slot| *slot.borrow_mut() = None);
 }
@@ -122,6 +134,56 @@ mod inprocess_bridge_lifetime_tests {
             assert_eq!(slot.borrow().as_ref().unwrap().source_hash, competing);
         });
         stop_inprocess();
+    }
+
+    #[test]
+    fn rejected_native_start_cleanup_preserves_external_paid_ack_session() {
+        let valid_source = "c".repeat(64);
+        // Invalid source identifiers were previously rejected by start()
+        // only *after* installing the spatial ledger.
+        assert_eq!(
+            start_inprocess("short", 2, 80.0, 5.0),
+            Err("RUST_WORLD_INVALID_SOURCE"),
+        );
+        assert!(!inprocess_enabled());
+        assert!(BRIDGE.with(|slot| slot.borrow().is_none()));
+
+        // An external gsim peer already has paid ACK ancestry. A rejected
+        // attempt to start native-inprocess must not erase it on teardown.
+        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
+            iteration: 4,
+            sequence: 7,
+            next_tick_ns: 900,
+            last_tick_ns: 800,
+            last_health: Some(0.0),
+            previous_ack_id: "a".repeat(64),
+            source_hash: valid_source.clone(),
+            event_ordinal: 13,
+            pending: Vec::new(),
+            iteration_finished: false,
+        }));
+        assert_eq!(
+            start_inprocess(&"d".repeat(64), 2, 80.0, 5.0),
+            Err("NATIVE_SPATIAL_BRIDGE_ALREADY_ACTIVE"),
+        );
+        stop_inprocess(); // Must not tear down the external bridge.
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            let external = state.as_ref().expect("external ACK peer survived");
+            assert_eq!(external.source_hash, valid_source);
+            assert_eq!(external.iteration, 4);
+            assert_eq!(external.sequence, 7);
+            assert_eq!(external.last_tick_ns, 800);
+            assert_eq!(external.previous_ack_id, "a".repeat(64));
+        });
+        assert!(!inprocess_enabled());
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+
+        // A failed source check must not poison the next valid in-process run.
+        start_inprocess(&"e".repeat(64), 2, 80.0, 5.0).unwrap();
+        assert!(inprocess_enabled());
+        stop_inprocess();
+        assert!(BRIDGE.with(|slot| slot.borrow().is_none()));
     }
 }
 
