@@ -128,6 +128,12 @@ impl<A: Agent> Fight<A> {
         ) {
             return Ok(WorldRecoveryReceipt::default());
         }
+        // The last target is already dead, so the 2D peer cannot ACK a
+        // remaining movement step. Do not silently stop a moving actor and
+        // grant stationary food/water time before its actual arrival.
+        if self.player.moving {
+            return Err("RUST_WORLD_TERMINAL_MOVEMENT_UNRESOLVED");
+        }
         self.recover_native_world_actor_decisions_mode(
             1.0, 1.0, food_metrics, water_metrics, true)
     }
@@ -310,6 +316,18 @@ mod tests {
         let max_mana = fight.player.powers.max_mana;
         fight.player.health = max_health * 0.8;
         fight.player.mana = max_mana * 0.6;
+        // A lethal ACK during a queued 2D walk cannot be converted into
+        // free stationary vendor recovery. Preserve source clock/resources.
+        fight.player.moving = true;
+        let moving_at = fight.now;
+        assert_eq!(
+            fight.recover_native_world_actor_terminal(food, water).unwrap_err(),
+            "RUST_WORLD_TERMINAL_MOVEMENT_UNRESOLVED",
+        );
+        assert_eq!(fight.now, moving_at);
+        assert_eq!(fight.player.health, max_health * 0.8);
+        assert_eq!(fight.player.mana, max_mana * 0.6);
+        fight.player.moving = false;
         let at_kill = fight.now;
         let paid = fight.recover_native_world_actor_terminal(food, water).unwrap();
         assert!(paid.full_recovery);
