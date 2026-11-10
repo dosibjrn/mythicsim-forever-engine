@@ -67,10 +67,10 @@ jobs:
           target['minBaseDamage'] = 40
           source['simOptions']['iterations'] = 1
           Path('work1-three-hostile/hostile-l20.request.json').write_text(
-              json.dumps(source, indent=2) + '\\n')
+              json.dumps(source, indent=2) + '\n')
           PY
-          printf 'RUST_SHA=%s\\nFOREVER_SHA=%s\\n' \\
-            "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \\
+          printf 'RUST_SHA=%s\nFOREVER_SHA=%s\n' \
+            "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \
             > work1-three-hostile/versions.txt
       - name: Prepare and score competing Rust-valid L20 sources with paid full recovery
         run: |
@@ -80,12 +80,12 @@ jobs:
           # One production invocation prepares bounded source-native alternatives
           # and pays three hostile ACK kills plus real post-final-kill recovery
           # for each candidate. No first-preparable/30s-DPS optimization claim.
-          PYTHONPATH=forever python3 -m tools.wf_warlock_native_start_source \\
-            --binary target/debug/forever-engine \\
-            --source work1-three-hostile/hostile-l20.request.json \\
-            --actor-level 20 --out work1-three-hostile \\
-            --mob-count 3 --target-hp "$TARGET_HP" \\
-            --max-scored-candidates 4 \\
+          PYTHONPATH=forever python3 -m tools.wf_warlock_native_start_source \
+            --binary target/debug/forever-engine \
+            --source work1-three-hostile/hostile-l20.request.json \
+            --actor-level 20 --out work1-three-hostile \
+            --mob-count 3 --target-hp "$TARGET_HP" \
+            --max-scored-candidates 4 \
             | tee work1-three-hostile/native-scorer.stdout
       - name: Verify genuine paid source selection without replay
         run: |
