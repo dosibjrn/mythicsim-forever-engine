@@ -5840,6 +5840,11 @@ impl<A: Agent> Fight<A> {
         self.log = None;
         world_bridge::begin_iteration(0);
         self.prepare_first_native_pull();
+        // Start of the first source-native combat interval. This is not wall
+        // clock or prep time, and every later travel/rest interval is included.
+        let chain_started_at_ns = self.pull_started_at;
+        let mut chain_combat_ns = 0_i64;
+        let mut chain_recovery_ns = 0_i64;
         let mut windows = Vec::with_capacity(target_count);
         let mut previous_damage = 0.0;
         let mut previous_health_damage = 0.0_f64;
@@ -6027,6 +6032,10 @@ impl<A: Agent> Fight<A> {
             // second clock/gameplay model.
             let native_combat_elapsed_ns = self.now.checked_sub(self.pull_started_at)
                 .ok_or("RUST_WORLD_COMBAT_CLOCK_REWOUND")?;
+            chain_combat_ns = chain_combat_ns.checked_add(native_combat_elapsed_ns)
+                .ok_or("RUST_WORLD_CHAIN_CLOCK_OVERFLOW")?;
+            chain_recovery_ns = chain_recovery_ns.checked_add(native_recovery_elapsed_ns)
+                .ok_or("RUST_WORLD_CHAIN_CLOCK_OVERFLOW")?;
             windows.push(serde_json::json!({
                 "native_pull_started_ns": self.pull_started_at,
                 "native_combat_elapsed_ns": native_combat_elapsed_ns,
@@ -6103,6 +6112,14 @@ impl<A: Agent> Fight<A> {
                 _ => false,
             }
         });
+        // The paid source clock, not an estimated DPS/kill-time proxy, is the
+        // common elapsed objective used by the Forever route coordinator.
+        // Account for all native combat and each source-clock travel/rest gap.
+        let chain_elapsed_ns = self.now.checked_sub(chain_started_at_ns)
+            .ok_or("RUST_WORLD_CHAIN_CLOCK_REWOUND")?;
+        if chain_combat_ns.checked_add(chain_recovery_ns) != Some(chain_elapsed_ns) {
+            return Err("RUST_WORLD_CHAIN_CLOCK_MISMATCH");
+        }
         let report = serde_json::json!({
             "scope": if world_bridge::inprocess_enabled() {
                 "NATIVE_INPROCESS_SPATIAL_WORLD_NOT_P4_P6"
@@ -6113,6 +6130,9 @@ impl<A: Agent> Fight<A> {
             "continuous_native_actor": true,
             "actual_2d_ack": !world_bridge::inprocess_enabled(),
             "paid_recovery": native_passive_recovery_paid,
+            "native_chain_elapsed_ns": chain_elapsed_ns,
+            "native_chain_combat_ns": chain_combat_ns,
+            "native_chain_recovery_ns": chain_recovery_ns,
             "world_targets_killed": target_count,
             "recovery_seconds_per_gap": if recovery_schedule_seconds.is_some() {
                 None
