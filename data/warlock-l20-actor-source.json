@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "class": "ClassWarlock",
+  "race": "RaceTroll",
+  "level": 20,
+  "class_base": {
+    "health": 204,
+    "mana": 383
+  },
+  "reference_race_l20": {
+    "race": "RaceOrc",
+    "strength": 29,
+    "agility": 25,
+    "stamina": 34,
+    "intellect": 43,
+    "spirit": 49
+  },
+  "provenance": {
+    "class_level": {
+      "provider": "cmangos/mangos-classic",
+      "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+      "file": "sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql",
+      "row": "(9,20,204,383)"
+    },
+    "primary": {
+      "provider": "cmangos/mangos-classic",
+      "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+      "file": "sql/archive/0.8/4537_player_levelstats.sql",
+      "row": "(2,9,20,364,717,29,25,34,43,49)"
+    },
+    "racial_deltas": {
+      "provider": "mythicsim-rust",
+      "file": "data/go-tables.json",
+      "path": "base_stats.ClassWarlock.RaceTroll - base_stats.ClassWarlock.RaceOrc"
+    }
+  },
+  "derivation": "Projected Troll L20 primaries = sourced Orc Warlock L20 primaries + native Troll-minus-Orc L60 primary stat differences. Troll/Warlock L20 has no direct CMaNGOS Classic row; this is a transparent native race projection, not a directly observed Classic row.",
+  "source_scope": "classic_derived_troll_race_projection_not_direct_level20_row"
+}
