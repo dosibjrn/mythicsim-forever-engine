@@ -494,25 +494,19 @@ mod persistent_next_target_tests {
 
 #[cfg(test)]
 mod disabled_bridge_tests {
-    use super::{enabled, record_damage};
+    use super::{enabled, record_damage, DamageInput};
 
     #[test]
     fn disabled_bridge_ignores_damage_before_validation() {
         if enabled() {
             return;
         }
-        record_damage(
-            0,
-            f64::NAN,
-            false,
-            false,
-            false,
-            "disabled".to_owned(),
-            "target".to_owned(),
-            "player",
-            0,
-            "Druid".to_owned(),
-        );
+        record_damage(DamageInput {
+            time_ns: 0, damage: f64::NAN, crit: false, landed: false,
+            periodic: false, action: "disabled".to_owned(),
+            target_label: "target".to_owned(), caster_type: "player",
+            caster_index: 0, caster_label: "Druid".to_owned(),
+        });
     }
 }
 
@@ -520,7 +514,7 @@ mod disabled_bridge_tests {
 mod iteration_teardown_tests {
     use super::{
         append_damage_event, assert_damage_acknowledgement, begin_iteration,
-        mark_iteration_finished, Bridge, BRIDGE,
+        mark_iteration_finished, Bridge, DamageInput, BRIDGE,
     };
 
     fn bridge(iteration_finished: bool) -> Bridge {
@@ -549,16 +543,12 @@ mod iteration_teardown_tests {
             let bridge = state.as_mut().unwrap();
             append_damage_event(
                 bridge,
-                10,
-                5.0,
-                false,
-                true,
-                false,
-                "cleanup-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                DamageInput {
+                    time_ns: 10, damage: 5.0, crit: false, landed: true,
+                    periodic: false, action: "cleanup-proc".to_owned(),
+                    target_label: "target".to_owned(), caster_type: "player",
+                    caster_index: 0, caster_label: "Druid".to_owned(),
+                },
             );
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.event_ordinal, 1);
@@ -598,16 +588,12 @@ mod iteration_teardown_tests {
             let bridge = state.as_mut().unwrap();
             append_damage_event(
                 bridge,
-                20,
-                7.0,
-                false,
-                true,
-                false,
-                "combat-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                DamageInput {
+                    time_ns: 20, damage: 7.0, crit: false, landed: true,
+                    periodic: false, action: "combat-proc".to_owned(),
+                    target_label: "target".to_owned(), caster_type: "player",
+                    caster_index: 0, caster_label: "Druid".to_owned(),
+                },
             );
             assert_eq!(bridge.pending.len(), 1);
             assert_eq!(bridge.pending[0].source_action_id, "combat-proc");
@@ -629,17 +615,13 @@ mod iteration_teardown_tests {
         state.previous_ack_id = "a".repeat(64);
         append_damage_event(
             &mut state,
-            10,
-            5.0,
-            false,
-            true,
-            false,
-            "late-proc".to_owned(),
-            "target".to_owned(),
-            "player",
-            0,
-            "Druid".to_owned(),
-        );
+                DamageInput {
+                    time_ns: 10, damage: 5.0, crit: false, landed: true,
+                    periodic: false, action: "late-proc".to_owned(),
+                    target_label: "target".to_owned(), caster_type: "player",
+                    caster_index: 0, caster_label: "Druid".to_owned(),
+                },
+            );
     }
 
     #[test]
@@ -650,16 +632,12 @@ mod iteration_teardown_tests {
             let mut state = state.borrow_mut();
             append_damage_event(
                 state.as_mut().unwrap(),
-                10,
-                5.0,
-                false,
-                true,
-                false,
-                "late-proc".to_owned(),
-                "target".to_owned(),
-                "player",
-                0,
-                "Druid".to_owned(),
+                DamageInput {
+                    time_ns: 10, damage: 5.0, crit: false, landed: true,
+                    periodic: false, action: "late-proc".to_owned(),
+                    target_label: "target".to_owned(), caster_type: "player",
+                    caster_index: 0, caster_label: "Druid".to_owned(),
+                },
             );
         });
     }
