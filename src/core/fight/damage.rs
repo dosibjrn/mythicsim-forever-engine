@@ -1235,9 +1235,14 @@ impl<A: Agent> Fight<A> {
                 }
             }
         }
-        if result.target == Side::Target {
+        if result.target == Side::Target
+            || (super::world_bridge::enabled() && result.target.is_target())
+        {
+            // Preserve existing stationary primary-target DPS scope; for a
+            // live world, account for every real enemy Side including DoTs
+            // still ticking on an earlier mob after target switching.
             self.encounter_damage_taken += result.damage;
-            if result.damage > 0.0 {
+            if result.damage > 0.0 && super::world_bridge::enabled() {
                 // Pre-pull source hits are genuine target damage. Keep their
                 // negative native clock; gsim applies them at the first t=0
                 // boundary, before the next native combat decision.
@@ -1257,6 +1262,8 @@ impl<A: Agent> Fight<A> {
                     periodic,
                     super::world_bridge::DamageSource {
                         action: format!("{:?}", self.spells[spell].id),
+                        target_index: result.target.target_position()
+                            .expect("RUST_WORLD_DAMAGE_MUST_TARGET_ENEMY") as u32,
                         target_label: self.label_of(result.target),
                         caster_type: caster_type.to_owned(),
                         caster_index,

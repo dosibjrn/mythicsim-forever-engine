@@ -284,6 +284,8 @@ pub(crate) fn due(next_native_ns: i64, end_ns: i64) -> Option<i64> {
 /// The world bridge only transports events; it never invents combat damage.
 pub(crate) struct DamageSource {
     pub(crate) action: String,
+    /// Source-native target position: Target=0, Extra(k)=k+1.
+    pub(crate) target_index: u32,
     pub(crate) target_label: String,
     pub(crate) caster_type: String,
     pub(crate) caster_index: u32,
@@ -320,6 +322,7 @@ fn append_damage_event(
 ) {
     let DamageSource {
         action,
+        target_index,
         target_label,
         caster_type,
         caster_index,
@@ -327,6 +330,8 @@ fn append_damage_event(
     } = source;
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
+    assert!(target_index < super::MAX_TARGETS as u32,
+        "RUST_WORLD_DAMAGE_TARGET_OUT_OF_RANGE");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -337,8 +342,8 @@ fn append_damage_event(
         landed,
         crit,
         periodic,
-        native_target_index: 0,
-        native_target_unit_index: 0,
+        native_target_index: target_index,
+        native_target_unit_index: target_index,
         native_target_label: target_label,
         native_caster_type: caster_type,
         native_caster_unit_index: caster_index,
@@ -388,6 +393,11 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         let moving = world.advance_to(clock_ns);
         let distance = world.distance_yards();
         for event in &events {
+            // The current in-process evaluator has one live mob health bar.
+            // It must not turn an Extra(k) DoT into damage against that mob;
+            // multi-alive targets belong to a future expanded spatial ledger.
+            assert_eq!(event.native_target_index, 0,
+                "NATIVE_SPATIAL_UNSUPPORTED_EXTRA_TARGET_DAMAGE");
             world.apply_native_damage(event.damage)
                 .expect("NATIVE_SPATIAL_SOURCE_DAMAGE_INVALID");
         }
@@ -618,10 +628,35 @@ mod persistent_next_target_tests {
 fn test_damage_source(action: &str) -> DamageSource {
     DamageSource {
         action: action.to_owned(),
+        target_index: 0,
         target_label: "target".to_owned(),
         caster_type: "player".to_owned(),
         caster_index: 0,
         caster_label: "Druid".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod source_world_target_identity_tests {
+    use super::{append_damage_event, test_damage_source, Bridge};
+    #[test]
+    fn world_damage_receipt_uses_true_native_target_index() {
+        let mut bridge = Bridge {
+            iteration: 0, sequence: 1, next_tick_ns: 0, last_tick_ns: -1,
+            last_health: Some(100.0), previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64), event_ordinal: 0,
+            pending: Vec::new(), iteration_finished: false,
+        };
+        let first = test_damage_source("first DoT");
+        let mut second = test_damage_source("second DoT");
+        second.target_index = 1;
+        second.target_label = "second mob".into();
+        append_damage_event(&mut bridge, 1_000_000, 5.0, false, true, true, first);
+        append_damage_event(&mut bridge, 2_000_000, 7.0, false, true, true, second);
+        assert_eq!(bridge.pending[0].native_target_index, 0);
+        assert_eq!(bridge.pending[1].native_target_index, 1);
+        assert_eq!(bridge.pending[1].native_target_unit_index, 1);
+        assert_eq!(bridge.pending[1].native_target_label, "second mob");
     }
 }
 
@@ -783,6 +818,19 @@ mod inprocess_spatial_ack_tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "NATIVE_SPATIAL_UNSUPPORTED_EXTRA_TARGET_DAMAGE")]
+    fn inprocess_world_refuses_noncurrent_source_target_damage() {
+        let source = "f".repeat(64);
+        start_inprocess(&source, 8, 40.0, 5.0).unwrap();
+        begin_iteration(0);
+        exchange(0, 100_000_000_000, 0.0);
+        let mut extra = test_damage_source("old mob DoT");
+        extra.target_index = 1;
+        record_damage(1_000_000, 10.0, false, true, true, extra);
+        exchange(1_000_000, 100_000_000_000, 10.0);
+    }
+
+    #[test]
     fn paid_spatial_transition_requires_actual_native_lethal_damage() {
         let source = "f".repeat(64);
         start_inprocess(&source, 8, 40.0, 5.0).unwrap();
@@ -794,7 +842,7 @@ mod inprocess_spatial_ack_tests {
         );
 
         record_damage(1_000_000, 15.0, false, true, false, DamageSource {
-            action: "source-spell".into(), target_label: "Mob".into(),
+            action: "source-spell".into(), target_index: 0, target_label: "Mob".into(),
             caster_type: "player".into(), caster_index: 0,
             caster_label: "Warlock".into(),
         });
@@ -802,7 +850,7 @@ mod inprocess_spatial_ack_tests {
         assert!(!acknowledged_lethal());
 
         record_damage(2_000_000, 30.0, false, true, false, DamageSource {
-            action: "source-pet".into(), target_label: "Mob".into(),
+            action: "source-pet".into(), target_index: 0, target_label: "Mob".into(),
             caster_type: "pet".into(), caster_index: 1,
             caster_label: "Imp".into(),
         });
