@@ -23,6 +23,7 @@ jobs:
         run: cargo check --locked --all-targets
       - name: Test source-native terminal recovery and paid movement
         run: |
+          cargo test --locked --lib warlock_l20_actor_source_tests -- --nocapture
           cargo test --locked --lib terminal_rest_charges_native_clock_and_restores_both_resources -- --nocapture
           cargo test --locked --lib vendor_recovery_is_not_credited_on_a_gsim_arrival_tick -- --nocapture
           cargo test --locked --lib terminal_native_resources_must_be_finite_and_within_source_caps -- --nocapture
