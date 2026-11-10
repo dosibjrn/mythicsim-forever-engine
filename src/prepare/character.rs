@@ -241,6 +241,14 @@ fn has_level_dependent_rating_stats(stats: &Stats) -> bool {
         .any(|stat| stats[stat] != 0.0)
 }
 
+fn strip_unsourced_rating_stats(stats: &mut Stats, level: i32) {
+    if level != constants::CHARACTER_LEVEL && has_level_dependent_rating_stats(stats) {
+        for rating in LEVEL_DEPENDENT_RATING_STATS {
+            stats[rating] = 0.0;
+        }
+    }
+}
+
 /// Go `Character.addUniversalStatDependencies`.
 pub(crate) fn add_character_universal_stat_dependencies(sim: &mut Sim, unit: UnitId) {
     add_rating_conversions(sim, unit);
@@ -727,15 +735,11 @@ impl Sim {
                 self.enable_item_swap(id, item_swap, area_types)?;
             }
         }
-        let cached = self.compute_equip_stats(id);
-        if level != constants::CHARACTER_LEVEL && has_level_dependent_rating_stats(&cached) {
-            return Err(Refusal::new(
-                "level",
-                format!(
-                    "player level {level} {class} loadout contains combat-rating stats but no level-{level} rating conversion source is available"
-                ),
-            ));
-        }
+        let mut cached = self.compute_equip_stats(id);
+        // No lower-level rating conversion is sourced. Drop ONLY those rating
+        // contributions, not the whole otherwise-legal item or its other stats.
+        // Do not apply the unrelated level-60 rating multipliers at level 55.
+        strip_unsourced_rating_stats(&mut cached, level);
         let character = self.character_mut(id);
         character.cached_equip_stats = cached;
         character.equip_cache_valid = true;
@@ -1118,7 +1122,7 @@ mod level_contract_tests {
     use super::{
         constants, druid_crit_per_agi_at, druid_crit_per_int_at, has_level_dependent_rating_stats,
         priest_l20_crit_per_agi, priest_l20_crit_per_int, requested_player_level,
-        rogue_l20_crit_per_agi, Sim,
+        rogue_l20_crit_per_agi, strip_unsourced_rating_stats, Sim,
     };
     use crate::contracts::request::Message;
     use crate::prepare::stats::{Stat, Stats};
@@ -1395,6 +1399,22 @@ mod level_contract_tests {
                 "level"
             );
         }
+    }
+
+    #[test]
+    fn lower_level_rating_fields_are_ignored_without_losing_other_item_stats() {
+        let mut stats = Stats::default();
+        stats[Stat::SpellPower] = 32.0;
+        stats[Stat::SpellHitRating] = 12.0;
+        stats[Stat::SpellCritRating] = 9.0;
+        strip_unsourced_rating_stats(&mut stats, 55);
+        assert_eq!(stats[Stat::SpellHitRating], 0.0);
+        assert_eq!(stats[Stat::SpellCritRating], 0.0);
+        assert_eq!(stats[Stat::SpellPower], 32.0);
+        let mut max_level = Stats::default();
+        max_level[Stat::SpellHitRating] = 12.0;
+        strip_unsourced_rating_stats(&mut max_level, 60);
+        assert_eq!(max_level[Stat::SpellHitRating], 12.0);
     }
 
     #[test]
