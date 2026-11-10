@@ -68,14 +68,40 @@ jobs:
           Path('work1-three-hostile/hostile-l20.request.json').write_text(
               json.dumps(source, indent=2) + '\n')
           PY
-          python forever/tools/wf_warlock_native_start_source.py \
-            --binary target/debug/forever-engine \
-            --source work1-three-hostile/hostile-l20.request.json \
-            --actor-level 20 --out work1-three-hostile/source
-          target/debug/forever-engine prepare \
-            --request work1-three-hostile/source/source_request.json \
-            --actor-level 20 \
-            --outfile work1-three-hostile/l20.prepared.json
+          # Use only the documented native prepare CLI. The Rust request
+          # already holds actor level; do not pass an unsupported --actor-level.
+          # Preserve the original source refusal before trying neutral gear.
+          if target/debug/forever-engine prepare \
+               --request work1-three-hostile/hostile-l20.request.json \
+               --outfile work1-three-hostile/l20.prepared.json \
+               > work1-three-hostile/full-prepare.stdout \
+               2> work1-three-hostile/full-prepare.stderr; then
+            cp work1-three-hostile/hostile-l20.request.json \
+               work1-three-hostile/source_request.json
+          else
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = json.loads(Path('work1-three-hostile/hostile-l20.request.json').read_text())
+          source['raid']['parties'][0]['players'][0]['equipment']['items'] = []
+          Path('work1-three-hostile/neutral-gear-l20.request.json').write_text(
+              json.dumps(source, indent=2) + '\n')
+          PY
+            target/debug/forever-engine prepare \
+              --request work1-three-hostile/neutral-gear-l20.request.json \
+              --outfile work1-three-hostile/l20.prepared.json \
+              > work1-three-hostile/neutral-prepare.stdout \
+              2> work1-three-hostile/neutral-prepare.stderr
+            cp work1-three-hostile/neutral-gear-l20.request.json \
+               work1-three-hostile/source_request.json
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          prepared = json.loads(Path('work1-three-hostile/l20.prepared.json').read_text())
+          player = prepared['player']
+          assert player['class'] == 'ClassWarlock' and player['level'] == 20, player
+          PY
           printf 'RUST_SHA=%s\nFOREVER_SHA=%s\n' \
             "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \
             > work1-three-hostile/versions.txt
