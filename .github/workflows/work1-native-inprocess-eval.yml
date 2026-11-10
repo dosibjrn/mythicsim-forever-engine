@@ -24,6 +24,7 @@ jobs:
         run: |
           cargo test --locked --lib inprocess_spatial_ack_tests -- --nocapture
           cargo test --locked --lib world_damage_receipt_uses_true_native_target_index -- --nocapture
+          cargo test --locked --lib nested_native_spatial_start_refuses_without_overwriting_paid_source -- --nocapture
           cargo test --locked --lib native_spatial_chain_refuses_dead_actor_before_next_native_action -- --nocapture
           cargo test --locked --lib native_spatial_chain_refuses_actor_killed_during_hostile_step -- --nocapture
           cargo test --locked --lib native_paid_recovery_never_resurrects_a_dead_actor -- --nocapture
