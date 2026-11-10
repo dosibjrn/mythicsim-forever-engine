@@ -1404,13 +1404,13 @@ mod level_contract_tests {
     #[test]
     fn lower_level_rating_fields_are_ignored_without_losing_other_item_stats() {
         let mut stats = Stats::default();
-        stats[Stat::SpellPower] = 32.0;
+        stats[Stat::SpellDamage] = 32.0;
         stats[Stat::SpellHitRating] = 12.0;
         stats[Stat::SpellCritRating] = 9.0;
         strip_unsourced_rating_stats(&mut stats, 55);
         assert_eq!(stats[Stat::SpellHitRating], 0.0);
         assert_eq!(stats[Stat::SpellCritRating], 0.0);
-        assert_eq!(stats[Stat::SpellPower], 32.0);
+        assert_eq!(stats[Stat::SpellDamage], 32.0);
         let mut max_level = Stats::default();
         max_level[Stat::SpellHitRating] = 12.0;
         strip_unsourced_rating_stats(&mut max_level, 60);
