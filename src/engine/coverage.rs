@@ -2039,9 +2039,9 @@ fn runtime_limits(spell: &Spell, class_spell: bool) -> Vec<&'static str> {
 /// native preparation. Unsupported races/builds still receive native refusals.
 fn sourced_actor_level(class: &str, level: i32) -> bool {
     // This selected native source now prepares genuine Troll Warlock actors
-    // for every level 10..40. Do not reject those prepared actors at the
+    // for every level 10..59. Do not reject those prepared actors at the
     // independent combat coverage gate solely for being below level 60.
-    if class == "ClassWarlock" && (10..=40).contains(&level) {
+    if class == "ClassWarlock" && (10..=59).contains(&level) {
         return true;
     }
     match level {
@@ -3800,11 +3800,12 @@ mod sourced_level_gate_tests {
             assert!(sourced_actor_level(class, 20), "{class} L20");
         }
         assert!(sourced_actor_level("ClassDruid", 30));
-        for level in 10..=40 {
+        for level in 10..=59 {
             assert!(sourced_actor_level("ClassWarlock", level), "Warlock L{level}");
         }
         assert!(!sourced_actor_level("ClassWarlock", 9));
-        assert!(!sourced_actor_level("ClassWarlock", 41));
+        assert!(!sourced_actor_level("ClassWarlock", 9));
+        assert!(!sourced_actor_level("ClassWarlock", 61));
         assert!(!sourced_actor_level("ClassRogue", 30));
         assert!(!sourced_actor_level("ClassMage", 20));
         assert!(!sourced_actor_level("ClassDruid", 40));
