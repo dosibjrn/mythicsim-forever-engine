@@ -903,7 +903,14 @@ fn native_item_options_with_required_levels(
         let Some(scaling) = scaling_option(row) else {
             continue;
         };
-        let source_stats = stats_from_map(scaling, "stats");
+        // Expose the same direct Forever hit/crit percent bonuses that an
+        // equipped lower-level actor actually receives. The imported Go
+        // SimItem fields have rating-named indices, not level-scaled ratings.
+        let mut source_stats = stats_from_map(scaling, "stats");
+        if level != super::character::constants::CHARACTER_LEVEL {
+            source_stats = unify_gear_hit_and_crit(source_stats);
+            super::character::normalize_forever_hit_crit_item_percents(&mut source_stats, level);
+        }
         let mut stats = std::collections::BTreeMap::new();
         for stat in Stat::ALL {
             let value = source_stats[stat];
@@ -1286,6 +1293,36 @@ mod native_item_options_contract_tests {
             item.required_level <= 30
                 && item.required_level_origin == "client_ItemSparse.RequiredLevel"
         }));
+    }
+
+    #[test]
+    fn lower_level_item_options_project_forever_hit_crit_as_direct_percents() {
+        // This is an API representation regression, not an acquisition check:
+        // the client RequiredLevel projection is the existing candidate source.
+        let mut levels = synthetic_levels();
+        levels.insert(21183, 20);
+        levels.insert(20033, 20);
+        let response = native_item_options_with_required_levels(
+            "warlock",
+            20,
+            "unrestricted",
+            "chest",
+            &levels,
+        );
+        assert_eq!(response.status, "ok", "{:?}", response.refusal);
+        for (id, stat) in [(21183, "SpellCritPercent"), (20033, "SpellHitPercent")] {
+            let item = response
+                .items
+                .iter()
+                .find(|item| item.item_id == id)
+                .unwrap_or_else(|| panic!("missing sourced item {id}"));
+            assert!(
+                item.stats.get(stat).copied().unwrap_or(0.0) > 0.0,
+                "{id} must expose direct Forever percentage"
+            );
+            assert!(!item.stats.contains_key("SpellHitRating"));
+            assert!(!item.stats.contains_key("SpellCritRating"));
+        }
     }
 
     #[test]
