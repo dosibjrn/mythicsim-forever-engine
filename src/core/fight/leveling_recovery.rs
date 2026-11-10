@@ -70,6 +70,22 @@ pub(crate) fn needs_full_recovery(
         || (maximum_mana > 0.0 && mana < maximum_mana * mana_fraction)
 }
 
+/// A between-pull world gap is paid when the native source clock advanced
+/// and either native regeneration ran, vendor recovery ran, or Decisions
+/// explicitly chose travel-only recovery. No-refill is not a free reset.
+pub(crate) fn native_world_gap_paid(window: &serde_json::Value, decisions: bool) -> bool {
+    let ns_paid = window["native_passive_recovery_ns"]
+        .as_i64().is_some_and(|ns| ns > 0);
+    let ticks_paid = window["native_passive_recovery_ticks"]
+        .as_u64().is_some_and(|ticks| ticks > 0);
+    let decisions_paid = decisions && (
+        window["food_seconds"].as_f64().is_some_and(|seconds| seconds > 0.0)
+        || window["water_seconds"].as_f64().is_some_and(|seconds| seconds > 0.0)
+        || window["decisions_full_recovery"].as_bool() == Some(false)
+    );
+    ns_paid && (ticks_paid || decisions_paid)
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 pub(crate) struct WorldRecoveryReceipt {
     pub(crate) passive_ticks: usize,
@@ -247,6 +263,32 @@ mod tests {
         assert!(!needs_full_recovery(600.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(499.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(600.0, 1000.0, 99.0, 1000.0, 0.5, 0.1));
+    }
+
+    #[test]
+    fn decisions_paid_gap_accepts_native_travel_without_inventing_regeneration() {
+        let no_vendor = serde_json::json!({
+            "native_passive_recovery_ns": 100_000_000,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 0.0, "water_seconds": 0.0,
+            "decisions_full_recovery": false,
+        });
+        assert!(native_world_gap_paid(&no_vendor, true));
+        assert!(!native_world_gap_paid(&no_vendor, false));
+        let no_clock = serde_json::json!({
+            "native_passive_recovery_ns": 0,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 1.0,
+            "decisions_full_recovery": true,
+        });
+        assert!(!native_world_gap_paid(&no_clock, true));
+        let food = serde_json::json!({
+            "native_passive_recovery_ns": 100_000_000,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 0.1,
+            "decisions_full_recovery": true,
+        });
+        assert!(native_world_gap_paid(&food, true));
     }
 
     #[test]
