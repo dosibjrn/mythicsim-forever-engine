@@ -6180,9 +6180,17 @@ impl<A: Agent> Fight<A> {
         // No native attacks are allowed while the actor recovers.
         let mut boundary = self.now;
         while boundary < until_ns {
-            boundary = boundary
-                .saturating_add(100_000_000)
-                .min(until_ns);
+            // Only the external gsim bridge and *moving* spatial actor need
+            // 100 ms world samples. Once a native in-process actor has stopped
+            // walking, leap to the paid rest deadline while still running
+            // every source-scheduled regen/item action at its exact timestamp.
+            // The earlier walk-start exchange already marked movement=true,
+            // so sub-100 ms walks still receive their native moving sample.
+            boundary = if !world_bridge::inprocess_enabled() || self.player.moving {
+                boundary.saturating_add(100_000_000).min(until_ns)
+            } else {
+                until_ns
+            };
             while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
                 boundary,
                 // Already-scheduled source item periodic mana effects must continue
@@ -7296,6 +7304,47 @@ mod tests {
         assert!(fight.player.mana > 0.0, "native mana regeneration did not apply");
         assert_eq!(fight.now, end);
         assert!(fight.accepts_next_target_clock(end, end + 1_000_000_000, true));
+    }
+
+    #[test]
+    fn native_inprocess_idle_recovery_keeps_source_ticks_without_movement_samples() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared,
+            crate::core::rng::RngMode::Stochastic,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+
+        // This in-process world has not begun a walk. Rest must skip
+        // unnecessary 100 ms spatial polling but process the original
+        // scheduled native mana/health regen at their precise timestamps.
+        super::world_bridge::start_inprocess(&"a".repeat(64), 2, 300.0, 5.0)
+            .unwrap();
+        fight.player.mana = 0.0;
+        let start = fight.now;
+        let end = start + 24 * crate::core::time::NS_PER_SECOND;
+        let events_before = fight.resources[fight.mana_regen_not_casting].events
+            + fight.resources[fight.mana_regen_casting].events;
+        let (ticks, item_ticks, item_gain) =
+            fight.recover_native_world_actor_until(end).unwrap();
+        let events_after = fight.resources[fight.mana_regen_not_casting].events
+            + fight.resources[fight.mana_regen_casting].events;
+        assert!(ticks > 0, "native scheduled regen vanished in idle recovery");
+        assert!(events_after > events_before, "real source mana events were skipped");
+        assert!(fight.player.mana > 0.0, "the retained actor did not regenerate");
+        assert_eq!(item_ticks, 0, "passive regen is not item consumption");
+        assert_eq!(item_gain, 0.0);
+        assert_eq!(fight.now, end, "the full paid rest clock must be charged");
+        assert_eq!(super::world_bridge::inprocess_moving_samples(), 0,
+            "stationary paid recovery must not fabricate walking");
+        super::world_bridge::stop_inprocess();
     }
 
     #[test]
