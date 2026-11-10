@@ -79,6 +79,16 @@ jobs:
           # not a guessed fraction of the kill-to-kill timeline. Across the
           # retained route, prior kill + charged recovery == next pull start.
           windows = r['windows']
+          # Use the paid native clock for one whole-route elapsed objective;
+          # recovery includes spatial walking/ACK time, not only idle ticks.
+          assert r['native_chain_combat_ns'] == sum(
+              w['native_combat_elapsed_ns'] for w in windows), r
+          assert r['native_chain_recovery_ns'] == sum(
+              w['native_passive_recovery_ns'] for w in windows), r
+          assert r['native_chain_elapsed_ns'] == (
+              r['native_chain_combat_ns'] + r['native_chain_recovery_ns']), r
+          assert r['native_chain_elapsed_ns'] == (
+              windows[-1]['native_kill_ns'] - windows[0]['native_pull_started_ns']), r
           assert all(w['native_combat_elapsed_ns'] > 0 and
                      w['native_pull_started_ns'] + w['native_combat_elapsed_ns']
                      == w['native_kill_ns'] for w in windows), r
@@ -146,6 +156,16 @@ jobs:
           # charged the chosen zero-rest policy and native spatial travel.
           assert r['paid_recovery'] is True, r
           windows = r['windows']
+          # Use the paid native clock for one whole-route elapsed objective;
+          # recovery includes spatial walking/ACK time, not only idle ticks.
+          assert r['native_chain_combat_ns'] == sum(
+              w['native_combat_elapsed_ns'] for w in windows), r
+          assert r['native_chain_recovery_ns'] == sum(
+              w['native_passive_recovery_ns'] for w in windows), r
+          assert r['native_chain_elapsed_ns'] == (
+              r['native_chain_combat_ns'] + r['native_chain_recovery_ns']), r
+          assert r['native_chain_elapsed_ns'] == (
+              windows[-1]['native_kill_ns'] - windows[0]['native_pull_started_ns']), r
           assert len(windows) == 8, r
           assert all(w['native_damage'] > 0 for w in windows), r
           import math
@@ -253,6 +273,16 @@ jobs:
           assert r['world_targets_killed'] == 100, r
           assert len(r['windows']) == 100, r
           windows = r['windows']
+          # Use the paid native clock for one whole-route elapsed objective;
+          # recovery includes spatial walking/ACK time, not only idle ticks.
+          assert r['native_chain_combat_ns'] == sum(
+              w['native_combat_elapsed_ns'] for w in windows), r
+          assert r['native_chain_recovery_ns'] == sum(
+              w['native_passive_recovery_ns'] for w in windows), r
+          assert r['native_chain_elapsed_ns'] == (
+              r['native_chain_combat_ns'] + r['native_chain_recovery_ns']), r
+          assert r['native_chain_elapsed_ns'] == (
+              windows[-1]['native_kill_ns'] - windows[0]['native_pull_started_ns']), r
           assert all(w['native_combat_elapsed_ns'] > 0 and
                      w['native_pull_started_ns'] + w['native_combat_elapsed_ns']
                      == w['native_kill_ns'] for w in windows), r
