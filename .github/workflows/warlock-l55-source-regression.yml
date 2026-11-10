@@ -47,7 +47,7 @@ jobs:
             --source fixtures/warlock-l20-troll-best-paid.request.json \
             --from-level 20 --to-level 21 --max-proposals 30 \
             --out warlock-l21-rating-probe
-      - name: Execute native balanced combat on the actual newly-spent L21 actor
+      - name: Execute native two-target retained-actor combat on actual L21 talent build
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -73,14 +73,21 @@ jobs:
                             "original_gear_items":len(actor["equipment"]["items"]),
                             "native_prepared_file":str(prepared)}),flush=True)
           PY
-          target/debug/forever-engine sim \
-            --infile warlock-l21-rating-probe/selected.prepared.json \
-            --rng-mode balanced \
-            --outfile warlock-l21-rating-probe/native-balanced-combat.json
+          # World-chain requests are owned by native-world-pulls, not sim:
+          # sim --infile deliberately refuses RUST_MULTI_WORLD_TARGETS_REQUIRES_GSIM.
+          # Execute two actual hostile targets with the same retained actor
+          # and source-native Decisions recovery, not an unsupported sim mode.
           target/debug/forever-engine native-world-pulls \
             --infile warlock-l21-rating-probe/selected.prepared.json \
-            --targets 2 --rng-mode balanced --recovery-seconds 0 \
+            --targets 2 --rng-mode balanced --recovery-policy decisions \
+            --health-threshold 0.7 --mana-threshold 0.25 \
             > warlock-l21-rating-probe/native-two-target-world.json
+          python3 - <<'PY'
+          import json, pathlib
+          p=pathlib.Path("warlock-l21-rating-probe/native-two-target-world.json")
+          result=json.loads(p.read_text())
+          print("REAL_L21_NATIVE_TWO_TARGET_RESULT",json.dumps(result)[:2500],flush=True)
+          PY
       - name: Save actual native L21 proposal, refusals and executable combat receipts
         if: always()
         uses: actions/upload-artifact@v4
