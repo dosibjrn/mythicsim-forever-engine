@@ -164,6 +164,48 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
 
 fn run() -> Result<(), Failure> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args == ["api"] {
+        // In-memory API for optimizer calls. No source/prepared JSON files and
+        // no comparison between raw JSON and canonical protobuf SHA domains.
+        use std::io::Read;
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).map_err(|e| e.to_string())?;
+        let request: serde_json::Value =
+            serde_json::from_slice(&input).map_err(|e| format!("invalid API request: {e}"))?;
+        let call = || -> Result<serde_json::Value, String> {
+            match request.get("op").and_then(serde_json::Value::as_str) {
+                Some("options") => {
+                    let class = request.get("class").and_then(serde_json::Value::as_str)
+                        .ok_or("options needs class")?;
+                    let level = request.get("level").and_then(serde_json::Value::as_u64)
+                        .and_then(|n| u8::try_from(n).ok())
+                        .filter(|n| (1..=60).contains(n))
+                        .ok_or("options needs level 1..60")?;
+                    let class = class.parse::<OptionsClass>()?;
+                    serde_json::to_value(get_options(level, class)?).map_err(|e| e.to_string())
+                }
+                Some("prepare") => {
+                    let source = request.get("request").ok_or("prepare needs request")?;
+                    let source = serde_json::to_vec(source).map_err(|e| e.to_string())?;
+                    let actor_level = request.get("actor_level")
+                        .and_then(serde_json::Value::as_i64)
+                        .and_then(|n| i32::try_from(n).ok());
+                    let prepared = std::panic::catch_unwind(|| {
+                        prepare_json_with_actor_level(&source, "rust", Rules::Forever, actor_level)
+                    }).map_err(|_| "native prepare panicked".to_owned())?
+                        .map_err(|e| e.to_string())?;
+                    serde_json::to_value(prepared).map_err(|e| e.to_string())
+                }
+                _ => Err("unsupported API op (expected options or prepare)".to_owned()),
+            }
+        };
+        let response = match call() {
+            Ok(value) => serde_json::json!({"ok": true, "result": value}),
+            Err(error) => serde_json::json!({"ok": false, "error": error}),
+        };
+        println!("{}", serde_json::to_string(&response).map_err(|e| e.to_string())?);
+        return Ok(());
+    }
     if args == ["version"] {
         println!(
             "forever-rust-prototype-{} source-{SOURCE_REVISION}",
@@ -376,7 +418,18 @@ fn run() -> Result<(), Failure> {
         if !(2..=100).contains(&target_count) {
             return Err("native-world-pulls requires --targets 2..100".into());
         }
-        let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
+        // '-' accepts one prepared-v2 JSON line on stdin, followed by the
+        // existing bidirectional live 2D world tick/ACK protocol.
+        let input = if args[2] == "-" {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+            if line.is_empty() {
+                return Err("native-world-pulls stdin needs prepared-v2 JSON line".into());
+            }
+            line.into_bytes()
+        } else {
+            fs::read(&args[2]).map_err(|err| err.to_string())?
+        };
         let prepared =
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
