@@ -246,7 +246,7 @@ fn has_level_dependent_rating_stats(stats: &Stats) -> bool {
 /// unification uses these exact Go unit constants regardless of actor level.
 /// For a lower-level actor, move those bonuses to explicit percent stats rather
 /// than applying max-level stat dependencies or refusing a real item.
-fn normalize_forever_hit_crit_item_percents(stats: &mut Stats, level: i32) {
+pub(crate) fn normalize_forever_hit_crit_item_percents(stats: &mut Stats, level: i32) {
     if level == constants::CHARACTER_LEVEL {
         return;
     }
