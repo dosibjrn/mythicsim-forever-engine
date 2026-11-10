@@ -531,13 +531,19 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     // Race-specific Troll values are projected from this engine's selected
     // Troll-minus-Orc racial deltas, as for the existing sourced L20 actor.
     // Keep L20 on its established, independently checked source path.
-    if class == "ClassWarlock" && race == "RaceTroll"
-        && (10..=59).contains(&level) && level != 20
-    {
+    if class == "ClassWarlock" && race == "RaceTroll" && (10..=59).contains(&level) && level != 20 {
         let (source_json, start, end) = if level <= 40 {
-            (include_str!("../../data/warlock-l10-l40-actor-source.json"), 10, 40)
+            (
+                include_str!("../../data/warlock-l10-l40-actor-source.json"),
+                10,
+                40,
+            )
         } else {
-            (include_str!("../../data/warlock-l41-l59-actor-source.json"), 41, 59)
+            (
+                include_str!("../../data/warlock-l41-l59-actor-source.json"),
+                41,
+                59,
+            )
         };
         let source: serde_json::Value = serde_json::from_str(source_json).ok()?;
         if source["class"].as_str()? != class || source["race"].as_str()? != race
@@ -556,8 +562,7 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
             ("intellect", Stat::Intellect),
             ("spirit", Stat::Spirit),
         ] {
-            troll[stat] = row["reference_orc_primary"][key].as_f64()?
-                + troll[stat] - orc[stat];
+            troll[stat] = row["reference_orc_primary"][key].as_f64()? + troll[stat] - orc[stat];
         }
         troll[Stat::Health] = row["class_base"]["health"].as_f64()?;
         troll[Stat::Mana] = row["class_base"]["mana"].as_f64()?;
@@ -1537,9 +1542,18 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(actor[Stat::Spirit], 47.0);
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 19).is_some());
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 9).is_none());
-        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).unwrap()[Stat::Health], 663.0);
-        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 55).unwrap()[Stat::Health], 1184.0);
-        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 55).unwrap()[Stat::Mana], 1268.0);
+        assert_eq!(
+            base_stats_at_level("ClassWarlock", "RaceTroll", 41).unwrap()[Stat::Health],
+            663.0
+        );
+        assert_eq!(
+            base_stats_at_level("ClassWarlock", "RaceTroll", 55).unwrap()[Stat::Health],
+            1184.0
+        );
+        assert_eq!(
+            base_stats_at_level("ClassWarlock", "RaceTroll", 55).unwrap()[Stat::Mana],
+            1268.0
+        );
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 60).is_some());
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 9).is_none());
         assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 20).is_none());
@@ -1552,51 +1566,74 @@ mod warlock_l20_actor_source_tests {
 
     #[test]
     fn troll_warlock_l10_to_l40_uses_all_source_rows_without_l60_substitution() {
-        let source: serde_json::Value = serde_json::from_str(include_str!(
-            "../../data/warlock-l10-l40-actor-source.json"
-        )).unwrap();
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/warlock-l10-l40-actor-source.json"))
+                .unwrap();
         let rows = source["levels"].as_object().unwrap();
         assert_eq!(rows.len(), 31);
         for level in 10..=40 {
             let actor = base_stats_at_level("ClassWarlock", "RaceTroll", level)
                 .unwrap_or_else(|| panic!("missing native level {level}"));
             let row = &source["levels"][level.to_string()];
-            assert_eq!(actor[Stat::Health], row["class_base"]["health"].as_f64().unwrap());
-            assert_eq!(actor[Stat::Mana], row["class_base"]["mana"].as_f64().unwrap());
+            assert_eq!(
+                actor[Stat::Health],
+                row["class_base"]["health"].as_f64().unwrap()
+            );
+            assert_eq!(
+                actor[Stat::Mana],
+                row["class_base"]["mana"].as_f64().unwrap()
+            );
             assert!(actor[Stat::Stamina] > 0.0);
             assert!(actor[Stat::Intellect] > 0.0);
             let player = Message::from_json_text(
-                "proto.Player", r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
-            ).unwrap();
+                "proto.Player",
+                r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+            )
+            .unwrap();
             assert_eq!(requested_player_level(&player, Some(level)).unwrap(), level);
         }
-        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 10).unwrap()[Stat::Health], 108.0);
-        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 21).unwrap()[Stat::Health], 223.0);
-        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 40).unwrap()[Stat::Mana], 923.0);
+        assert_eq!(
+            base_stats_at_level("ClassWarlock", "RaceTroll", 10).unwrap()[Stat::Health],
+            108.0
+        );
+        assert_eq!(
+            base_stats_at_level("ClassWarlock", "RaceTroll", 21).unwrap()[Stat::Health],
+            223.0
+        );
+        assert_eq!(
+            base_stats_at_level("ClassWarlock", "RaceTroll", 40).unwrap()[Stat::Mana],
+            923.0
+        );
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_some());
     }
 
     #[test]
     fn troll_warlock_l41_to_l59_uses_exact_source_rows() {
-        let source: serde_json::Value = serde_json::from_str(include_str!(
-            "../../data/warlock-l41-l59-actor-source.json"
-        )).unwrap();
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/warlock-l41-l59-actor-source.json"))
+                .unwrap();
         let rows = source["levels"].as_object().unwrap();
         assert_eq!(rows.len(), 19);
         for level in 41..=59 {
             let row = &source["levels"][level.to_string()];
             let actor = base_stats_at_level("ClassWarlock", "RaceTroll", level)
                 .unwrap_or_else(|| panic!("missing native level {level}"));
-            assert_eq!(actor[Stat::Health], row["class_base"]["health"].as_f64().unwrap());
-            assert_eq!(actor[Stat::Mana], row["class_base"]["mana"].as_f64().unwrap());
+            assert_eq!(
+                actor[Stat::Health],
+                row["class_base"]["health"].as_f64().unwrap()
+            );
+            assert_eq!(
+                actor[Stat::Mana],
+                row["class_base"]["mana"].as_f64().unwrap()
+            );
             assert!(actor[Stat::Intellect] > 0.0);
             let player = Message::from_json_text(
-                "proto.Player", r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
-            ).unwrap();
+                "proto.Player",
+                r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+            )
+            .unwrap();
             assert_eq!(requested_player_level(&player, Some(level)).unwrap(), level);
         }
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 9).is_none());
     }
-
-
 }
