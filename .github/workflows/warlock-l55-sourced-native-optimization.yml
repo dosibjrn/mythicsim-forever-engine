@@ -1,13 +1,8 @@
 name: Warlock L55 native sourced gear talents APL optimization
+# This 100-target finalist optimization is an expensive exploratory run,
+# not a merge gate. Run it intentionally on a selected exact source revision;
+# source edits receive the fast Rust regression workflow instead.
 on:
-  push:
-    branches:
-      - work/warlock-l55-native-full-optimization-20261110
-    paths:
-      - data/warlock-l41-l59-actor-source.json
-      - src/prepare/character.rs
-      - src/engine/coverage.rs
-      - .github/workflows/warlock-l55-sourced-native-optimization.yml
   workflow_dispatch:
 
 permissions:
