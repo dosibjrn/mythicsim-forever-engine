@@ -281,7 +281,7 @@ fn requested_player_level(player: &Message, actor_level: Option<i32>) -> Result<
     Err(Refusal::new(
         "level",
         format!(
-            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest/Rogue L20 and Druid L20/L30 for sourced Classic races, or Troll Warlock L10-L40)"
+            "player level {level} is unsupported: no source-backed native preparation for {race} {class} (supported: level 60, Priest/Rogue L20 and Druid L20/L30 for sourced Classic races, or Troll Warlock L10-L59)"
         ),
     ))
 }
@@ -519,19 +519,20 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     if level == constants::CHARACTER_LEVEL {
         return base_stats(class, race);
     }
-    // Pinned CMaNGOS class-level and Orc Warlock primary rows for L10-40.
-    // Race-specific Troll values are projected from this engine's selected
-    // Troll-minus-Orc racial deltas, as for the existing sourced L20 actor.
-    // Keep L20 on its established, independently checked source path.
+    // Pinned CMaNGOS class-level and Orc Warlock primary rows for L10-59.
+    // Preserve the separately sourced L20 actor and legacy L60 actor.
     if class == "ClassWarlock" && race == "RaceTroll"
-        && (10..=40).contains(&level) && level != 20
+        && (10..=59).contains(&level) && level != 20
     {
-        let source: serde_json::Value = serde_json::from_str(include_str!(
-            "../../data/warlock-l10-l40-actor-source.json"
-        )).ok()?;
+        let (source_text, first, last) = if level <= 40 {
+            (include_str!("../../data/warlock-l10-l40-actor-source.json"), 10, 40)
+        } else {
+            (include_str!("../../data/warlock-l41-l59-actor-source.json"), 41, 59)
+        };
+        let source: serde_json::Value = serde_json::from_str(source_text).ok()?;
         if source["class"].as_str()? != class || source["race"].as_str()? != race
-            || source["level_start"].as_i64()? != 10
-            || source["level_end"].as_i64()? != 40
+            || source["level_start"].as_i64()? != first
+            || source["level_end"].as_i64()? != last
         {
             return None;
         }
@@ -1455,7 +1456,7 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(requested_player_level(&player, Some(60)).unwrap(), 60);
         let unsupported = requested_player_level(&player, Some(9)).unwrap_err();
         assert_eq!(unsupported.code, "level");
-        assert!(unsupported.reason.contains("Troll Warlock L10-L40"));
+        assert!(unsupported.reason.contains("Troll Warlock L10-L59"));
 
         // The selected engine accepts a Rust-only embedded level. It must not
         // silently prepare a source L20 request at the legacy L60 default.
@@ -1514,7 +1515,7 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(actor[Stat::Spirit], 47.0);
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 19).is_some());
         assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 9).is_none());
-        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_some());
         assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 20).is_none());
         assert!(base_stats_at_level("ClassMage", "RaceTroll", 20).is_none());
         let old = base_stats("ClassWarlock", "RaceTroll").unwrap();
@@ -1546,7 +1547,46 @@ mod warlock_l20_actor_source_tests {
         assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 10).unwrap()[Stat::Health], 108.0);
         assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 21).unwrap()[Stat::Health], 223.0);
         assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 40).unwrap()[Stat::Mana], 923.0);
-        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).is_some());
+    }
+
+    #[test]
+    fn troll_warlock_l41_to_l59_uses_pinned_source_rows_without_l60_substitution() {
+        let source: serde_json::Value = serde_json::from_str(include_str!(
+            "../../data/warlock-l41-l59-actor-source.json"
+        )).unwrap();
+        let rows = source["levels"].as_object().unwrap();
+        assert_eq!(rows.len(), 19);
+        let troll_l60 = base_stats("ClassWarlock", "RaceTroll").unwrap();
+        let orc_l60 = base_stats("ClassWarlock", "RaceOrc").unwrap();
+        for level in 41..=59 {
+            let actor = base_stats_at_level("ClassWarlock", "RaceTroll", level)
+                .unwrap_or_else(|| panic!("missing native level {level}"));
+            let row = &source["levels"][level.to_string()];
+            assert_eq!(actor[Stat::Health], row["class_base"]["health"].as_f64().unwrap());
+            assert_eq!(actor[Stat::Mana], row["class_base"]["mana"].as_f64().unwrap());
+            for (key, stat) in [
+                ("strength", Stat::Strength),
+                ("agility", Stat::Agility),
+                ("stamina", Stat::Stamina),
+                ("intellect", Stat::Intellect),
+                ("spirit", Stat::Spirit),
+            ] {
+                let sourced_orc = row["reference_orc_primary"][key].as_f64().unwrap();
+                assert_eq!(actor[stat], sourced_orc + troll_l60[stat] - orc_l60[stat]);
+            }
+            let player = Message::from_json_text(
+                "proto.Player", r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+            ).unwrap();
+            assert_eq!(requested_player_level(&player, Some(level)).unwrap(), level);
+        }
+        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 41).unwrap()[Stat::Health], 663.0);
+        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 59).unwrap()[Stat::Mana], 1352.0);
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 9).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceTroll", 61).is_none());
+        assert!(base_stats_at_level("ClassWarlock", "RaceOrc", 41).is_none());
+        assert_eq!(base_stats_at_level("ClassWarlock", "RaceTroll", 60).unwrap()[Stat::Health],
+                   troll_l60[Stat::Health]);
     }
 
 }

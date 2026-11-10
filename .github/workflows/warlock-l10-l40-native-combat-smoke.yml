@@ -1,9 +1,11 @@
-name: Warlock L10-40 real native combat per-level source sweep
+name: Warlock L10-59 real native combat per-level source sweep
 on:
   push:
     branches: [work/warlock-10-40-sourced-native-20261109]
     paths:
       - src/classes/warlock/prepare/export.rs
+      - src/prepare/character.rs
+      - data/warlock-l41-l59-actor-source.json
       - .github/workflows/warlock-l10-l40-native-combat-smoke.yml
   workflow_dispatch:
 
@@ -16,19 +18,21 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Verify pinned native source extension
+        run: cargo test --locked troll_warlock_l41_to_l59_uses_pinned_source_rows_without_l60_substitution -- --nocapture
       - name: Compile actual selected Rust engine
         run: cargo build --locked --bin forever-engine
-      - name: Run separate real balanced native Warlock combat L10 through L40
+      - name: Run separate real balanced native Warlock combat L10 through L59
         run: |
-          mkdir -p warlock-native-combat-l10-l40
+          mkdir -p warlock-native-combat-l10-l59
           python3 - <<'PY'
           import copy, json, math, subprocess
           from pathlib import Path
 
-          root = Path("warlock-native-combat-l10-l40")
+          root = Path("warlock-native-combat-l10-l59")
           src = json.loads(Path("fixtures/warlock-l20-troll-native.request.json").read_text())
           rows = []
-          for level in range(10, 41):
+          for level in range(10, 60):
               request = copy.deepcopy(src)
               actor = request["raid"]["parties"][0]["players"][0]
               actor.pop("level", None)
@@ -81,9 +85,9 @@ jobs:
               print("REAL_RUST_WARLOCK_LEVEL_COMBAT", json.dumps(row, sort_keys=True),
                     flush=True)
           report = {
-              "kind": "31_independent_source_native_balanced_combat_sweeps",
+              "kind": "50_independent_source_native_balanced_combat_sweeps",
               "class": "ClassWarlock", "race": "RaceTroll",
-              "levels": [10, 40],
+              "levels": [10, 59],
               "continuous_leveling_route_executed": False,
               "mob_chain_count": 0,
               "prepared": sum(r["prepared"] and r.get("native_level") == r["level"]
@@ -92,17 +96,17 @@ jobs:
               "results": rows
           }
           (root / "summary.json").write_text(json.dumps(report, indent=2)+"\n")
-          print("REAL_NATIVE_WARLOCK_L10_40_SWEEP", json.dumps({
+          print("REAL_NATIVE_WARLOCK_L10_59_SWEEP", json.dumps({
               k: report[k] for k in ("prepared", "native_combat_completed",
                                      "continuous_leveling_route_executed")}), flush=True)
-          assert report["native_combat_completed"] == 31, (
+          assert report["native_combat_completed"] == 50, (
               "Preserved all independent native refusals/results; inspect artifact")
           PY
       - name: Preserve actual source requests, native results and refusals
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: warlock-l10-l40-real-native-combat-${{ github.run_id }}
-          path: warlock-native-combat-l10-l40/
+          name: warlock-l10-l59-real-native-combat-${{ github.run_id }}
+          path: warlock-native-combat-l10-l59/
           if-no-files-found: warn
           retention-days: 7

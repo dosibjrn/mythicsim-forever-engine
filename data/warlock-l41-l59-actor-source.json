@@ -1,0 +1,288 @@
+{
+  "schema_version": 1,
+  "class": "ClassWarlock",
+  "race": "RaceTroll",
+  "level_start": 41,
+  "level_end": 59,
+  "provenance": {
+    "provider": "cmangos/mangos-classic",
+    "commit": "8ec338a1704e7dcb1c0213eb7ed58f9231ade40f",
+    "class_base": {
+      "path": "sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql",
+      "class_id": 9,
+      "columns": [
+        "class",
+        "level",
+        "basehp",
+        "basemana"
+      ]
+    },
+    "reference_primary": {
+      "path": "sql/archive/0.8/4537_player_levelstats.sql",
+      "race_id": 2,
+      "class_id": 9,
+      "columns": [
+        "race",
+        "class",
+        "level",
+        "hp",
+        "mana",
+        "str",
+        "agi",
+        "sta",
+        "int",
+        "spi"
+      ]
+    }
+  },
+  "derivation": "Troll Warlock primary stats = same-level sourced Orc Warlock primary + selected native Troll-minus-Orc level-60 racial deltas. Health/mana are same-level class base resources. This is a transparent racial projection, NOT a direct Troll Classic row, and does not certify other mechanics or leveling.",
+  "levels": {
+    "41": {
+      "class_base": {
+        "health": 663,
+        "mana": 944
+      },
+      "reference_orc_primary": {
+        "strength": 38,
+        "agility": 36,
+        "stamina": 50,
+        "intellect": 76,
+        "spirit": 80
+      }
+    },
+    "42": {
+      "class_base": {
+        "health": 693,
+        "mana": 965
+      },
+      "reference_orc_primary": {
+        "strength": 38,
+        "agility": 36,
+        "stamina": 51,
+        "intellect": 77,
+        "spirit": 82
+      }
+    },
+    "43": {
+      "class_base": {
+        "health": 724,
+        "mana": 1001
+      },
+      "reference_orc_primary": {
+        "strength": 39,
+        "agility": 37,
+        "stamina": 52,
+        "intellect": 79,
+        "spirit": 84
+      }
+    },
+    "44": {
+      "class_base": {
+        "health": 756,
+        "mana": 1022
+      },
+      "reference_orc_primary": {
+        "strength": 39,
+        "agility": 38,
+        "stamina": 53,
+        "intellect": 81,
+        "spirit": 85
+      }
+    },
+    "45": {
+      "class_base": {
+        "health": 799,
+        "mana": 1043
+      },
+      "reference_orc_primary": {
+        "strength": 40,
+        "agility": 38,
+        "stamina": 54,
+        "intellect": 83,
+        "spirit": 87
+      }
+    },
+    "46": {
+      "class_base": {
+        "health": 823,
+        "mana": 1064
+      },
+      "reference_orc_primary": {
+        "strength": 40,
+        "agility": 39,
+        "stamina": 55,
+        "intellect": 84,
+        "spirit": 89
+      }
+    },
+    "47": {
+      "class_base": {
+        "health": 868,
+        "mana": 1100
+      },
+      "reference_orc_primary": {
+        "strength": 41,
+        "agility": 39,
+        "stamina": 56,
+        "intellect": 86,
+        "spirit": 91
+      }
+    },
+    "48": {
+      "class_base": {
+        "health": 904,
+        "mana": 1121
+      },
+      "reference_orc_primary": {
+        "strength": 41,
+        "agility": 40,
+        "stamina": 56,
+        "intellect": 88,
+        "spirit": 92
+      }
+    },
+    "49": {
+      "class_base": {
+        "health": 941,
+        "mana": 1142
+      },
+      "reference_orc_primary": {
+        "strength": 42,
+        "agility": 41,
+        "stamina": 57,
+        "intellect": 90,
+        "spirit": 94
+      }
+    },
+    "50": {
+      "class_base": {
+        "health": 979,
+        "mana": 1163
+      },
+      "reference_orc_primary": {
+        "strength": 42,
+        "agility": 41,
+        "stamina": 58,
+        "intellect": 91,
+        "spirit": 96
+      }
+    },
+    "51": {
+      "class_base": {
+        "health": 1018,
+        "mana": 1184
+      },
+      "reference_orc_primary": {
+        "strength": 43,
+        "agility": 42,
+        "stamina": 59,
+        "intellect": 93,
+        "spirit": 98
+      }
+    },
+    "52": {
+      "class_base": {
+        "health": 1058,
+        "mana": 1205
+      },
+      "reference_orc_primary": {
+        "strength": 43,
+        "agility": 43,
+        "stamina": 60,
+        "intellect": 95,
+        "spirit": 99
+      }
+    },
+    "53": {
+      "class_base": {
+        "health": 1089,
+        "mana": 1226
+      },
+      "reference_orc_primary": {
+        "strength": 44,
+        "agility": 43,
+        "stamina": 61,
+        "intellect": 97,
+        "spirit": 101
+      }
+    },
+    "54": {
+      "class_base": {
+        "health": 1131,
+        "mana": 1247
+      },
+      "reference_orc_primary": {
+        "strength": 45,
+        "agility": 44,
+        "stamina": 62,
+        "intellect": 99,
+        "spirit": 103
+      }
+    },
+    "55": {
+      "class_base": {
+        "health": 1184,
+        "mana": 1268
+      },
+      "reference_orc_primary": {
+        "strength": 45,
+        "agility": 45,
+        "stamina": 63,
+        "intellect": 101,
+        "spirit": 105
+      }
+    },
+    "56": {
+      "class_base": {
+        "health": 1228,
+        "mana": 1289
+      },
+      "reference_orc_primary": {
+        "strength": 46,
+        "agility": 45,
+        "stamina": 64,
+        "intellect": 102,
+        "spirit": 107
+      }
+    },
+    "57": {
+      "class_base": {
+        "health": 1273,
+        "mana": 1310
+      },
+      "reference_orc_primary": {
+        "strength": 46,
+        "agility": 46,
+        "stamina": 65,
+        "intellect": 104,
+        "spirit": 109
+      }
+    },
+    "58": {
+      "class_base": {
+        "health": 1319,
+        "mana": 1331
+      },
+      "reference_orc_primary": {
+        "strength": 47,
+        "agility": 47,
+        "stamina": 66,
+        "intellect": 106,
+        "spirit": 110
+      }
+    },
+    "59": {
+      "class_base": {
+        "health": 1366,
+        "mana": 1352
+      },
+      "reference_orc_primary": {
+        "strength": 47,
+        "agility": 47,
+        "stamina": 67,
+        "intellect": 108,
+        "spirit": 112
+      }
+    }
+  }
+}
