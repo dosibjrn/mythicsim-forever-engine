@@ -79,7 +79,7 @@ impl Class {
     fn has_native_item_eligibility(self) -> bool {
         matches!(
             self,
-            Self::Priest | Self::Mage | Self::Shaman | Self::Paladin | Self::Rogue | Self::Druid
+            Self::Priest | Self::Mage | Self::Warlock | Self::Shaman | Self::Paladin | Self::Rogue | Self::Druid
         )
     }
 }
@@ -417,6 +417,7 @@ mod tests {
             Class::Paladin,
             Class::Rogue,
             Class::Druid,
+            Class::Warlock,
         ] {
             let result = get_options(20, class).unwrap();
             assert!(!result.items.is_empty(), "{}", class.as_str());
@@ -433,7 +434,7 @@ mod tests {
 
     #[test]
     fn other_classes_have_source_facts_but_no_invented_proficiencies() {
-        for class in [Class::Hunter, Class::Warlock, Class::Warrior] {
+        for class in [Class::Hunter, Class::Warrior] {
             let result = get_options(20, class).unwrap();
             assert!(!result.items.is_empty(), "{}", class.as_str());
             assert!(!result.coverage.item_eligibility_complete);

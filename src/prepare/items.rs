@@ -739,6 +739,7 @@ fn native_item_options_with_required_levels(
         "paladin" | "classpaladin" => Some(("paladin", "ClassPaladin")),
         "rogue" | "classrogue" => Some(("rogue", "ClassRogue")),
         "druid" | "classdruid" => Some(("druid", "ClassDruid")),
+        "warlock" | "classwarlock" => Some(("warlock", "ClassWarlock")),
         _ => None,
     };
     let canonical_slot = match slot_input.as_str() {
@@ -752,7 +753,7 @@ fn native_item_options_with_required_levels(
     let refusal = if normalized_class.is_none() {
         Some((
             "NATIVE_ITEM_OPTIONS_UNSUPPORTED_CLASS",
-            format!("native item-options currently supports priest, mage, shaman, paladin, rogue and druid, not {class}"),
+            format!("native item-options currently supports priest, mage, warlock, shaman, paladin, rogue and druid, not {class}"),
         ))
     } else if !(1..=60).contains(&level) {
         Some((
@@ -868,7 +869,7 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin" | "mage" | "rogue" | "druid") {
+            if matches!(class, "shaman" | "paladin" | "mage" | "warlock" | "rogue" | "druid") {
                 // These P3 consumers select from the pinned client-build ItemSparse
                 // universe. A MythicSim-only row absent from this source is not
                 // an unresolved RequiredLevel for a playable client item.
@@ -889,6 +890,15 @@ fn native_item_options_with_required_levels(
             continue;
         };
         let source_stats = stats_from_map(scaling, "stats");
+        // Forever equipment has direct percentage stats, not combat ratings.
+        // A single incompatible client item must not poison the remaining
+        // native choices at this level. Do not reinterpret a rating as %.
+        if Stat::ALL
+            .into_iter()
+            .any(|stat| stat.name().ends_with("Rating") && source_stats[stat] != 0.0)
+        {
+            continue;
+        }
         let mut stats = std::collections::BTreeMap::new();
         for stat in Stat::ALL {
             let value = source_stats[stat];
@@ -1631,6 +1641,20 @@ mod native_item_options_contract_tests {
                 && item.required_level <= 20
                 && item.required_level_origin == "client_ItemSparse.RequiredLevel"
         }));
+    }
+
+    #[test]
+    fn warlock_source_options_exclude_unsupported_ratings_at_native_boundary() {
+        for level in [20, 40, 60] {
+            let response = native_item_options("warlock", level, "unrestricted", "all");
+            assert_eq!(response.status, "ok", "{:?}", response.refusal);
+            assert!(response.required_level_supported);
+            assert!(response.items.iter().any(|item| item.slot == "chest"));
+            assert!(response.items.iter().all(|item| {
+                item.required_level <= level
+                    && item.stats.keys().all(|stat| !stat.ends_with("Rating"))
+            }));
+        }
     }
 
     #[test]
