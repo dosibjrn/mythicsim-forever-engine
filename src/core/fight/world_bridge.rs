@@ -133,10 +133,7 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
 /// must separately switch its *native* APL target to Side::Extra(0); this
 /// bridge does not synthesize an APL cast, a second mob or a world kill.
 /// A's current HP must come from a committed native-index-0 2D ACK.
-// The caller-facing World-APL scheduler is not wired yet. Do not claim a paid
-// overlap from this state transition alone; allow the admission primitive to
-// be compiled and exercised by its focused unit tests until the caller lands.
-#[allow(dead_code)]
+// Only source APL changeTarget can authorize this transition in production.
 pub(crate) fn begin_overlapping_target(
     at_ns: i64,
     health_fraction_at_most: f64,
@@ -152,7 +149,7 @@ pub(crate) fn begin_overlapping_target(
         if !bridge.pending.is_empty() {
             return Err("RUST_WORLD_UNACKNOWLEDGED_DAMAGE");
         }
-        if at_ns <= bridge.last_tick_ns || at_ns < 0 {
+        if at_ns < bridge.last_tick_ns || at_ns < 0 {
             return Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND");
         }
         if bridge.iteration != 0 || bridge.native_world_target_vitals.contains_key(&1) {
@@ -181,7 +178,9 @@ pub(crate) fn begin_overlapping_target(
         // Keep index 0 and its last ACKed HP; old-A DoT events still target 0.
         // Never reset sequence, previous_ack_id, pending native effects or
         // event_ordinal. B must bind a distinct world ID on its next damage.
-        bridge.next_tick_ns = at_ns;
+        // An APL changeTarget at the just-ACKed clock is valid; the next
+        // gsim tick must still be strictly later than the committed ACK.
+        bridge.next_tick_ns = at_ns.max(bridge.last_tick_ns.saturating_add(1_000_000));
         Ok(())
     })
 }
@@ -638,6 +637,25 @@ pub(crate) fn acknowledged_lethal() -> bool {
     })
 }
 
+/// An APL-selected overlapping pair has two distinct, genuinely bound world
+/// identities and two lethal gsim ACKs. A serial pull does not have both
+/// native slots in the same world ledger.
+pub(crate) fn acknowledged_overlapping_deaths() -> Option<(String, String)> {
+    BRIDGE.with(|state| {
+        let state = state.borrow();
+        let bridge = state.as_ref()?;
+        if bridge.iteration != 1 || !has_lethal_ack(bridge) || !bridge.pending.is_empty() {
+            return None;
+        }
+        let (a_id, a_hp, _) = bridge.native_world_target_vitals.get(&0)?;
+        let (b_id, b_hp, _) = bridge.native_world_target_vitals.get(&1)?;
+        if *a_hp != 0.0 || *b_hp != 0.0 || a_id == b_id || a_id.is_empty() || b_id.is_empty() {
+            return None;
+        }
+        Some((a_id.clone(), b_id.clone()))
+    })
+}
+
 fn assert_damage_acknowledgement(event_ids: &[String], accepted: &[Value]) {
     assert!(accepted.len() == event_ids.len()
         && accepted.iter().zip(event_ids.iter()).all(|(a, b)| a.as_str() == Some(b)),
@@ -748,6 +766,31 @@ mod world_overlap_acquisition_tests {
         });
         assert_eq!(begin_overlapping_target(200, 1.0),
             Err("RUST_WORLD_OVERLAP_FIRST_TARGET_ID_MISSING"));
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn apl_switch_at_exact_ack_clock_preserves_two_distinct_world_identities() {
+        acknowledged_first_target(45.0);
+        assert_eq!(begin_overlapping_target(100, 0.5), Ok(()));
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            assert_eq!(bridge.iteration, 1);
+            assert!(bridge.next_tick_ns > bridge.last_tick_ns);
+            assert_eq!(bridge.native_world_target_vitals.get(&0).unwrap().0, "real-world-A");
+            assert_eq!(super::acknowledged_overlapping_deaths(), None);
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".to_owned(), 0.0, 100.0));
+            bridge.last_health = Some(0.0);
+        });
+        assert_eq!(super::acknowledged_overlapping_deaths(), None);
+        BRIDGE.with(|slot| {
+            slot.borrow_mut().as_mut().unwrap()
+                .native_world_target_vitals.get_mut(&0).unwrap().1 = 0.0;
+        });
+        assert_eq!(super::acknowledged_overlapping_deaths(),
+            Some(("real-world-A".to_owned(), "real-world-B".to_owned())));
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
     }
 

@@ -2140,6 +2140,18 @@ impl<A: Agent> Fight<A> {
     /// Go `APLActionChangeTarget.Execute`: the player's current target moves to the target at
     /// `to`, and the rotation reads its units from the copy compiled for it.
     pub(crate) fn change_target(&mut self, to: usize) {
+        if super::world_bridge::enabled() && to != self.player_target {
+            // Source APL changeTarget, not the Python controller, selects B.
+            // Only the first real gsim-ACKed target at <=50% HP may acquire
+            // B; never reset A's DoTs, actor, pet, rotation or Fight clock.
+            // Unsupported reverse/third-target switches fail closed.
+            assert!(to < self.targets.len() && to < self.rotation_copies.len(),
+                "RUST_WORLD_OVERLAP_PREPARED_TARGET_MISSING");
+            assert!(self.player_target == 0 && to == 1,
+                "RUST_WORLD_OVERLAP_TARGET_SWITCH_UNSUPPORTED");
+            super::world_bridge::begin_overlapping_target(self.now, 0.5)
+                .unwrap_or_else(|reason| panic!("{reason}"));
+        }
         self.change_rotation_copy(to);
         self.log_change_target();
     }

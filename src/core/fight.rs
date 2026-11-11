@@ -5848,6 +5848,7 @@ impl<A: Agent> Fight<A> {
             None
         };
         let mut windows = Vec::with_capacity(target_count);
+        let mut completed_overlap_ids: Option<(String, String)> = None;
         // A resumed segment reports only its own deltas, not the lifetime
         // metrics already paid by earlier requests on this same native Fight.
         let mut previous_damage = if continued { self.encounter_damage_taken } else { 0.0 };
@@ -5904,6 +5905,13 @@ impl<A: Agent> Fight<A> {
                 self.begin_next_target_with_bridge(next_at, next_end, false)?;
             }
             while self.step() {}
+            let overlapping_deaths = world_bridge::acknowledged_overlapping_deaths();
+            // An early native APL changeTarget engages B inside the SAME
+            // Fight. Never count its two genuine deaths as one completed
+            // serial pull and then silently spawn a third target.
+            if overlapping_deaths.is_some() && (target_count != 2 || index != 0 || continued) {
+                return Err("RUST_WORLD_OVERLAP_REQUIRES_TWO_FRESH_TARGETS");
+            }
             if !world_bridge::acknowledged_lethal() {
                 return Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
             }
@@ -5949,6 +5957,10 @@ impl<A: Agent> Fight<A> {
                 "water_mana_gain": decisions_receipt.water_mana_gain,
                 "decisions_full_recovery": decisions_receipt.full_recovery,
             }));
+            if let Some(ids) = overlapping_deaths {
+                completed_overlap_ids = Some(ids);
+                break; // both separately ACKed targets died in this one native Fight
+            }
             previous_damage = total_damage;
             previous_health_damage = health_damage;
             previous_health_damage_events = health_damage_events;
@@ -6012,6 +6024,15 @@ impl<A: Agent> Fight<A> {
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
+            // In overlap mode windows[0] is one retained two-live Fight,
+            // not two invented serial kill windows. IDs are source/gsim ACKed.
+            "world_overlap": completed_overlap_ids.map(|(a_id, b_id)| serde_json::json!({
+                "source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true,
+                "native_world_target_indices": [0, 1],
+                "world_target_ids": [a_id, b_id],
+                "combined_native_fight_window": true
+            })),
             "continued_from_previous_native_segment": continued,
             "native_fight_retained_after_segment": retain_runtime,
             "terminal_recovery": terminal_recovery,
