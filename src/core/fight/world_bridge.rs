@@ -409,7 +409,7 @@ fn validate_overlap_selected_world_tick(bridge: &Bridge, tick: &Value) {
         assert!(bridge.iteration == switch.to_native_target_index
             && selected.is_some_and(|id| !id.is_empty()
                 && id != switch.prior_world_target_id)
-            && bound_b.map_or(true, |(id, _, _)| selected == Some(id.as_str())),
+            && bound_b.is_none_or(|(id, _, _)| selected == Some(id.as_str())),
             "RUST_WORLD_OVERLAP_SELECTED_WORLD_ID_INVALID");
     }
 }
@@ -758,9 +758,12 @@ fn has_lethal_ack(bridge: &Bridge) -> bool {
     // In an overlapping world the currently selected mob can die before the
     // previous mob's DoTs finish. Never finish the native Fight or permit slot
     // reuse from B's scalar lethal ACK while A is still alive. Both distinct
-    // source-ACKed world identities must have committed zero HP. The original
-    // serial scalar receipt remains valid when there is no multi-target ledger.
-    if bridge.native_world_target_vitals.contains_key(&1) {
+    // source-ACKed world identities must have committed zero HP. A source-APL
+    // switch is already an overlapping encounter even before B has its first
+    // native-slot-1 damage ACK; an empty B ledger must not pass as a serial
+    // selected-target kill. Unswitched serial scalar receipts remain valid.
+    if bridge.source_apl_world_switch.is_some()
+        || bridge.native_world_target_vitals.contains_key(&1) {
         return bridge.native_world_target_vitals.len() == 2
             && bridge.native_world_target_vitals.get(&0)
                 .is_some_and(|(_, health, _)| *health == 0.0)
@@ -946,6 +949,25 @@ mod world_overlap_acquisition_tests {
             assert_eq!(bridge.source_apl_world_switch.as_ref().unwrap().prior_world_ack_id,
                 "a".repeat(64));
         });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn selected_b_scalar_lethal_without_bound_b_does_not_end_joint_fight() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            // No native slot-1 / world-B damage ACK has been committed.
+            // A malformed selected-B scalar zero must not allow termination
+            // or a new serial pull, even if the original A subsequently dies.
+            bridge.last_health = Some(0.0);
+            assert!(!super::has_lethal_ack(bridge));
+            bridge.native_world_target_vitals.get_mut(&0).unwrap().1 = 0.0;
+            assert!(!super::has_lethal_ack(bridge));
+        });
+        assert!(!super::acknowledged_lethal());
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
     }
 
