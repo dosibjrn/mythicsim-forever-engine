@@ -246,16 +246,15 @@ fn native_api_prepare(
 fn native_api_world_operation<T, E: std::fmt::Display>(
     operation: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, NativeApiError> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).map_err(
-        |panic| {
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).map_err(|panic| {
             let reason = panic
                 .downcast_ref::<String>()
                 .cloned()
                 .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
                 .unwrap_or_else(|| "native world/ACK protocol panicked".to_owned());
             NativeApiError::new("native_world_protocol_panic", reason)
-        },
-    )?;
+        })?;
     result.map_err(|error| NativeApiError::new("native_world_refused", error.to_string()))
 }
 
@@ -424,7 +423,9 @@ mod native_optimizer_api_tests {
         })
         .unwrap_err();
         assert_eq!(refused.code, "native_world_protocol_panic");
-        assert!(refused.reason.contains("RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID"));
+        assert!(refused
+            .reason
+            .contains("RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID"));
 
         let refused = native_api_world_operation(|| -> Result<(), &str> {
             Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL")
