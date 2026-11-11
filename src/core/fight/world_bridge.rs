@@ -438,7 +438,10 @@ fn validate_native_target_damage_acks(
         let health_before = number(row, "world_target_health_before");
         let health_after = number(row, "world_target_health_after");
         let max_health = number(row, "world_target_max_health");
-        assert!(max_health > 0.0 && health_before > 0.0
+        // A retained old-target DoT may tick after gsim already ACKed that
+        // target dead. A zero-HP no-op is legal ONLY for that previously
+        // bound dead identity (enforced by validate_world_target_continuity).
+        assert!(max_health > 0.0 && health_before >= 0.0
             && health_before <= max_health && health_after >= 0.0
             && health_after <= max_health,
             "RUST_WORLD_MULTI_TARGET_ACK_HEALTH_INVALID");
@@ -483,6 +486,15 @@ fn validate_world_target_continuity(
         let before = number(row, "world_target_health_before");
         let after = number(row, "world_target_health_after");
         let maximum = number(row, "world_target_max_health");
+        if before == 0.0 {
+            // Do not let an unbound world target start life already dead.
+            // Zero is allowed only for an ACKed old mob whose DoTs have
+            // continued ticking while the second mob remains engaged.
+            assert!(known.get(&index).is_some_and(|(old_id, old_health, old_max)|
+                old_id == id && *old_health == 0.0
+                    && (*old_max - maximum).abs() < 1e-6),
+                "RUST_WORLD_MULTI_TARGET_ZERO_HP_NOT_PREVIOUSLY_ACKED");
+        }
         if let Some((old_id, old_health, old_max)) = known.get(&index) {
             assert!(old_id == id, "RUST_WORLD_MULTI_TARGET_WORLD_ID_CHANGED");
             assert!((old_health - before).abs() < 1e-6
@@ -819,6 +831,51 @@ mod native_multi_target_ack_ledger_tests {
         });
         validate_native_target_damage_acks(
             &[dot(0, 15.0)], &ack, 100.0, 100.0, 100.0);
+    }
+
+    #[test]
+    fn old_target_dot_after_its_acknowledged_death_is_an_id_bound_noop() {
+        // A native periodic effect is still scheduled for target A while B
+        // is alive. Gsim has previously ACKed A's death; the next source
+        // effect must not be laundered into B or revive the original mob.
+        let mut known = std::collections::BTreeMap::new();
+        let first = json!({"native_target_health_acks": [
+            {"native_target_index": 0, "world_target_id": "old-mob",
+             "world_target_health_before": 15.0, "world_target_health_after": 0.0,
+             "world_target_max_health": 100.0}
+        ]});
+        super::validate_world_target_continuity(&mut known, &first);
+        let ack = json!({
+            "selected_native_target_index": 1,
+            "native_target_health_acks": [
+                {"native_target_index": 0, "world_target_id": "old-mob",
+                 "world_target_health_before": 0.0, "world_target_health_after": 0.0,
+                 "world_target_max_health": 100.0}
+            ]
+        });
+        validate_native_target_damage_acks(
+            &[dot(0, 10.0)], &ack, 100.0, 100.0, 100.0);
+        super::validate_world_target_continuity(&mut known, &ack);
+        assert_eq!(known.get(&0).unwrap().1, 0.0);
+        assert_eq!(known.get(&0).unwrap().0, "old-mob");
+        assert!(!known.contains_key(&1));
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_ZERO_HP_NOT_PREVIOUSLY_ACKED")]
+    fn previously_unbound_dead_target_cannot_forge_a_lethal_receipt() {
+        let ack = json!({
+            "selected_native_target_index": 1,
+            "native_target_health_acks": [
+                {"native_target_index": 0, "world_target_id": "unbound-mob",
+                 "world_target_health_before": 0.0, "world_target_health_after": 0.0,
+                 "world_target_max_health": 100.0}
+            ]
+        });
+        validate_native_target_damage_acks(
+            &[dot(0, 10.0)], &ack, 100.0, 100.0, 100.0);
+        super::validate_world_target_continuity(
+            &mut std::collections::BTreeMap::new(), &ack);
     }
 
     #[test]
