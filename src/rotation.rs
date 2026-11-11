@@ -229,6 +229,8 @@ pub enum Value {
     CurrentManaPercent,
     /// Go `APLValueCurrentHealthPercent` of the player.
     CurrentHealthPercent,
+    /// Last causally ACKed 2D gsim current-target HP, not player HP.
+    WorldCurrentTargetHealthPercent,
     RemainingTimePercent,
     CurrentMana,
     /// `currentMana` with one of the player's pets, by its position among them, as its source
@@ -633,6 +635,7 @@ impl Value {
             Value::CurrentManaPercent
             | Value::PetCurrentManaPercent(_)
             | Value::CurrentHealthPercent
+            | Value::WorldCurrentTargetHealthPercent
             | Value::CurrentMana
             | Value::PetCurrentMana(_)
             | Value::RemainingTimePercent
@@ -2346,10 +2349,18 @@ fn parse_value(value: &Json) -> Result<Value, Vec<String>> {
                 },
             }
         }
-        // Without a source unit, the player itself.
+        // Omitted sourceUnit means player HP. A selected enemy needs a real
+        // world ACK: never infer its HP from the player's value or from DPS.
         "currentHealthPercent" => {
-            only(&[])?;
-            Ok(Value::CurrentHealthPercent)
+            only(&["sourceUnit"])?;
+            match config.get("sourceUnit") {
+                None => Ok(Value::CurrentHealthPercent),
+                Some(source) => match parse_value_unit_ref(Some(source), UnitRef::Player) {
+                    Ok(UnitRef::Player) => Ok(Value::CurrentHealthPercent),
+                    Ok(UnitRef::CurrentTarget) => Ok(Value::WorldCurrentTargetHealthPercent),
+                    _ => Err(vec![unsupported_unit(name, "sourceUnit", Some(source))]),
+                },
+            }
         }
         "remainingTime" => {
             only(&[])?;
@@ -3353,6 +3364,8 @@ pub enum Compiled<R> {
     CurrentManaPercent,
     /// Go `APLValueCurrentHealthPercent` of the player.
     CurrentHealthPercent,
+    /// Last causally ACKed 2D gsim current-target HP, not player HP.
+    WorldCurrentTargetHealthPercent,
     RemainingTimePercent,
     CurrentMana,
     /// The mana of a pet the fight simulates, by its place among the simulated pets.
@@ -3537,6 +3550,7 @@ impl<R> Compiled<R> {
             Compiled::CurrentManaPercent
             | Compiled::PetCurrentManaPercent(_)
             | Compiled::CurrentHealthPercent
+            | Compiled::WorldCurrentTargetHealthPercent
             | Compiled::CurrentMana
             | Compiled::PetCurrentMana(_)
             | Compiled::RemainingTimePercent
@@ -3877,6 +3891,7 @@ fn compile_value<R>(value: &Value, lookup: &Lookup<R>) -> Option<Compiled<R>> {
         Value::Const(constant) => Compiled::Const(constant.clone()),
         Value::CurrentManaPercent => Compiled::CurrentManaPercent,
         Value::CurrentHealthPercent => Compiled::CurrentHealthPercent,
+        Value::WorldCurrentTargetHealthPercent => Compiled::WorldCurrentTargetHealthPercent,
         Value::RemainingTimePercent => Compiled::RemainingTimePercent,
         Value::CurrentMana => Compiled::CurrentMana,
         // Go `newValueCurrentMana` on a pet: no value for a pet without a mana bar. A pet the
@@ -4409,6 +4424,23 @@ pub fn compile_condition<R>(condition: Option<&Value>, lookup: &Lookup<R>) -> Co
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_target_hp_uses_world_value_and_refuses_unacked_next_target() {
+        assert_eq!(
+            parse_value(&serde_json::json!({"currentHealthPercent": {}})),
+            Ok(Value::CurrentHealthPercent)
+        );
+        assert_eq!(
+            parse_value(&serde_json::json!({"currentHealthPercent": {
+                "sourceUnit": {"type": "CurrentTarget"}
+            }})),
+            Ok(Value::WorldCurrentTargetHealthPercent)
+        );
+        assert!(parse_value(&serde_json::json!({"currentHealthPercent": {
+            "sourceUnit": {"type": "NextTarget"}
+        }})).is_err());
+    }
 
     fn no_spell(_: &ActionId) -> Option<usize> {
         None
