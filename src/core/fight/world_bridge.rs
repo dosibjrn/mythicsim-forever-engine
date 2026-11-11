@@ -34,6 +34,8 @@ struct Bridge {
     last_health: Option<f64>,
     /// Maximum HP accompanying the same committed gsim target ACK.
     last_max_health: Option<f64>,
+    /// Sticky gsim target IDs and HP, learned only from validated world ACKs.
+    native_world_target_vitals: std::collections::BTreeMap<u32, (String, f64, f64)>,
     previous_ack_id: String,
     source_hash: String,
     event_ordinal: u64,
@@ -54,7 +56,7 @@ pub(crate) fn start(source_hash: &str) {
     assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
-        last_health: None, last_max_health: None, previous_ack_id: String::new(),
+        last_health: None, last_max_health: None, native_world_target_vitals: Default::default(), previous_ack_id: String::new(),
         source_hash: source_hash.to_owned(), event_ordinal: 0,
         pending: Vec::new(), iteration_finished: false,
     }));
@@ -85,6 +87,7 @@ pub(crate) fn begin_iteration(iteration: u32) {
         bridge.last_tick_ns = -1;
         bridge.last_health = None;
         bridge.last_max_health = None;
+        bridge.native_world_target_vitals.clear();
         bridge.previous_ack_id.clear();
         bridge.event_ordinal = 0;
         bridge.iteration_finished = false;
@@ -115,6 +118,7 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
             .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
         bridge.last_health = None; // new world target, not a healed old one
         bridge.last_max_health = None;
+        bridge.native_world_target_vitals.clear(); // serial slot reused for a different world ID
         bridge.next_tick_ns = at_ns;
         // Deliberately preserve sequence, previous_ack_id, last_tick_ns,
         // event_ordinal and source identity across targets.
@@ -133,7 +137,7 @@ mod persistent_next_target_world_lethal_ack_tests {
         // in production.
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(25.0), last_max_health: None,
+            last_tick_ns: 100, last_health: Some(25.0), last_max_health: None, native_world_target_vitals: Default::default(),
             previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
             event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
         }));
@@ -175,7 +179,7 @@ mod world_lethal_terminal_tests {
     fn world_lethal_terminal_requires_committed_native_world_ack() {
         BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(10.0), last_max_health: None,
+            last_tick_ns: 100, last_health: Some(10.0), last_max_health: None, native_world_target_vitals: Default::default(),
             previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
             event_ordinal: 1, pending: Vec::new(), iteration_finished: false,
         }));
@@ -372,6 +376,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     // an old target's DoT by subtracting its damage from a different mob.
     // Concurrent targets need separate gsim-produced, hash-bound HP ACKs.
     validate_native_target_damage_acks(&events, &ack, before_health, ack_before, ack_after);
+    validate_world_target_continuity(&mut bridge.native_world_target_vitals, &ack);
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
     bridge.last_health = Some(ack_after);
@@ -458,6 +463,38 @@ fn validate_native_target_damage_acks(
     }
     assert_eq!(seen.len(), damage_by_target.len(),
         "RUST_WORLD_MULTI_TARGET_ACK_INCOMPLETE");
+}
+
+/// Bind each native target slot to one real gsim world mob across subsequent
+/// committed ACKs. A different world ID, resurrected HP or changed max HP is
+/// not a continued DoT target, even if an isolated damage sum would balance.
+fn validate_world_target_continuity(
+    known: &mut std::collections::BTreeMap<u32, (String, f64, f64)>,
+    ack: &Value,
+) {
+    let Some(rows) = ack.get("native_target_health_acks") else {
+        assert!(known.is_empty(), "RUST_WORLD_MULTI_TARGET_LEDGER_DISAPPEARED");
+        return; // Existing serial target-0 wire contract has no world ID.
+    };
+    let rows = rows.as_array().expect("RUST_WORLD_MULTI_TARGET_ACK_MISSING");
+    for row in rows {
+        let index = row["native_target_index"].as_u64()
+            .expect("RUST_WORLD_MULTI_TARGET_ACK_INDEX_MISSING") as u32;
+        let id = string(row, "world_target_id");
+        let before = number(row, "world_target_health_before");
+        let after = number(row, "world_target_health_after");
+        let maximum = number(row, "world_target_max_health");
+        if let Some((old_id, old_health, old_max)) = known.get(&index) {
+            assert!(old_id == id, "RUST_WORLD_MULTI_TARGET_WORLD_ID_CHANGED");
+            assert!((old_health - before).abs() < 1e-6
+                && (old_max - maximum).abs() < 1e-6,
+                "RUST_WORLD_MULTI_TARGET_HP_NOT_CONTINUOUS");
+        }
+        assert!(known.iter().all(|(&other, (old_id, _, _))|
+                other == index || old_id != id),
+            "RUST_WORLD_MULTI_TARGET_WORLD_ID_REASSIGNED");
+        known.insert(index, (id.to_owned(), after, maximum));
+    }
 }
 
 fn has_lethal_ack(bridge: &Bridge) -> bool {
@@ -568,7 +605,7 @@ mod persistent_next_target_tests {
                 sequence: 4,
                 next_tick_ns: 130_000_000,
                 last_tick_ns: 120_000_000,
-                last_health: Some(0.0), last_max_health: None,
+                last_health: Some(0.0), last_max_health: None, native_world_target_vitals: Default::default(),
                 previous_ack_id: "a".repeat(64),
                 source_hash: "a".repeat(64),
                 event_ordinal: 3,
@@ -607,7 +644,7 @@ mod rolling_target_identity_tests {
             sequence: 1,
             next_tick_ns: 0,
             last_tick_ns: -1,
-            last_health: Some(100.0), last_max_health: None,
+            last_health: Some(100.0), last_max_health: None, native_world_target_vitals: Default::default(),
             previous_ack_id: "a".repeat(64),
             source_hash: "b".repeat(64),
             event_ordinal: 0,
@@ -759,6 +796,74 @@ mod native_multi_target_ack_ledger_tests {
 }
 
 #[cfg(test)]
+mod persistent_multi_world_identity_tests {
+    use super::validate_world_target_continuity;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn row(index: u32, id: &str, before: f64, after: f64) -> serde_json::Value {
+        json!({"native_target_index": index, "world_target_id": id,
+               "world_target_health_before": before,
+               "world_target_health_after": after, "world_target_max_health": 100.0})
+    }
+
+    #[test]
+    fn old_dead_mob_and_new_live_mob_keep_distinct_stable_world_vitals() {
+        let mut known = BTreeMap::new();
+        validate_world_target_continuity(&mut known, &json!({
+            "native_target_health_acks": [
+                row(0, "old-world-id", 15.0, 0.0),
+                row(1, "new-world-id", 100.0, 70.0)]
+        }));
+        validate_world_target_continuity(&mut known, &json!({
+            "native_target_health_acks": [row(1, "new-world-id", 70.0, 50.0)]
+        }));
+        assert_eq!(known.get(&0).unwrap().1, 0.0);
+        assert_eq!(known.get(&1).unwrap().1, 50.0);
+        assert_ne!(known.get(&0).unwrap().0, known.get(&1).unwrap().0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_WORLD_ID_CHANGED")]
+    fn one_native_index_cannot_rebind_to_another_world_mob() {
+        let mut known = BTreeMap::new();
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(0, "mob-a", 100.0, 50.0)]}));
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(0, "mob-b", 50.0, 25.0)]}));
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_WORLD_ID_REASSIGNED")]
+    fn a_world_mob_cannot_move_between_native_indices() {
+        let mut known = BTreeMap::new();
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(0, "mob-a", 100.0, 50.0)]}));
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(1, "mob-a", 100.0, 25.0)]}));
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_HP_NOT_CONTINUOUS")]
+    fn unchanged_world_id_cannot_reset_old_dot_target_hp() {
+        let mut known = BTreeMap::new();
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(0, "mob-a", 100.0, 50.0)]}));
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(0, "mob-a", 100.0, 25.0)]}));
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_LEDGER_DISAPPEARED")]
+    fn after_multi_target_world_id_is_learned_scalar_ack_is_not_enough() {
+        let mut known = BTreeMap::new();
+        validate_world_target_continuity(&mut known,
+            &json!({"native_target_health_acks": [row(0, "mob-a", 100.0, 50.0)]}));
+        validate_world_target_continuity(&mut known, &json!({}));
+    }
+}
+
+#[cfg(test)]
 mod acked_world_target_hp_tests {
     use super::{current_target_health_percent, begin_next_target, Bridge, BRIDGE};
 
@@ -767,7 +872,7 @@ mod acked_world_target_hp_tests {
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 2, next_tick_ns: 200,
             last_tick_ns: 100, last_health: Some(50.0),
-            last_max_health: Some(100.0), previous_ack_id: "a".repeat(64),
+            last_max_health: Some(100.0), native_world_target_vitals: Default::default(), previous_ack_id: "a".repeat(64),
             source_hash: "b".repeat(64), event_ordinal: 0,
             pending: Vec::new(), iteration_finished: false,
         }));
@@ -791,7 +896,7 @@ mod acked_world_target_hp_tests {
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 0, next_tick_ns: 0,
             last_tick_ns: -1, last_health: Some(50.0),
-            last_max_health: Some(100.0), previous_ack_id: "a".repeat(64),
+            last_max_health: Some(100.0), native_world_target_vitals: Default::default(), previous_ack_id: "a".repeat(64),
             source_hash: "b".repeat(64), event_ordinal: 0,
             pending: Vec::new(), iteration_finished: false,
         }));
@@ -844,7 +949,7 @@ mod iteration_teardown_tests {
             sequence: 1,
             next_tick_ns: 10,
             last_tick_ns: 5,
-            last_health: Some(100.0), last_max_health: None,
+            last_health: Some(100.0), last_max_health: None, native_world_target_vitals: Default::default(),
             previous_ack_id: "a".repeat(64),
             source_hash: "b".repeat(64),
             event_ordinal: 0,
