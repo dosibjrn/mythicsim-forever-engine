@@ -264,6 +264,31 @@ impl NativeApiSession {
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, NativeApiError> {
         match request.get("op").and_then(serde_json::Value::as_str) {
+            // Native source preparation is a snapshot, not a retained Fight.
+            // Expose this capability boundary so a level-range coordinator can
+            // distinguish a paid sampled fight from true continuous progression.
+            Some("state") => {
+                let prepared = self
+                    .prepared
+                    .as_ref()
+                    .ok_or("state needs a preceding prepare")?;
+                Ok(serde_json::json!({
+                    "kind": "source_prepared_actor",
+                    "actor_level": prepared.player.level,
+                    "actor_class": prepared.player.class,
+                    "source_sha256": prepared.request_sha256,
+                    "retained_combat_runtime": false,
+                    "retained_xp": false,
+                    "level_transition_supported": false
+                }))
+            }
+            // The current API retains PreparedV2 only. A request to cross a
+            // level boundary must never silently prepare a new actor and
+            // describe it as the old actor gaining XP or training.
+            Some("advance") => Err(NativeApiError::new(
+                "native_level_transition_unsupported",
+                "native API retains source preparation but not the post-combat actor, XP, training or cross-level world state",
+            )),
             Some("options") => {
                 let class = request
                     .get("class")
@@ -286,6 +311,22 @@ impl NativeApiSession {
                 Ok(value)
             }
             Some("evaluate") => {
+                // Evaluating the same PreparedV2 again is a fresh native Fight,
+                // not a continuation of the previous paid combat. Reject a
+                // continuous-route request before any new prepare/world work.
+                if let Some(continuation) = request.get("continue_from_previous") {
+                    match continuation.as_bool() {
+                        Some(false) => {}
+                        Some(true) => return Err(NativeApiError::new(
+                            "native_combat_continuation_unsupported",
+                            "evaluate recreates a native Fight from the source-prepared actor; no post-combat actor, XP or cooldown state is retained",
+                        )),
+                        None => return Err(NativeApiError::new(
+                            "invalid_api_request",
+                            "continue_from_previous must be a boolean",
+                        )),
+                    }
+                }
                 // Evaluate either the actor retained by a preceding prepare in
                 // this session, or prepare a new source inline in this call.
                 if request.get("request").is_some() {
@@ -344,10 +385,16 @@ impl NativeApiSession {
                     "engine": "forever-engine",
                     "source_sha256": prepared.request_sha256,
                     "result": report,
+                    "continuity": {
+                        "kind": "independent_source_prepared_fight",
+                        "post_combat_actor_retained": false,
+                        "xp_earned": null,
+                        "level_transition_supported": false
+                    },
                     "checkpoint_certified": false
                 }))
             }
-            _ => Err("unsupported API op (expected options, prepare or evaluate)".into()),
+            _ => Err("unsupported API op (expected options, prepare, state, evaluate or advance)".into()),
         }
     }
 }
@@ -487,6 +534,47 @@ mod native_optimizer_api_tests {
         assert!(refusal.reason.contains("prepared actor is level 60"));
         // A refused comparison must not mutate the source-prepared actor.
         assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
+    }
+
+    #[test]
+    fn native_session_exposes_prepared_state_but_refuses_unearned_level_continuity() {
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        let sha = prepared.request_sha256.clone();
+        let mut session = NativeApiSession { prepared: Some(prepared) };
+        let state = session.dispatch(&serde_json::json!({"op": "state"})).unwrap();
+        assert_eq!(state["kind"], "source_prepared_actor");
+        assert_eq!(state["actor_level"], 60);
+        assert_eq!(state["source_sha256"], sha);
+        assert_eq!(state["retained_combat_runtime"], false);
+        assert_eq!(state["retained_xp"], false);
+        assert_eq!(state["level_transition_supported"], false);
+
+        // The native engine has no XP/level-up source transition: never
+        // manufacture a successful 60->61 advancement or run a new fight.
+        let refusal = session.dispatch(&serde_json::json!({
+            "op": "advance", "from_level": 60, "to_level": 61
+        })).unwrap_err();
+        assert_eq!(refusal.code, "native_level_transition_unsupported");
+        assert!(refusal.reason.contains("post-combat actor"));
+
+        let continuation = session.dispatch(&serde_json::json!({
+            "op": "evaluate", "continue_from_previous": true,
+            "actor_level": 60, "targets": 2,
+            "rng_mode": "balanced", "recover_at_end": true
+        })).unwrap_err();
+        assert_eq!(continuation.code, "native_combat_continuation_unsupported");
+        assert!(continuation.reason.contains("recreates a native Fight"));
+
+        let invalid_flag = session.dispatch(&serde_json::json!({
+            "op": "evaluate", "continue_from_previous": "true"
+        })).unwrap_err();
+        assert_eq!(invalid_flag.code, "invalid_api_request");
+        assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
+        assert_eq!(session.prepared.as_ref().unwrap().request_sha256, sha);
     }
 
     #[test]
