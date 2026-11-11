@@ -399,9 +399,17 @@ fn string<'a>(value: &'a Value, key: &str) -> &'a str {
 fn validate_overlap_selected_world_tick(bridge: &Bridge, tick: &Value) {
     if let Some(switch) = bridge.source_apl_world_switch.as_ref() {
         let selected = tick["selected_target_id"].as_str();
+        // Before B's first damage ACK, gsim may select an as-yet unbound
+        // world ID. From the first committed slot-1 ACK onward, the actual
+        // gsim-selected identity must be THAT same mob, not merely any mob
+        // different from A. Check again after applying each ACK so even the
+        // first B binding is compared with its initiating 2D selection.
+        let bound_b = bridge.native_world_target_vitals
+            .get(&switch.to_native_target_index);
         assert!(bridge.iteration == switch.to_native_target_index
             && selected.is_some_and(|id| !id.is_empty()
-                && id != switch.prior_world_target_id),
+                && id != switch.prior_world_target_id)
+            && bound_b.map_or(true, |(id, _, _)| selected == Some(id.as_str())),
             "RUST_WORLD_OVERLAP_SELECTED_WORLD_ID_INVALID");
     }
 }
@@ -565,6 +573,10 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
             number(&ack, "world_target_max_health"),
         );
     }
+    // The committed per-index ACK may have bound B for the FIRST time.
+    // Recheck the selected 2D identity against that native slot before
+    // admitting its health/DoT receipt into the rolling-world evidence.
+    validate_overlap_selected_world_tick(&bridge, &tick);
     record_overlap_ack_evidence(&mut bridge, &events, &ack);
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
@@ -1101,6 +1113,39 @@ mod world_overlap_acquisition_tests {
             super::validate_overlap_selected_world_tick(
                 state.as_ref().unwrap(),
                 &serde_json::json!({"selected_target_id": "real-world-A"}));
+        });
+    }
+
+    #[test]
+    fn gsim_selected_b_must_equal_its_committed_native_slot_one_world_id() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            // The first ACK has just source-bound native B to real-world-B.
+            // Recheck this same tick after that ACK rather than trusting its
+            // merely distinct-from-A selected_target_id from before binding.
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".into(), 90.0, 100.0));
+            super::validate_overlap_selected_world_tick(
+                bridge, &serde_json::json!({"selected_target_id": "real-world-B"}));
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_OVERLAP_SELECTED_WORLD_ID_INVALID")]
+    fn gsim_selected_third_world_id_cannot_claim_bound_native_b_damage() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".into(), 90.0, 100.0));
+            super::validate_overlap_selected_world_tick(
+                bridge, &serde_json::json!({"selected_target_id": "wrong-world-C"}));
         });
     }
 
