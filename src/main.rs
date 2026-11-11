@@ -360,6 +360,27 @@ fn native_paid_world_snapshot(
     })
 }
 
+/// Commit the native Fight only if the requested World-APL has source proof.
+/// On refusal the candidate's owned Fight is dropped, never made resumable.
+fn native_api_finish_world_evaluation<T>(
+    mut report: serde_json::Value,
+    candidate_world: Option<T>,
+    world_apl: Option<serde_json::Value>,
+) -> Result<(serde_json::Value, Option<T>), NativeApiError> {
+    if let Some(policy) = world_apl {
+        if report["world_overlap"]["both_world_targets_lethal_ack"] != true
+            || report["world_overlap"]["source_apl_selected_b"] != true
+        {
+            return Err(NativeApiError::new(
+                "native_rolling_world_apl_not_applied",
+                "requested rolling World-APL did not produce both live-target lethal ACKs",
+            ));
+        }
+        report["applied_world_apl"] = policy;
+    }
+    Ok((report, candidate_world))
+}
+
 impl NativeApiSession {
     fn dispatch(
         &mut self,
@@ -571,24 +592,12 @@ impl NativeApiSession {
                         )
                     })?
                 };
-                let mut report = report;
-                if let Some(policy) = world_apl {
-                    // An API policy request is not an application receipt.
-                    // Only native source-ACKed A→B switching and both distinct
-                    // lethal world ACKs in a single Fight can produce the echo
-                    // that Forever's paid rolling evaluator requires.
-                    if report["world_overlap"]["both_world_targets_lethal_ack"] != true
-                        || report["world_overlap"]["source_apl_selected_b"] != true
-                    {
-                        return Err(NativeApiError::new(
-                            "native_rolling_world_apl_not_applied",
-                            "requested rolling World-APL did not produce both live-target lethal ACKs",
-                        ));
-                    }
-                    report["applied_world_apl"] = policy;
-                }
-                // A retained Fight is usable only after every requested
-                // source-applied policy has been checked against native ACKs.
+                // No requested World-APL is accepted from the input alone.
+                // The retained native Fight must not escape on a refused echo.
+                let (report, verified_retained_world) =
+                    native_api_finish_world_evaluation(
+                        report, verified_retained_world, world_apl,
+                    )?;
                 self.retained_world = verified_retained_world;
                 self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report, retain));
                 Ok(serde_json::json!({
@@ -643,6 +652,47 @@ fn run_native_api() -> Result<(), Failure> {
 #[cfg(test)]
 mod native_optimizer_api_tests {
     use super::{NativeApiError, NativeApiSession, PrepareError};
+
+    #[test]
+    fn rejected_rolling_receipt_drops_unverified_retained_fight() {
+        use std::{cell::Cell, rc::Rc};
+        struct TrackedWorld(Rc<Cell<bool>>);
+        impl Drop for TrackedWorld {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let dropped = Rc::new(Cell::new(false));
+        let policy = serde_json::json!({
+            "pull_mode": "rolling",
+            "switch_trigger": {
+                "type": "current_target_hp_fraction_at_most", "fraction": 0.5
+            },
+            "max_live_targets": 2
+        });
+        // A source result that never actually acquired/ACKed both mobs must
+        // not expose the API echo or retain a Fight for the next evaluation.
+        let refused = super::native_api_finish_world_evaluation(
+            serde_json::json!({"world_overlap": null}),
+            Some(TrackedWorld(dropped.clone())),
+            Some(policy.clone()),
+        );
+        assert_eq!(refused.err().unwrap().code, "native_rolling_world_apl_not_applied");
+        assert!(dropped.get());
+
+        // A source-ACKed positive report carries the same policy unchanged;
+        // this is a pure ownership/receipt contract test, not paid world proof.
+        let (report, kept) = super::native_api_finish_world_evaluation(
+            serde_json::json!({"world_overlap": {
+                "source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true
+            }}),
+            Some(7_u32),
+            Some(policy.clone()),
+        ).unwrap();
+        assert_eq!(report["applied_world_apl"], policy);
+        assert_eq!(kept, Some(7));
+    }
 
     #[test]
     fn world_apl_api_accepts_only_exact_source_executable_rolling_policy() {
