@@ -35,22 +35,23 @@ pub(super) enum Summon {
     Felhunter,
 }
 
-/// Native Warlock pet choices offered to build search. The four modeled
-/// summons are resolved against the pinned client spell rows, rather than
-/// advertising an unlearned L30 Felhunter to a sampled L20 actor.
-/// Source spell level is a necessary condition, not a trainer/quest certificate.
+/// Native Warlock pet choices from the pinned Forever beta 1.60.1.70170
+/// spellbook (Talents Forever export, 2026-10-03):
+/// https://questing.wiki/wow-forever/spells/warlock/
+///
+/// The generated combat-spell store omits some summon spell IDs, so querying
+/// spelldata::find(688) silently hides Imp from an otherwise usable L20 actor.
+/// These are source-advertised level thresholds, not a second trainer/quest
+/// acquisition validator. Rust prepare and world combat still judge execution.
 pub(crate) fn native_summons_at_level(level: u8) -> Vec<&'static str> {
     let mut choices = vec!["NoSummon"];
-    for (summon, spell_id) in [
-        (Summon::Imp, 688),
-        (Summon::Voidwalker, 697),
-        (Summon::Succubus, 712),
-        (Summon::Felhunter, 691),
+    for (summon, minimum_level) in [
+        (Summon::Imp, 1),         // Summon Imp, spell 688
+        (Summon::Voidwalker, 10), // Summon Voidwalker, spell 697
+        (Summon::Succubus, 20),   // Summon Succubus, spell 712
+        (Summon::Felhunter, 30),  // Summon Felhunter, spell 691
     ] {
-        let spell = crate::prepare::spelldata::find(spell_id);
-        if !spell.is_nil() && spell.spell_level > 0
-            && spell.spell_level <= i16::from(level)
-        {
+        if level >= minimum_level {
             choices.push(summon.name());
         }
     }
