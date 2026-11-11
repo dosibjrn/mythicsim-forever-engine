@@ -230,7 +230,11 @@ pub(crate) fn new_warlock(
     sim.unit_mut(unit)
         .sdm
         .add_stat_dependency(Stat::Strength, Stat::AttackPower, 1.0);
-    let crit_per_agi = sim.crit_per_agi_max_level(unit);
+    // The sourced Troll Warlock actor has a level-specific agility-to-crit
+    // conversion below L60. Do not bypass it with the Go L60 coefficient:
+    // this dependency is what actual prepared combat (not only actor options)
+    // uses for source-native level-range scoring.
+    let crit_per_agi = sim.crit_per_agi(unit);
     sim.unit_mut(unit).sdm.add_stat_dependency(
         Stat::Agility,
         Stat::PhysicalCritPercent,
@@ -417,5 +421,43 @@ impl PrepAgent for Warlock {
 
     fn custom_apl_action(&self, sim: &Sim, unit: UnitId, action: &Message) -> Option<bool> {
         self.custom_apl_action_impl(sim, unit, action)
+    }
+}
+
+
+#[cfg(test)]
+mod sourced_warlock_level_crit_tests {
+    use super::*;
+
+    #[test]
+    fn sourced_warlock_preparation_uses_level_appropriate_melee_crit() {
+        // Exercise the actual Warlock class constructor: a character-only
+        // coefficient test does not catch callers using the L60 helper.
+        let player = Message::from_json_text(
+            "proto.Player",
+            r#"{"class":"ClassWarlock","race":"RaceTroll","warlock":{"options":{"classOptions":{}}}}"#,
+        )
+        .unwrap();
+        for level in [20, 21, 35, 59, 60] {
+            let mut sim = Sim::new();
+            let actor = sim
+                .new_character_at_level(0, 0, &player, &[], Some(level))
+                .unwrap();
+            let sourced_coefficient = sim.crit_per_agi(actor);
+            let _warlock = new_warlock(&mut sim, actor, &player).unwrap();
+            let applied_coefficient = sim
+                .unit(actor)
+                .sdm
+                .stat_dependency_coeff(Stat::Agility, Stat::PhysicalCritPercent);
+            assert_eq!(
+                applied_coefficient, sourced_coefficient,
+                "Warlock melee crit must use actual actor level {level}"
+            );
+            if level < 60 {
+                assert_ne!(applied_coefficient, sim.crit_per_agi_max_level(actor));
+            } else {
+                assert_eq!(applied_coefficient, sim.crit_per_agi_max_level(actor));
+            }
+        }
     }
 }
