@@ -36,6 +36,108 @@ pub use engine::prepared::{
 };
 pub use engine::simulate;
 
+///// Install the requested rolling World-APL in the real prepared Warlock rotation.
+///
+/// This is a scenario/policy choice, not a replacement combat or source-data
+/// implementation. The canonical source actor and its request SHA are retained;
+/// source APL compilation, casts, DoTs, gsim ACKs and terminal recovery are
+/// still executed by the same native Fight. The first priority action observes
+/// the ACKed current-world-target HP, then uses the existing APL changeTarget
+/// mechanism to select native target slot 1. No other target can be acquired.
+pub fn native_rolling_world_apl_prepared(
+    prepared: &contracts::prepared_v2::PreparedV2,
+) -> Result<contracts::prepared_v2::PreparedV2, String> {
+    if prepared.player.class != "ClassWarlock" {
+        return Err("RUST_WORLD_APL_WARLOCK_ONLY".into());
+    }
+    if prepared.encounter.target_count > 2 {
+        return Err("RUST_WORLD_APL_REQUIRES_AT_MOST_TWO_PREPARED_TARGETS".into());
+    }
+    let existing = rotation::parse(&prepared.player.rotation)
+        .map_err(|reasons| reasons.join("; "))?;
+    if engine::coverage::rotation_changes_target(&existing) {
+        return Err("RUST_WORLD_APL_EXISTING_TARGET_SWITCH_CONFLICT".into());
+    }
+    let mut selected = prepared.clone();
+    let rotation = selected.player.rotation.as_object_mut()
+        .ok_or("RUST_WORLD_APL_ROTATION_NOT_OBJECT")?;
+    let priority = rotation.entry("priorityList").or_insert_with(|| serde_json::json!([]))
+        .as_array_mut().ok_or("RUST_WORLD_APL_PRIORITY_NOT_ARRAY")?;
+    priority.insert(0, serde_json::json!({
+        "action": {
+            "condition": {"cmp": {
+                "op": "OpLe",
+                "lhs": {"currentHealthPercent": {
+                    "sourceUnit": {"type": "CurrentTarget"}
+                }},
+                "rhs": {"const": {"val": "50%"}}
+            }},
+            "changeTarget": {"newTarget": {"type": "Target", "index": 1}}
+        }
+    }));
+    // Source compiles a separate per-target APL rotation and actual DoT slots
+    // only when the encounter declares more than one prepared target.
+    selected.encounter.target_count = 2;
+    let compiled = rotation::parse(&selected.player.rotation)
+        .map_err(|reasons| reasons.join("; "))?;
+    if !engine::coverage::rotation_changes_target(&compiled) {
+        return Err("RUST_WORLD_APL_CHANGE_TARGET_NOT_COMPILED".into());
+    }
+    Ok(selected)
+}
+
+#[cfg(test)]
+mod native_rolling_world_apl_tests {
+    use super::*;
+
+    fn warlock() -> contracts::prepared_v2::PreparedV2 {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/apl-warlock-assigned-agony.prepared.json"
+        ))).unwrap()
+    }
+
+    #[test]
+    fn rolling_api_binds_real_ack_health_condition_to_source_rotation() {
+        let original = warlock();
+        let original_rotation = original.player.rotation.clone();
+        let prepared = native_rolling_world_apl_prepared(&original).unwrap();
+        assert_eq!(original.player.rotation, original_rotation);
+        assert_eq!(prepared.request_sha256, original.request_sha256);
+        assert_eq!(prepared.encounter.target_count, 2);
+        let head = &prepared.player.rotation["priorityList"][0]["action"];
+        assert_eq!(head["condition"]["cmp"]["lhs"],
+            serde_json::json!({"currentHealthPercent": {
+                "sourceUnit": {"type": "CurrentTarget"}
+            }}));
+        assert_eq!(head["changeTarget"]["newTarget"],
+            serde_json::json!({"type": "Target", "index": 1}));
+        let parsed = rotation::parse(&prepared.player.rotation).unwrap();
+        assert!(engine::coverage::rotation_changes_target(&parsed));
+        assert!(matches!(parsed.priority_list[0].action,
+            rotation::Action::ChangeTarget(rotation::UnitRef::Target(1))));
+    }
+
+    #[test]
+    fn rolling_api_rejects_preexisting_target_switch_without_rewriting_source() {
+        let mut original = warlock();
+        let before = original.clone();
+        original.player.rotation["priorityList"][0]["action"] =
+            serde_json::json!({"changeTarget": {"newTarget": {"type": "Target", "index": 1}}});
+        assert_eq!(native_rolling_world_apl_prepared(&original).unwrap_err(),
+            "RUST_WORLD_APL_EXISTING_TARGET_SWITCH_CONFLICT");
+        assert_eq!(before.request_sha256, original.request_sha256);
+    }
+
+    #[test]
+    fn rolling_api_never_admits_three_prepared_targets() {
+        let mut original = warlock();
+        original.encounter.target_count = 3;
+        assert_eq!(native_rolling_world_apl_prepared(&original).unwrap_err(),
+            "RUST_WORLD_APL_REQUIRES_AT_MOST_TWO_PREPARED_TARGETS");
+    }
+}
+
 /// Retained native L20 Warlock combat across multiple paid gsim world/ACK
 /// requests within ONE Rust API process. The Rust Fight is private and owns
 /// all resources, cooldowns, randomness and simulation time. XP, training,
