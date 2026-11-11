@@ -376,6 +376,20 @@ fn native_api_finish_world_evaluation<T>(
                 "requested rolling World-APL did not produce both live-target lethal ACKs",
             ));
         }
+        if report["world_overlap"]["two_concurrently_live_world_targets_acked"] != true {
+            return Err(NativeApiError::new(
+                "native_rolling_two_live_targets_not_acked",
+                "no source/gsim ACK showed both distinct targets still alive after B engagement",
+            ));
+        }
+        if report["world_overlap"]["old_a_post_switch_dot_hp_acks"]
+            .as_u64().unwrap_or(0) == 0
+        {
+            return Err(NativeApiError::new(
+                "native_rolling_old_a_dot_not_acked",
+                "no post-switch native periodic A damage reduced ACKed old-world-A HP",
+            ));
+        }
         report["applied_world_apl"] = policy;
     }
     Ok((report, candidate_world))
@@ -688,7 +702,9 @@ mod native_optimizer_api_tests {
         let (report, kept) = super::native_api_finish_world_evaluation(
             serde_json::json!({"world_overlap": {
                 "source_apl_selected_b": true,
-                "both_world_targets_lethal_ack": true
+                "both_world_targets_lethal_ack": true,
+                "two_concurrently_live_world_targets_acked": true,
+                "old_a_post_switch_dot_hp_acks": 1
             }}),
             Some(7_u32),
             Some(policy.clone()),
@@ -696,6 +712,24 @@ mod native_optimizer_api_tests {
         .unwrap();
         assert_eq!(report["applied_world_apl"], policy);
         assert_eq!(kept, Some(7));
+        for (receipt, code) in [
+            (serde_json::json!({"source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true,
+                "two_concurrently_live_world_targets_acked": false,
+                "old_a_post_switch_dot_hp_acks": 1}),
+                "native_rolling_two_live_targets_not_acked"),
+            (serde_json::json!({"source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true,
+                "two_concurrently_live_world_targets_acked": true,
+                "old_a_post_switch_dot_hp_acks": 0}),
+                "native_rolling_old_a_dot_not_acked"),
+        ] {
+            let refusal = super::native_api_finish_world_evaluation(
+                serde_json::json!({"world_overlap": receipt}),
+                Some(8_u32), Some(policy.clone()),
+            ).unwrap_err();
+            assert_eq!(refusal.code, code);
+        }
     }
 
     #[test]

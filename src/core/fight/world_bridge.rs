@@ -53,6 +53,10 @@ struct Bridge {
     previous_ack_id: String,
     /// Populated only by source-ACK-validated APL changeTarget, never serial pulls.
     source_apl_world_switch: Option<SourceAplWorldSwitch>,
+    /// True only after gsim committed two different simultaneously living native slots.
+    observed_two_live_targets: bool,
+    /// ACK frames with a positive native periodic old-A tick and actual old-A HP loss.
+    old_a_post_switch_dot_acks: u64,
     source_hash: String,
     event_ordinal: u64,
     pending: Vec<DamageEvent>,
@@ -72,7 +76,7 @@ pub(crate) fn start(source_hash: &str) {
     assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
-        last_health: None, last_max_health: None, native_world_target_vitals: Default::default(), previous_ack_id: String::new(), source_apl_world_switch: None,
+        last_health: None, last_max_health: None, native_world_target_vitals: Default::default(), previous_ack_id: String::new(), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
         source_hash: source_hash.to_owned(), event_ordinal: 0,
         pending: Vec::new(), iteration_finished: false,
     }));
@@ -105,6 +109,8 @@ pub(crate) fn begin_iteration(iteration: u32) {
         bridge.last_max_health = None;
         bridge.native_world_target_vitals.clear();
         bridge.source_apl_world_switch = None;
+        bridge.observed_two_live_targets = false;
+        bridge.old_a_post_switch_dot_acks = 0;
         bridge.previous_ack_id.clear();
         bridge.event_ordinal = 0;
         bridge.iteration_finished = false;
@@ -136,6 +142,8 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         bridge.last_max_health = None;
         bridge.native_world_target_vitals.clear(); // serial slot reused for a different world ID
         bridge.source_apl_world_switch = None; // the next serial mob is not an APL switch
+        bridge.observed_two_live_targets = false;
+        bridge.old_a_post_switch_dot_acks = 0;
         bridge.next_tick_ns = at_ns;
         // Deliberately preserve sequence, previous_ack_id, last_tick_ns,
         // event_ordinal and source identity across targets.
@@ -232,7 +240,7 @@ mod persistent_next_target_world_lethal_ack_tests {
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 1, next_tick_ns: 200,
             last_tick_ns: 100, last_health: Some(25.0), last_max_health: None, native_world_target_vitals: Default::default(),
-            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, source_hash: "b".repeat(64),
+            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0, source_hash: "b".repeat(64),
             event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
         }));
         assert_eq!(begin_next_target(200),
@@ -274,7 +282,7 @@ mod world_lethal_terminal_tests {
         BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 1, next_tick_ns: 200,
             last_tick_ns: 100, last_health: Some(10.0), last_max_health: None, native_world_target_vitals: Default::default(),
-            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, source_hash: "b".repeat(64),
+            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0, source_hash: "b".repeat(64),
             event_ordinal: 1, pending: Vec::new(), iteration_finished: false,
         }));
         assert!(!acknowledged_lethal());
@@ -398,6 +406,35 @@ fn validate_overlap_selected_world_tick(bridge: &Bridge, tick: &Value) {
     }
 }
 
+/// Record concrete overlap evidence only after the entire gsim source-damage
+/// acknowledgement and per-world-ID HP continuity have been validated.
+/// Source switch intent or two later deaths are insufficient by themselves.
+fn record_overlap_ack_evidence(bridge: &mut Bridge, events: &[DamageEvent], ack: &Value) {
+    let Some(source_switch) = bridge.source_apl_world_switch.as_ref() else {
+        return;
+    };
+    let a_live = bridge.native_world_target_vitals.get(&0)
+        .is_some_and(|(_, hp, _)| *hp > 0.0);
+    let b_live = bridge.native_world_target_vitals.get(&1)
+        .is_some_and(|(_, hp, _)| *hp > 0.0);
+    bridge.observed_two_live_targets |= a_live && b_live;
+    let old_a_periodic = events.iter().any(|event| {
+        event.native_target_index == source_switch.from_native_target_index
+            && event.native_time_ns >= source_switch.switch_native_clock_ns
+            && event.periodic && event.landed && event.damage > 0.0
+    });
+    let old_a_hp_lost = ack["native_target_health_acks"].as_array()
+        .is_some_and(|rows| rows.iter().any(|row| {
+            row["native_target_index"].as_u64()
+                == Some(u64::from(source_switch.from_native_target_index))
+                && number(row, "world_target_health_before")
+                    > number(row, "world_target_health_after")
+        }));
+    if old_a_periodic && old_a_hp_lost {
+        bridge.old_a_post_switch_dot_acks += 1;
+    }
+}
+
 /// A matching iteration_index on the outer ACK is not enough: the selected
 /// damage-ACK's *native slot* must be B, with the multi-target ledger retained.
 /// Otherwise A's scalar HP could be misrepresented as B's selected HP.
@@ -500,6 +537,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     // Concurrent targets need separate gsim-produced, hash-bound HP ACKs.
     validate_native_target_damage_acks(&events, &ack, before_health, ack_before, ack_after);
     validate_world_target_continuity(&mut bridge.native_world_target_vitals, &ack);
+    record_overlap_ack_evidence(&mut bridge, &events, &ack);
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
     bridge.last_health = Some(ack_after);
@@ -702,6 +740,16 @@ pub(crate) fn acknowledged_lethal() -> bool {
     })
 }
 
+/// Evidence from one retained native Fight's already-committed gsim ACKs.
+/// A missing proof remains false/zero; it must not be inferred from a policy echo.
+pub(crate) fn overlap_ack_evidence() -> (bool, u64) {
+    BRIDGE.with(|state| {
+        let state = state.borrow();
+        let bridge = state.as_ref().expect("RUST_WORLD_NOT_STARTED");
+        (bridge.observed_two_live_targets, bridge.old_a_post_switch_dot_acks)
+    })
+}
+
 /// An APL-selected overlapping pair has two distinct, genuinely bound world
 /// identities and two lethal gsim ACKs. A serial pull does not have both
 /// native slots in the same world ledger.
@@ -789,9 +837,58 @@ mod world_overlap_acquisition_tests {
             iteration: 0, sequence: 3, next_tick_ns: 200, last_tick_ns: 100,
             last_health: Some(health), last_max_health: Some(100.0),
             native_world_target_vitals: vitals,
-            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, source_hash: "b".repeat(64),
+            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0, source_hash: "b".repeat(64),
             event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
         }));
+    }
+
+    #[test]
+    fn post_switch_old_a_dot_requires_real_hp_loss_and_concurrent_live_ack() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            let mut dot = super::DamageEvent {
+                event_id: "native-dot".into(),
+                native_time_ns: 201,
+                damage: 15.0,
+                source_action_id: "native-dot".into(),
+                rank: 1, landed: true, crit: false, periodic: true,
+                native_target_index: 0, native_target_unit_index: 0,
+                native_target_label: "A".into(),
+                native_caster_type: "player".into(), native_caster_unit_index: 0,
+                native_caster_label: "warlock".into(),
+            };
+            let real_old_a_ack = serde_json::json!({
+                "native_target_health_acks": [{
+                    "native_target_index": 0,
+                    "world_target_health_before": 45.0,
+                    "world_target_health_after": 30.0
+                }]
+            });
+            // A landed native DoT alone is not two engaged living targets.
+            super::record_overlap_ack_evidence(bridge, &[dot.clone()], &real_old_a_ack);
+            assert!(!bridge.observed_two_live_targets);
+            assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
+            // Only actual source/2D-bound B permits the concurrent-alive proof.
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".into(), 90.0, 100.0));
+            dot.periodic = false;
+            super::record_overlap_ack_evidence(bridge, &[dot.clone()], &real_old_a_ack);
+            assert!(bridge.observed_two_live_targets);
+            assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
+            dot.periodic = true;
+            super::record_overlap_ack_evidence(bridge, &[dot], &serde_json::json!({
+                "native_target_health_acks": [{
+                    "native_target_index": 0,
+                    "world_target_health_before": 30.0,
+                    "world_target_health_after": 30.0
+                }]
+            }));
+            assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
     }
 
     #[test]
@@ -994,7 +1091,7 @@ mod world_overlap_terminal_tests {
             last_health: Some(selected_health),
             last_max_health: Some(100.0),
             native_world_target_vitals: vitals,
-            previous_ack_id: "a".repeat(64), source_apl_world_switch: None,
+            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
             source_hash: "b".repeat(64),
             event_ordinal: 2,
             pending: Vec::new(),
@@ -1052,7 +1149,7 @@ mod persistent_next_target_tests {
                 next_tick_ns: 130_000_000,
                 last_tick_ns: 120_000_000,
                 last_health: Some(0.0), last_max_health: None, native_world_target_vitals: Default::default(),
-                previous_ack_id: "a".repeat(64), source_apl_world_switch: None,
+                previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
                 source_hash: "a".repeat(64),
                 event_ordinal: 3,
                 pending: Vec::new(),
@@ -1091,7 +1188,7 @@ mod rolling_target_identity_tests {
             next_tick_ns: 0,
             last_tick_ns: -1,
             last_health: Some(100.0), last_max_health: None, native_world_target_vitals: Default::default(),
-            previous_ack_id: "a".repeat(64), source_apl_world_switch: None,
+            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
             source_hash: "b".repeat(64),
             event_ordinal: 0,
             pending: Vec::new(),
@@ -1363,7 +1460,7 @@ mod acked_world_target_hp_tests {
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 2, next_tick_ns: 200,
             last_tick_ns: 100, last_health: Some(50.0),
-            last_max_health: Some(100.0), native_world_target_vitals: Default::default(), previous_ack_id: "a".repeat(64), source_apl_world_switch: None,
+            last_max_health: Some(100.0), native_world_target_vitals: Default::default(), previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
             source_hash: "b".repeat(64), event_ordinal: 0,
             pending: Vec::new(), iteration_finished: false,
         }));
@@ -1387,7 +1484,7 @@ mod acked_world_target_hp_tests {
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 0, next_tick_ns: 0,
             last_tick_ns: -1, last_health: Some(50.0),
-            last_max_health: Some(100.0), native_world_target_vitals: Default::default(), previous_ack_id: "a".repeat(64), source_apl_world_switch: None,
+            last_max_health: Some(100.0), native_world_target_vitals: Default::default(), previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
             source_hash: "b".repeat(64), event_ordinal: 0,
             pending: Vec::new(), iteration_finished: false,
         }));
@@ -1441,7 +1538,7 @@ mod iteration_teardown_tests {
             next_tick_ns: 10,
             last_tick_ns: 5,
             last_health: Some(100.0), last_max_health: None, native_world_target_vitals: Default::default(),
-            previous_ack_id: "a".repeat(64), source_apl_world_switch: None,
+            previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0,
             source_hash: "b".repeat(64),
             event_ordinal: 0,
             pending: Vec::new(),

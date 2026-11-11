@@ -6019,6 +6019,7 @@ impl<A: Agent> Fight<A> {
             }
             _ => None,
         };
+        let overlap_evidence = world_bridge::overlap_ack_evidence();
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
@@ -6031,6 +6032,8 @@ impl<A: Agent> Fight<A> {
                 "both_world_targets_lethal_ack": true,
                 "native_world_target_indices": [0, 1],
                 "world_target_ids": [a_id, b_id],
+                "two_concurrently_live_world_targets_acked": overlap_evidence.0,
+                "old_a_post_switch_dot_hp_acks": overlap_evidence.1,
                 "combined_native_fight_window": true
             })),
             "continued_from_previous_native_segment": continued,
