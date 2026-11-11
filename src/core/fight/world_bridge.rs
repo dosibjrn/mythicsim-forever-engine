@@ -757,10 +757,24 @@ pub(crate) fn acknowledged_overlapping_deaths() -> Option<(String, String)> {
     BRIDGE.with(|state| {
         let state = state.borrow();
         let bridge = state.as_ref()?;
-        if bridge.iteration != 1 || !has_lethal_ack(bridge) || !bridge.pending.is_empty() {
+        // Two zero-HP ledger rows alone do not prove a source-selected rolling
+        // pull. The same retained Fight must have the ACK-backed A→B APL
+        // transition, still bound to the first real world identity. In
+        // particular a serial/foreign multi-target receipt is not overlap.
+        let source_switch = bridge.source_apl_world_switch.as_ref()?;
+        if bridge.iteration != 1
+            || source_switch.from_native_target_index != 0
+            || source_switch.to_native_target_index != 1
+            || bridge.iteration != source_switch.to_native_target_index
+            || !has_lethal_ack(bridge)
+            || !bridge.pending.is_empty()
+        {
             return None;
         }
         let (a_id, a_hp, _) = bridge.native_world_target_vitals.get(&0)?;
+        if a_id != &source_switch.prior_world_target_id {
+            return None;
+        }
         let (b_id, b_hp, _) = bridge.native_world_target_vitals.get(&1)?;
         if *a_hp != 0.0 || *b_hp != 0.0 || a_id == b_id || a_id.is_empty() || b_id.is_empty() {
             return None;
@@ -1121,6 +1135,20 @@ mod world_overlap_terminal_tests {
             assert!(bridge.native_world_target_vitals.is_empty());
             assert_eq!(bridge.last_health, None);
         });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn two_dead_world_ids_without_source_apl_switch_are_not_rolling_evidence() {
+        set_overlap(0.0, 0.0);
+        BRIDGE.with(|slot| {
+            // A two-slot ACK ledger by itself can occur without a
+            // source-selected A→B pull. Both deaths remain valid facts,
+            // but cannot be labeled as rolling World-APL.
+            slot.borrow_mut().as_mut().unwrap().iteration = 1;
+        });
+        assert!(acknowledged_lethal());
+        assert_eq!(super::acknowledged_overlapping_deaths(), None);
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
     }
 
