@@ -789,8 +789,7 @@ mod native_optimizer_api_tests {
         actor["rotation"] = serde_json::json!({
             "type": "TypeAPL", "priorityList": []
         });
-        actor["warlock"]["options"]["classOptions"] =
-            serde_json::json!({"summon": "NoSummon"});
+        actor["warlock"]["options"]["classOptions"] = serde_json::json!({"summon": "NoSummon"});
         source["simOptions"]["iterations"] = serde_json::json!(1);
         let source_bytes = serde_json::to_vec(&source).unwrap();
         for level in [20, 40] {
