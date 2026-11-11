@@ -451,10 +451,15 @@ fn record_overlap_ack_evidence(
                 > number(row, "world_target_health_after")
     }));
     bridge.observed_two_live_targets |= a_still_live && b_hit_after_switch && b_hp_lost;
-    // Do not count a future-scheduled DoT as already ACKed at this clock.
-    let old_a_periodic = events.iter().any(|event| {
-        event.native_target_index == source_switch.from_native_target_index
-            && event.native_time_ns >= source_switch.switch_native_clock_ns
+    // A target-level HP row cannot attribute loss to a DoT when a direct
+    // old-A hit was also ACKed in the same batch. Do not report that
+    // ambiguous loss as proved periodic HP damage. The events still execute
+    // and remain acknowledged normally; this only guards the proof counter.
+    let old_a_effects: Vec<_> = events.iter()
+        .filter(|event| event.native_target_index == source_switch.from_native_target_index)
+        .collect();
+    let old_a_periodic_only = !old_a_effects.is_empty() && old_a_effects.iter().all(|event| {
+        event.native_time_ns >= source_switch.switch_native_clock_ns
             && event.native_time_ns <= ack_clock_ns
             && event.periodic && event.landed && event.damage > 0.0
     });
@@ -465,7 +470,7 @@ fn record_overlap_ack_evidence(
                 && number(row, "world_target_health_before")
                     > number(row, "world_target_health_after")
         }));
-    if old_a_periodic && old_a_hp_lost {
+    if old_a_periodic_only && old_a_hp_lost {
         bridge.old_a_post_switch_dot_acks += 1;
     }
 }
@@ -1082,6 +1087,48 @@ mod world_overlap_acquisition_tests {
                     "world_target_health_after": 30.0
                 }]
             }), 201);
+            assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn mixed_old_a_direct_and_dot_batch_cannot_prove_dot_hp_loss() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            let mut dot = source_b_hit(201, 15.0);
+            dot.native_target_index = 0;
+            dot.native_target_unit_index = 0;
+            dot.periodic = true;
+            let mut direct = source_b_hit(201, 10.0);
+            direct.native_target_index = 0;
+            direct.native_target_unit_index = 0;
+            direct.event_id = "native-a-direct".into();
+            direct.source_action_id = "native-a-direct".into();
+            let mixed_ack = serde_json::json!({
+                "native_target_health_acks": [{
+                    "native_target_index": 0,
+                    "world_target_health_before": 45.0,
+                    "world_target_health_after": 20.0
+                }]
+            });
+            // Both effects landed; the single old-A HP delta cannot prove
+            // which effect caused the loss or whether the DoT was overkill.
+            super::record_overlap_ack_evidence(
+                bridge, &[dot.clone(), direct], &mixed_ack, 201);
+            assert_eq!(bridge.old_a_post_switch_dot_acks, 0);
+
+            let dot_only_ack = serde_json::json!({
+                "native_target_health_acks": [{
+                    "native_target_index": 0,
+                    "world_target_health_before": 45.0,
+                    "world_target_health_after": 30.0
+                }]
+            });
+            super::record_overlap_ack_evidence(bridge, &[dot], &dot_only_ack, 201);
             assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
         });
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
