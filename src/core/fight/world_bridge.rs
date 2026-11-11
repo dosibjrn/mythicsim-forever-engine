@@ -215,6 +215,8 @@ pub(crate) struct DamageInput {
     pub(crate) crit: bool,
     pub(crate) landed: bool,
     pub(crate) periodic: bool,
+    /// The actual source-native target: Target=0, Extra(0)=1, etc.
+    pub(crate) target_index: u32,
     pub(crate) action: String,
     pub(crate) target_label: String,
     pub(crate) caster_type: &'static str,
@@ -238,6 +240,8 @@ pub(crate) fn record_damage(event: DamageInput) {
 fn append_damage_event(bridge: &mut Bridge, event: DamageInput) {
     assert!(!bridge.iteration_finished, "RUST_WORLD_DAMAGE_AFTER_FINISH");
     assert!(!has_lethal_ack(bridge), "RUST_WORLD_DAMAGE_AFTER_LETHAL_ACK");
+    assert!(event.target_index < super::MAX_TARGETS as u32,
+        "RUST_WORLD_DAMAGE_TARGET_OUT_OF_RANGE");
     bridge.event_ordinal += 1;
     bridge.pending.push(DamageEvent {
         event_id: format!("native-effect-{}", bridge.event_ordinal),
@@ -248,8 +252,8 @@ fn append_damage_event(bridge: &mut Bridge, event: DamageInput) {
         landed: event.landed,
         crit: event.crit,
         periodic: event.periodic,
-        native_target_index: 0,
-        native_target_unit_index: 0,
+        native_target_index: event.target_index,
+        native_target_unit_index: event.target_index,
         native_target_label: event.target_label,
         native_caster_type: event.caster_type.to_owned(),
         native_caster_unit_index: event.caster_index,
@@ -493,6 +497,69 @@ mod persistent_next_target_tests {
 }
 
 #[cfg(test)]
+mod rolling_target_identity_tests {
+    use super::{append_damage_event, Bridge, DamageInput};
+    use crate::core::fight::{Side, MAX_TARGETS};
+
+    fn empty_world() -> Bridge {
+        Bridge {
+            iteration: 0,
+            sequence: 1,
+            next_tick_ns: 0,
+            last_tick_ns: -1,
+            last_health: Some(100.0),
+            previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64),
+            event_ordinal: 0,
+            pending: Vec::new(),
+            iteration_finished: false,
+        }
+    }
+
+    fn native_dot(target_index: u32, action: &str) -> DamageInput {
+        DamageInput {
+            time_ns: 1_000_000,
+            damage: 10.0,
+            crit: false,
+            landed: true,
+            periodic: true,
+            target_index,
+            action: action.to_owned(),
+            target_label: format!("target-{target_index}"),
+            caster_type: "player",
+            caster_index: 0,
+            caster_label: "Warlock".to_owned(),
+        }
+    }
+
+    #[test]
+    fn overlapping_old_and_new_target_dots_keep_distinct_world_indices() {
+        let mut state = empty_world();
+        let first = Side::Target.target_position().unwrap() as u32;
+        let second = Side::Extra(0).target_position().unwrap() as u32;
+        assert_eq!((first, second), (0, 1));
+        append_damage_event(&mut state, native_dot(first, "Corruption first"));
+        append_damage_event(&mut state, native_dot(second, "Corruption second"));
+        assert_eq!(state.pending.len(), 2);
+        assert_eq!(state.pending[0].native_target_index, 0);
+        assert_eq!(state.pending[0].native_target_unit_index, 0);
+        assert_eq!(state.pending[1].native_target_index, 1);
+        assert_eq!(state.pending[1].native_target_unit_index, 1);
+        assert_ne!(state.pending[0].event_id, state.pending[1].event_id);
+        let wire = serde_json::to_value(&state.pending).unwrap();
+        assert_eq!(wire[0]["native_target_index"].as_u64(), Some(0));
+        assert_eq!(wire[1]["native_target_index"].as_u64(), Some(1));
+        assert_eq!(wire[1]["periodic"].as_bool(), Some(true));
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_TARGET_OUT_OF_RANGE")]
+    fn unprepared_target_index_is_not_silently_attributed_to_first_mob() {
+        append_damage_event(&mut empty_world(), native_dot(MAX_TARGETS as u32, "invalid"));
+    }
+}
+
+#[cfg(test)]
 mod disabled_bridge_tests {
     use super::{enabled, record_damage, DamageInput};
 
@@ -503,7 +570,7 @@ mod disabled_bridge_tests {
         }
         record_damage(DamageInput {
             time_ns: 0, damage: f64::NAN, crit: false, landed: false,
-            periodic: false, action: "disabled".to_owned(),
+            periodic: false, target_index: 0, action: "disabled".to_owned(),
             target_label: "target".to_owned(), caster_type: "player",
             caster_index: 0, caster_label: "Druid".to_owned(),
         });
@@ -545,7 +612,7 @@ mod iteration_teardown_tests {
                 bridge,
                 DamageInput {
                     time_ns: 10, damage: 5.0, crit: false, landed: true,
-                    periodic: false, action: "cleanup-proc".to_owned(),
+                    periodic: false, target_index: 0, action: "cleanup-proc".to_owned(),
                     target_label: "target".to_owned(), caster_type: "player",
                     caster_index: 0, caster_label: "Druid".to_owned(),
                 },
@@ -590,7 +657,7 @@ mod iteration_teardown_tests {
                 bridge,
                 DamageInput {
                     time_ns: 20, damage: 7.0, crit: false, landed: true,
-                    periodic: false, action: "combat-proc".to_owned(),
+                    periodic: false, target_index: 0, action: "combat-proc".to_owned(),
                     target_label: "target".to_owned(), caster_type: "player",
                     caster_index: 0, caster_label: "Druid".to_owned(),
                 },
@@ -617,7 +684,7 @@ mod iteration_teardown_tests {
             &mut state,
                 DamageInput {
                     time_ns: 10, damage: 5.0, crit: false, landed: true,
-                    periodic: false, action: "late-proc".to_owned(),
+                    periodic: false, target_index: 0, action: "late-proc".to_owned(),
                     target_label: "target".to_owned(), caster_type: "player",
                     caster_index: 0, caster_label: "Druid".to_owned(),
                 },
@@ -634,7 +701,7 @@ mod iteration_teardown_tests {
                 state.as_mut().unwrap(),
                 DamageInput {
                     time_ns: 10, damage: 5.0, crit: false, landed: true,
-                    periodic: false, action: "late-proc".to_owned(),
+                    periodic: false, target_index: 0, action: "late-proc".to_owned(),
                     target_label: "target".to_owned(), caster_type: "player",
                     caster_index: 0, caster_label: "Druid".to_owned(),
                 },

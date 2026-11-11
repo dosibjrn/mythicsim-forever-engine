@@ -5798,10 +5798,11 @@ impl<A: Agent> Fight<A> {
     /// This is same-level combat continuation; no XP or level transition exists.
     pub(crate) fn native_world_session_segment(
         &mut self, target_count: usize, continued: bool,
+        health_fraction: f64, mana_fraction: f64,
     ) -> Result<serde_json::Value, &'static str> {
         self.native_two_world_targets_with_strategy(
             target_count,
-            WorldRecoveryStrategy::Decisions { health_fraction: 1.0, mana_fraction: 1.0 },
+            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction },
             continued, true,
         )
     }
@@ -5961,13 +5962,12 @@ impl<A: Agent> Fight<A> {
             native_world_gap_paid(
                 window, matches!(strategy, WorldRecoveryStrategy::Decisions { .. }))
         });
-        // With the source-native Decisions 100%/100% policy the terminal
-        // horizon includes actual post-last-kill rest. Do not ask the external
-        // gsim peer for a next-target tick: the final target is dead and its
-        // lethal ACK is already committed. Do not create a free resource reset.
+        // Between-kill rest thresholds are search choices. Regardless of
+        // those thresholds, the final ACKed kill MUST be followed by charged
+        // native rest to BOTH full HP and mana. The killed target cannot be
+        // queried for another world tick and no free resource reset is allowed.
         let terminal_recovery = match strategy {
-            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction }
-                if health_fraction == 1.0 && mana_fraction == 1.0 => {
+            WorldRecoveryStrategy::Decisions { .. } => {
                 if !self.player.health.is_finite() || self.player.health <= 0.0
                     || !self.player.mana.is_finite()
                 {

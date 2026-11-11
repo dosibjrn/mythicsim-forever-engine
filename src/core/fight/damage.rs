@@ -1235,7 +1235,12 @@ impl<A: Agent> Fight<A> {
                 }
             }
         }
-        if result.target == Side::Target {
+        if result.target == Side::Target
+            || (super::world_bridge::enabled() && result.target.is_target())
+        {
+            // Outside a live 2D world, retain original primary-target DPS.
+            // In a rolling world, old-target DoTs also belong to the source
+            // encounter total and must be ACKed by their real target identity.
             self.encounter_damage_taken += result.damage;
             if result.damage > 0.0 {
                 // Pre-pull source hits are genuine target damage. Keep their
@@ -1255,6 +1260,8 @@ impl<A: Agent> Fight<A> {
                     crit: result.crit(),
                     landed: result.landed(),
                     periodic,
+                    target_index: result.target.target_position()
+                        .expect("RUST_WORLD_DAMAGE_MUST_TARGET_ENEMY") as u32,
                     action: format!("{:?}", self.spells[spell].id),
                     target_label: self.label_of(result.target),
                     caster_type,

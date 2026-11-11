@@ -300,6 +300,14 @@ mod tests {
     }
 
     #[test]
+    fn either_low_resource_triggers_rest_even_when_the_other_is_full() {
+        // An already-full resource cannot end a triggered food/water rest.
+        assert!(needs_full_recovery(1000.0, 1000.0, 299.0, 1000.0, 0.3, 0.3));
+        assert!(needs_full_recovery(299.0, 1000.0, 1000.0, 1000.0, 0.3, 0.3));
+        assert!(!needs_full_recovery(300.0, 1000.0, 300.0, 1000.0, 0.3, 0.3));
+    }
+
+    #[test]
     fn decisions_paid_gap_accepts_native_travel_without_inventing_regeneration() {
         let no_vendor = serde_json::json!({
             "native_passive_recovery_ns": 100_000_000,
