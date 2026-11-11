@@ -682,6 +682,39 @@ mod native_optimizer_api_tests {
     }
 
     #[test]
+    fn retained_world_rejects_non_warlock_before_any_native_payment() {
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+            last_paid_world: None,
+            retained_world: None,
+        };
+        let error = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "retain_native_actor": true,
+                "actor_level": 60, "targets": 2,
+                "rng_mode": "balanced", "recover_at_end": true,
+            }))
+            .unwrap_err();
+        assert_eq!(error.code, "native_retained_class_unsupported");
+        assert_eq!(
+            session.dispatch(&serde_json::json!({"op": "state"})).unwrap()
+                ["retained_combat_runtime"],
+            false
+        );
+        let invalid = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "retain_native_actor": "true",
+            }))
+            .unwrap_err();
+        assert_eq!(invalid.code, "invalid_api_request");
+    }
+
+    #[test]
     fn paid_world_snapshot_keeps_actual_terminal_receipt_without_claiming_continuity() {
         let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -702,6 +735,7 @@ mod native_optimizer_api_tests {
         let mut session = NativeApiSession {
             prepared: Some(prepared),
             last_paid_world: Some(snapshot),
+            retained_world: None,
         };
         let state = session
             .dispatch(&serde_json::json!({"op": "state"}))
