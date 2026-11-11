@@ -385,8 +385,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     ).unwrap_or(false);
     let before_health = number(&tick, "world_target_health_before");
     let max_health = number(&tick, "world_target_max_health");
-    assert!(before_health > 0.0 && before_health <= max_health,
-        "RUST_WORLD_HEALTH_INVALID");
+    validate_selected_world_health(&bridge, before_health, max_health);
     if let Some(last) = bridge.last_health {
         assert!((last - before_health).abs() < 1e-6, "RUST_WORLD_HEALTH_ACK_NOT_CONTINUOUS");
     }
@@ -442,6 +441,22 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     bridge.next_tick_ns = next_world_boundary_ns;
     BRIDGE.with(|state| *state.borrow_mut() = Some(bridge));
     (distance, front, moving)
+}
+
+/// The selected B may already be dead while an older source-ACKed A DoT
+/// remains active. Accept a zero-HP selected world only when its *own* native
+/// index and maximum HP were previously committed dead by gsim. A never-ACKed
+/// zero-HP selected mob is not a real engagement or an invented lethal kill.
+fn validate_selected_world_health(bridge: &Bridge, health: f64, maximum: f64) {
+    assert!(maximum.is_finite() && maximum > 0.0 && health.is_finite()
+        && health >= 0.0 && health <= maximum,
+        "RUST_WORLD_HEALTH_INVALID");
+    if health == 0.0 {
+        assert!(bridge.native_world_target_vitals.get(&bridge.iteration)
+            .is_some_and(|(_, previous, max)| *previous == 0.0
+                && (max - maximum).abs() < 1e-6),
+            "RUST_WORLD_SELECTED_DEAD_TARGET_UNACKNOWLEDGED");
+    }
 }
 
 /// A single-target ACK cannot certify damage to two distinct living enemies.
@@ -730,6 +745,36 @@ mod world_overlap_acquisition_tests {
         assert_eq!(begin_overlapping_target(200, 1.0),
             Err("RUST_WORLD_OVERLAP_FIRST_TARGET_ID_MISSING"));
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn old_a_dot_can_continue_after_selected_b_is_acknowledged_dead() {
+        acknowledged_first_target(30.0);
+        assert_eq!(begin_overlapping_target(200, 0.5), Ok(()));
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            // First B world tick/ACK has bound the distinct selected identity
+            // and committed lethal HP, but old A remains alive at 30 HP.
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".to_owned(), 0.0, 200.0));
+            bridge.last_health = Some(0.0);
+            super::validate_selected_world_health(bridge, 0.0, 200.0);
+            // A zero-health receipt cannot be used for another world index.
+            bridge.iteration = 2;
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_SELECTED_DEAD_TARGET_UNACKNOWLEDGED")]
+    fn a_new_world_target_cannot_arrive_predead() {
+        acknowledged_first_target(30.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            super::validate_selected_world_health(state.as_ref().unwrap(), 0.0, 200.0);
+        });
     }
 
     #[test]
