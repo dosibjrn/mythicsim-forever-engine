@@ -186,6 +186,28 @@ fn class_spells(level: u8, class: Class) -> Vec<SpellOption> {
     spells
 }
 
+/// Native Forever candidates cannot contain combat-rating stats. Direct
+/// Physical/Spell Hit/CritPercent stats remain percentages and are preserved.
+const COMBAT_RATING_NAMES: [&str; 11] = [
+    "MeleeHitRating",
+    "SpellHitRating",
+    "MeleeCritRating",
+    "SpellCritRating",
+    "MeleeHasteRating",
+    "SpellHasteRating",
+    "ExpertiseRating",
+    "DefenseRating",
+    "BlockRating",
+    "DodgeRating",
+    "ParryRating",
+];
+
+fn has_combat_rating_stats(stats: &BTreeMap<String, f64>) -> bool {
+    COMBAT_RATING_NAMES
+        .iter()
+        .any(|name| stats.get(*name).is_some_and(|value| *value != 0.0))
+}
+
 fn native_class_items(level: u8, class: Class) -> Result<(Vec<ItemOption>, String), String> {
     let options = native_item_options(class.as_str(), i32::from(level), "unrestricted", "all");
     if let Some(refusal) = options.refusal {
@@ -195,6 +217,7 @@ fn native_class_items(level: u8, class: Class) -> Result<(Vec<ItemOption>, Strin
     let mut items = options
         .items
         .into_iter()
+        .filter(|item| !has_combat_rating_stats(&item.stats))
         .map(|item| ItemOption {
             item_id: item.item_id,
             eligibility: "native_eligible",
@@ -267,6 +290,9 @@ fn unverified_class_items(level: u8, class: Class) -> Vec<ItemOption> {
                 (value != 0.0).then(|| (stat.name().to_owned(), value))
             })
             .collect();
+        if has_combat_rating_stats(&stats) {
+            continue;
+        }
         items.push(ItemOption {
             item_id: item.id,
             eligibility: "proficiency_unverified",
@@ -431,6 +457,41 @@ mod tests {
             })
         }));
         assert_eq!(crate::legacy_item_count(), 7913);
+    }
+
+    #[test]
+    fn forever_options_exclude_ratings_but_retain_explicit_percent_bonuses() {
+        let mut stats = BTreeMap::new();
+        stats.insert("SpellHitPercent".to_owned(), 2.0);
+        stats.insert("SpellCritPercent".to_owned(), 3.0);
+        assert!(!has_combat_rating_stats(&stats));
+        stats.insert("SpellHasteRating".to_owned(), 1.0);
+        assert!(has_combat_rating_stats(&stats));
+        stats.remove("SpellHasteRating");
+        stats.insert("SpellHitRating".to_owned(), 0.0);
+        assert!(!has_combat_rating_stats(&stats));
+        stats.insert("SpellHitRating".to_owned(), 2.0);
+        assert!(has_combat_rating_stats(&stats));
+
+        for level in [20, 40, 60] {
+            for class in [Class::Warlock, Class::Mage] {
+                let options = get_options(level, class).unwrap();
+                assert!(!options.items.is_empty(), "{} L{level}", class.as_str());
+                for candidate in &options.items {
+                    let stats = match (&candidate.native, &candidate.unverified) {
+                        (Some(native), None) => &native.stats,
+                        (None, Some(unverified)) => &unverified.stats,
+                        _ => panic!("item options must have exactly one source"),
+                    };
+                    assert!(
+                        !has_combat_rating_stats(stats),
+                        "{} L{level} item {} has rating stats",
+                        class.as_str(),
+                        candidate.item_id
+                    );
+                }
+            }
+        }
     }
 
     #[test]
