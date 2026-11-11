@@ -2231,6 +2231,16 @@ impl<A: Agent> Fight<A> {
     /// proof that it is not ready holds, is answered without asking; debug builds ask it anyway
     /// and check the answers agree.
     fn item_ready(&mut self, item: usize) -> Option<Ready> {
+        // The source-applied World-APL selects B only once. Once B is
+        // selected its current-world HP is not yet ACKed at the first tick;
+        // never re-evaluate the now-no-op switch's HP condition or mistake
+        // missing B vitals for permission to switch again.
+        if super::world_bridge::enabled()
+            && matches!(&self.rotation[item].action,
+                Act::ChangeTarget { to, .. } if *to == self.player_target)
+        {
+            return None;
+        }
         let asks_cost = self.rotation[item].asks_cost;
         if !A::CACHE_ROTATION {
             if let Act::Cast(spell, _) = self.rotation[item].action {
