@@ -869,7 +869,10 @@ fn native_item_options_with_required_levels(
             continue;
         }
         let Some(required_level) = required_levels.get(&item.id).copied() else {
-            if matches!(class, "shaman" | "paladin" | "mage" | "warlock" | "rogue" | "druid") {
+            if matches!(
+                class,
+                "shaman" | "paladin" | "mage" | "warlock" | "rogue" | "druid"
+            ) {
                 // These P3 consumers select from the pinned client-build ItemSparse
                 // universe. A MythicSim-only row absent from this source is not
                 // an unresolved RequiredLevel for a playable client item.
