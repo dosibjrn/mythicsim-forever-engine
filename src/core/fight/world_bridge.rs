@@ -413,11 +413,24 @@ fn record_overlap_ack_evidence(bridge: &mut Bridge, events: &[DamageEvent], ack:
     let Some(source_switch) = bridge.source_apl_world_switch.as_ref() else {
         return;
     };
-    let a_live = bridge.native_world_target_vitals.get(&0)
+    // The ledger has already applied this ACK. If the very first real
+    // native B hit kills B, its committed *after* HP is zero even though
+    // source/gsim observed A and B alive together immediately before it.
+    // Count the per-world-ID pre-damage vitals from this validated ACK, not
+    // merely both post-damage ledger values. This is not inferred from a
+    // policy echo, a prepared mob, or unACKed native damage.
+    let rows = ack["native_target_health_acks"].as_array();
+    let a_before = rows.and_then(|rows| rows.iter().find(|row|
+        row["native_target_index"].as_u64() == Some(0)))
+        .map(|row| number(row, "world_target_health_before") > 0.0)
+        .unwrap_or_else(|| bridge.native_world_target_vitals.get(&0)
+            .is_some_and(|(id, hp, _)| id == &source_switch.prior_world_target_id && *hp > 0.0));
+    let b_before = rows.is_some_and(|rows| rows.iter().any(|row|
+        row["native_target_index"].as_u64() == Some(1)
+            && number(row, "world_target_health_before") > 0.0));
+    let b_after = bridge.native_world_target_vitals.get(&1)
         .is_some_and(|(_, hp, _)| *hp > 0.0);
-    let b_live = bridge.native_world_target_vitals.get(&1)
-        .is_some_and(|(_, hp, _)| *hp > 0.0);
-    bridge.observed_two_live_targets |= a_live && b_live;
+    bridge.observed_two_live_targets |= a_before && (b_before || b_after);
     let old_a_periodic = events.iter().any(|event| {
         event.native_target_index == source_switch.from_native_target_index
             && event.native_time_ns >= source_switch.switch_native_clock_ns
@@ -901,6 +914,37 @@ mod world_overlap_acquisition_tests {
                 }]
             }));
             assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn first_native_b_hit_killing_b_still_proves_two_live_targets_before_damage() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            // These post-application vitals have already passed per-ID world
+            // continuity validation. The first B hit was lethal, so B's
+            // committed after-health is zero; A remained alive throughout.
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".into(), 0.0, 90.0));
+            let first_b_ack = serde_json::json!({
+                "native_target_health_acks": [{
+                    "native_target_index": 1,
+                    "world_target_health_before": 90.0,
+                    "world_target_health_after": 0.0
+                }]
+            });
+            super::record_overlap_ack_evidence(bridge, &[], &first_b_ack);
+            assert!(bridge.observed_two_live_targets);
+            // A later ACK after A died cannot manufacture the same proof
+            // from the old switch-time A health snapshot.
+            bridge.observed_two_live_targets = false;
+            bridge.native_world_target_vitals.get_mut(&0).unwrap().1 = 0.0;
+            super::record_overlap_ack_evidence(bridge, &[], &first_b_ack);
+            assert!(!bridge.observed_two_live_targets);
         });
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
     }
