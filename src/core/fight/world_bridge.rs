@@ -487,9 +487,16 @@ fn validate_overlap_selected_world_ack(bridge: &Bridge, ack: &Value) {
     }
 }
 
-/// A native effect cannot be sent to gsim for an ACK earlier than the
-/// source scheduler time at which that effect was actually emitted.
-fn assert_damage_due_for_world_ack(events: &[DamageEvent], clock_ns: i64) {
+/// A source effect belongs to the current ACK interval. A later source time
+/// cannot be ACKed early, nor may a stale event precede the last committed
+/// gsim clock. Equal-clock events remain valid when native scheduling resumes
+/// immediately after that ACK.
+fn assert_damage_due_for_world_ack(
+    events: &[DamageEvent], previous_ack_clock_ns: i64, clock_ns: i64,
+) {
+    assert!(events.iter().all(|event| event.native_time_ns >= 0
+        && event.native_time_ns >= previous_ack_clock_ns),
+        "RUST_WORLD_DAMAGE_EVENT_BEFORE_LAST_ACK");
     assert!(events.iter().all(|event| event.native_time_ns <= clock_ns),
         "RUST_WORLD_DAMAGE_EVENT_AFTER_WORLD_CLOCK");
 }
@@ -502,7 +509,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     assert!(clock_ns > bridge.last_tick_ns && clock_ns >= 0,
         "RUST_WORLD_CLOCK_NOT_MONOTONIC");
     let events = std::mem::take(&mut bridge.pending);
-    assert_damage_due_for_world_ack(&events, clock_ns);
+    assert_damage_due_for_world_ack(&events, bridge.last_tick_ns, clock_ns);
     let event_ids: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
     let pid = std::process::id();
     send(&json!({
@@ -1184,8 +1191,27 @@ mod world_overlap_acquisition_tests {
     #[should_panic(expected = "RUST_WORLD_DAMAGE_EVENT_AFTER_WORLD_CLOCK")]
     fn future_native_damage_cannot_enter_an_earlier_world_ack() {
         // At-clock source damage is eligible; a later effect is not.
-        super::assert_damage_due_for_world_ack(&[source_b_hit(201, 10.0)], 201);
-        super::assert_damage_due_for_world_ack(&[source_b_hit(202, 10.0)], 201);
+        super::assert_damage_due_for_world_ack(&[source_b_hit(201, 10.0)], 200, 201);
+        super::assert_damage_due_for_world_ack(&[source_b_hit(202, 10.0)], 200, 201);
+    }
+
+    #[test]
+    fn native_damage_at_previous_ack_clock_is_still_eligible() {
+        // A synchronous native action at the just-ACKed clock is valid:
+        // the next gsim ACK advances the clock before committing it.
+        super::assert_damage_due_for_world_ack(&[source_b_hit(200, 10.0)], 200, 201);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_EVENT_BEFORE_LAST_ACK")]
+    fn stale_native_damage_cannot_enter_a_later_world_ack() {
+        super::assert_damage_due_for_world_ack(&[source_b_hit(199, 10.0)], 200, 201);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_EVENT_BEFORE_LAST_ACK")]
+    fn negative_native_damage_clock_cannot_enter_world_ack() {
+        super::assert_damage_due_for_world_ack(&[source_b_hit(-1, 10.0)], -1, 0);
     }
 
     #[test]
