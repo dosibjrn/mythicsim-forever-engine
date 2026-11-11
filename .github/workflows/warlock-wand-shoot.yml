@@ -24,6 +24,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Run actual Warlock wand preparation and Shoot APL regression
         run: cargo test --locked warlock_wand_registers_native_shoot_for_apl_and_combat -- --nocapture
+      - name: Verify sourced Warlock level 20-59 crit in actor and real class preparation
+        run: |
+          cargo test --locked --lib sourced_intermediate_warlock_crit_scales_at_actor_level_not_l60 -- --nocapture
+          cargo test --locked --lib sourced_warlock_preparation_uses_level_appropriate_melee_crit -- --nocapture
       - name: Publish selected code revision
         if: always()
         run: echo "RUST_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"

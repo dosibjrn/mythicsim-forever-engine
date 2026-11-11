@@ -317,6 +317,21 @@ fn priest_l20_source() -> &'static PriestL20Source {
     })
 }
 
+/// Pinned CMaNGOS Classic Player.cpp GetSpellCritFromIntellect (CLASS_WARLOCK):
+/// chance = 3.18 + intellect / (11.30 + 0.82 * level).
+/// Warlock's level-60 Go baseline keeps its own established conversion.
+fn warlock_crit_per_int_at(level: i32) -> f64 {
+    1.0 / (11.30 + 0.82 * f64::from(level))
+}
+
+/// Pinned CMaNGOS Classic Player.cpp GetMeleeCritFromAgility (CLASS_WARLOCK):
+/// critical agility rate interpolates from 8.4 at L1 to 20.0 at L60.
+fn warlock_crit_per_agi_at(level: i32) -> f64 {
+    let level = f64::from(level);
+    let rate = 8.4 * (60.0 - level) / 59.0 + 20.0 * (level - 1.0) / 59.0;
+    1.0 / rate
+}
+
 /// CMaNGOS GetSpellCritFromIntellect: base + intellect / (rate0 + rate1 * level).
 fn priest_l20_crit_per_int() -> f64 {
     let crit = &priest_l20_source().crit;
@@ -574,6 +589,9 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
         }
         troll[Stat::Health] = row["class_base"]["health"].as_f64()?;
         troll[Stat::Mana] = row["class_base"]["mana"].as_f64()?;
+        // CMaNGOS Classic CLASS_WARLOCK spell-crit base is level independent;
+        // L60 remains the existing Go-derived source instead.
+        troll[Stat::SpellCritPercent] = 3.18;
         return Some(troll);
     }
     if (class, race, level) != ("ClassWarlock", "RaceTroll", 20) {
@@ -602,6 +620,7 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
     }
     troll[Stat::Health] = source["class_base"]["health"].as_f64()?;
     troll[Stat::Mana] = source["class_base"]["mana"].as_f64()?;
+    troll[Stat::SpellCritPercent] = 3.18;
     Some(troll)
 }
 
@@ -912,6 +931,9 @@ impl Sim {
     /// Go `CritPerIntMaxLevel[class]`, with sourced lower-level class conversions.
     pub(crate) fn crit_per_int(&self, unit: UnitId) -> f64 {
         let level = self.unit(unit).level;
+        if (20..60).contains(&level) && self.character(unit).class == "ClassWarlock" {
+            return warlock_crit_per_int_at(level);
+        }
         if level == 20 && self.character(unit).class == "ClassPriest" {
             return priest_l20_crit_per_int();
         }
@@ -928,6 +950,9 @@ impl Sim {
     /// Level-aware agility-to-crit conversion for sourced lower-level actors.
     pub(crate) fn crit_per_agi(&self, unit: UnitId) -> f64 {
         let level = self.unit(unit).level;
+        if (20..60).contains(&level) && self.character(unit).class == "ClassWarlock" {
+            return warlock_crit_per_agi_at(level);
+        }
         if (level == 20 || level == 30) && self.character(unit).class == "ClassDruid" {
             return druid_crit_per_agi_at(level);
         }
@@ -1549,6 +1574,43 @@ mod warlock_l20_actor_source_tests {
 #[cfg(test)]
 mod warlock_sourced_21_to_59_tests {
     use super::*;
+
+    #[test]
+    fn sourced_intermediate_warlock_crit_scales_at_actor_level_not_l60() {
+        let player = Message::from_json_text(
+            "proto.Player",
+            r#"{"class":"ClassWarlock","race":"RaceTroll"}"#,
+        )
+        .unwrap();
+        for level in [20, 21, 25, 30, 35, 40, 50, 59] {
+            let mut sim = Sim::new();
+            let actor = sim
+                .new_character_at_level(0, 0, &player, &[], Some(level))
+                .unwrap();
+            assert_eq!(
+                sim.character(actor).base_stats[Stat::SpellCritPercent],
+                3.18
+            );
+            assert_eq!(sim.crit_per_int(actor), warlock_crit_per_int_at(level));
+            assert_eq!(sim.crit_per_agi(actor), warlock_crit_per_agi_at(level));
+            sim.enable_mana_bar(actor);
+            assert_eq!(
+                sim.unit(actor)
+                    .sdm
+                    .stat_dependency_coeff(Stat::Intellect, Stat::SpellCritPercent),
+                warlock_crit_per_int_at(level)
+            );
+        }
+
+        // Historical L60 actors and measurements remain on their original source.
+        let mut sim = Sim::new();
+        let actor = sim
+            .new_character_at_level(0, 0, &player, &[], Some(60))
+            .unwrap();
+        assert_eq!(sim.character(actor).base_stats[Stat::SpellCritPercent], 1.7);
+        assert_eq!(sim.crit_per_int(actor), 0.0165);
+        assert_eq!(sim.crit_per_agi(actor), sim.crit_per_agi_max_level(actor));
+    }
 
     #[test]
     fn exact_class_resources_and_primary_source_prepare_every_intermediate_level() {
