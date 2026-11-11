@@ -422,7 +422,10 @@ mod tests {
             assert!(!result.items.is_empty(), "{}", class.as_str());
             assert!(result.items.iter().all(|item| {
                 item.eligibility == "native_eligible"
-                    && item.native.as_ref().is_some_and(|native| native.required_level <= 20)
+                    && item
+                        .native
+                        .as_ref()
+                        .is_some_and(|native| native.required_level <= 20)
                     && item.unverified.is_none()
             }));
         }
@@ -436,7 +439,10 @@ mod tests {
             assert!(!result.coverage.item_eligibility_complete);
             assert!(result.items.iter().all(|item| {
                 item.eligibility == "proficiency_unverified"
-                    && item.unverified.as_ref().is_some_and(|row| row.required_level <= 20)
+                    && item
+                        .unverified
+                        .as_ref()
+                        .is_some_and(|row| row.required_level <= 20)
                     && item.native.is_none()
             }));
         }

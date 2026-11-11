@@ -570,9 +570,7 @@ fn base_stats_at_level(class: &str, race: &str, level: i32) -> Option<Stats> {
             ("intellect", Stat::Intellect),
             ("spirit", Stat::Spirit),
         ] {
-            troll[stat] = row["reference_orc_primary"][key].as_f64()?
-                + troll[stat]
-                - orc[stat];
+            troll[stat] = row["reference_orc_primary"][key].as_f64()? + troll[stat] - orc[stat];
         }
         troll[Stat::Health] = row["class_base"]["health"].as_f64()?;
         troll[Stat::Mana] = row["class_base"]["mana"].as_f64()?;
@@ -1569,8 +1567,14 @@ mod warlock_sourced_21_to_59_tests {
             let row = &(if level <= 40 { &early } else { &late })["levels"][level.to_string()];
             let stats = base_stats_at_level("ClassWarlock", "RaceTroll", level)
                 .unwrap_or_else(|| panic!("missing Warlock L{level} source"));
-            assert_eq!(stats[Stat::Health], row["class_base"]["health"].as_f64().unwrap());
-            assert_eq!(stats[Stat::Mana], row["class_base"]["mana"].as_f64().unwrap());
+            assert_eq!(
+                stats[Stat::Health],
+                row["class_base"]["health"].as_f64().unwrap()
+            );
+            assert_eq!(
+                stats[Stat::Mana],
+                row["class_base"]["mana"].as_f64().unwrap()
+            );
             assert!(stats[Stat::Intellect] > 0.0);
             assert_eq!(requested_player_level(&player, Some(level)).unwrap(), level);
         }
