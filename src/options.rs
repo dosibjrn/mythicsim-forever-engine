@@ -158,6 +158,9 @@ pub struct CharacterOptions {
     pub class: Class,
     pub spells: Vec<SpellOption>,
     pub items: Vec<ItemOption>,
+    /// Modeled native pet choices whose summon spells have been reached by
+    /// this level; empty for classes without Warlock summon semantics.
+    pub summons: Vec<&'static str>,
     /// Native TalentsForever source: three trees, tier points, parent/rank
     /// requirements, point budget, and original source revision.
     pub talents: serde_json::Value,
@@ -349,6 +352,11 @@ pub fn get_options(level: u8, class: Class) -> Result<CharacterOptions, String> 
         class,
         spells,
         items,
+        summons: if class == Class::Warlock {
+            crate::classes::warlock::prepare::native_summons_at_level(level)
+        } else {
+            Vec::new()
+        },
         talents,
         coverage: Coverage {
             spell_learnability_complete: false,
@@ -406,6 +414,18 @@ mod tests {
         assert!(druid.spells.iter().any(|spell| spell.spell_id == 339));
         assert!(!druid.spells.iter().any(|spell| spell.spell_id == 116));
         assert!(!druid.coverage.spell_learnability_complete);
+    }
+
+    #[test]
+    fn warlock_summons_follow_native_client_spell_level() {
+        let l20 = get_options(20, Class::Warlock).unwrap();
+        let l40 = get_options(40, Class::Warlock).unwrap();
+        assert!(l20.summons.contains(&"NoSummon"));
+        assert!(l20.summons.contains(&"Imp"));
+        assert!(l20.summons.contains(&"Voidwalker"));
+        assert!(!l20.summons.contains(&"Felhunter"));
+        assert!(l40.summons.contains(&"Felhunter"));
+        assert!(get_options(40, Class::Mage).unwrap().summons.is_empty());
     }
 
     #[test]
