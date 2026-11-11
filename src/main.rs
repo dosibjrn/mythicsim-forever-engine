@@ -1,10 +1,11 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
-    native_player_context, native_talent_options, native_two_pull_windows,
-    native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
-    prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated, validate_prepared, Gated, NativeWarlockWorldSession, OptionsClass,
-    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    native_player_context, native_rolling_world_apl_prepared, native_talent_options,
+    native_two_pull_windows, native_two_world_targets_with_decisions_recovery,
+    native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated,
+    NativeWarlockWorldSession, OptionsClass, PrepareError, PreparedError, Refusal, Request,
+    RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -268,6 +269,33 @@ fn native_api_between_pull_thresholds(
     }
 }
 
+/// The only currently executable source rolling policy: ACKed first-target
+/// HP <= 50%, no more than two simultaneously alive native/2D enemies.
+/// Refuse unknown inputs before spending combat time; an ignored policy must
+/// never be returned as an applied native measurement.
+fn native_api_world_apl(
+    request: &serde_json::Value,
+) -> Result<Option<serde_json::Value>, NativeApiError> {
+    let Some(policy) = request.get("world_apl") else {
+        return Ok(None);
+    };
+    let supported = serde_json::json!({
+        "pull_mode": "rolling",
+        "switch_trigger": {
+            "type": "current_target_hp_fraction_at_most",
+            "fraction": 0.5
+        },
+        "max_live_targets": 2
+    });
+    if policy != &supported {
+        return Err(NativeApiError::new(
+            "unsupported_world_apl_policy",
+            "world_apl must be exact rolling 50%-HP, max_live_targets=2",
+        ));
+    }
+    Ok(Some(policy.clone()))
+}
+
 /// Prepare directly from the exact source request. No raw-JSON/protobuf SHA
 /// comparison: the native PreparedV2 carries the engine's canonical identity.
 fn native_api_prepare(
@@ -330,6 +358,43 @@ fn native_paid_world_snapshot(
         "xp_earned": null,
         "level_transition_supported": false
     })
+}
+
+/// Commit the native Fight only if the requested World-APL has source proof.
+/// On refusal the candidate's owned Fight is dropped, never made resumable.
+fn native_api_finish_world_evaluation<T>(
+    mut report: serde_json::Value,
+    candidate_world: Option<T>,
+    world_apl: Option<serde_json::Value>,
+) -> Result<(serde_json::Value, Option<T>), NativeApiError> {
+    if let Some(policy) = world_apl {
+        if report["world_overlap"]["both_world_targets_lethal_ack"] != true
+            || report["world_overlap"]["source_apl_selected_b"] != true
+        {
+            return Err(NativeApiError::new(
+                "native_rolling_world_apl_not_applied",
+                "requested rolling World-APL did not produce both live-target lethal ACKs",
+            ));
+        }
+        if report["world_overlap"]["two_concurrently_live_world_targets_acked"] != true {
+            return Err(NativeApiError::new(
+                "native_rolling_two_live_targets_not_acked",
+                "no source/gsim ACK showed both distinct targets still alive after B engagement",
+            ));
+        }
+        if report["world_overlap"]["old_a_post_switch_dot_hp_acks"]
+            .as_u64()
+            .unwrap_or(0)
+            == 0
+        {
+            return Err(NativeApiError::new(
+                "native_rolling_old_a_dot_not_acked",
+                "no post-switch native periodic A damage reduced ACKed old-world-A HP",
+            ));
+        }
+        report["applied_world_apl"] = policy;
+    }
+    Ok((report, candidate_world))
 }
 
 impl NativeApiSession {
@@ -409,6 +474,13 @@ impl NativeApiSession {
                 // native state or spending a world tick on this request.
                 let (between_health, between_mana) =
                     native_api_between_pull_thresholds(request)?;
+                let world_apl = native_api_world_apl(request)?;
+                if world_apl.is_some() && continued {
+                    return Err(NativeApiError::new(
+                        "native_rolling_continuation_unsupported",
+                        "a rolling two-live Fight must begin with both world identities unbound",
+                    ));
+                }
                 if continued && (!retain || self.retained_world.is_none()) {
                     return Err(NativeApiError::new(
                         "native_combat_continuation_unsupported",
@@ -462,6 +534,12 @@ impl NativeApiSession {
                     .and_then(|n| usize::try_from(n).ok())
                     .filter(|n| (2..=100).contains(n))
                     .ok_or("evaluate needs targets 2..100")?;
+                if world_apl.is_some() && targets != 2 {
+                    return Err(NativeApiError::new(
+                        "native_rolling_requires_two_targets",
+                        "rolling World-APL currently supports exactly two native world targets",
+                    ));
+                }
                 let rng = request
                     .get("rng_mode")
                     .and_then(serde_json::Value::as_str)
@@ -474,10 +552,23 @@ impl NativeApiSession {
                 {
                     return Err("evaluate requires recover_at_end true".into());
                 }
+                // Compile the requested World-APL into the genuine source-native
+                // Warlock rotation before Fight creation. Do not overwrite the
+                // original source-prepared actor shared by later candidates.
+                let rolling_prepared = world_apl.as_ref().map(|_| {
+                    native_rolling_world_apl_prepared(prepared).map_err(|reason| {
+                        NativeApiError::new("native_world_apl_refused", reason)
+                    })
+                }).transpose()?;
+                let paid_prepared = rolling_prepared.as_ref().unwrap_or(prepared);
                 // This is the existing real two-dimensional gsim tick/ACK
                 // boundary and native Decisions terminal dual-resource rest.
                 // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
                 // stdout and consumes causal ACKs on stdin during this call.
+                // Stage a successful retained Fight until the World-APL
+                // receipt is verified. A rejected rolling policy must not
+                // leave an unACKed/partially paid Fight available to continue.
+                let mut verified_retained_world = None;
                 let report = if retain {
                     if prepared.player.class != "ClassWarlock" {
                         return Err(NativeApiError::new(
@@ -490,7 +581,7 @@ impl NativeApiSession {
                             "native_combat_continuation_unsupported", "no retained Fight",
                         ))?
                     } else {
-                        native_api_world_operation(|| NativeWarlockWorldSession::new(prepared, mode))?
+                        native_api_world_operation(|| NativeWarlockWorldSession::new(paid_prepared, mode))?
                     };
                     if live.rng_mode() != mode {
                         self.retained_world = Some(live);
@@ -507,16 +598,23 @@ impl NativeApiSession {
                         )
                     });
                     if result.is_ok() {
-                        self.retained_world = Some(live);
+                        verified_retained_world = Some(live);
                     }
                     result?
                 } else {
                     native_api_world_operation(|| {
                         native_two_world_targets_with_decisions_recovery(
-                            prepared, targets, mode, between_health, between_mana,
+                            paid_prepared, targets, mode, between_health, between_mana,
                         )
                     })?
                 };
+                // No requested World-APL is accepted from the input alone.
+                // The retained native Fight must not escape on a refused echo.
+                let (report, verified_retained_world) =
+                    native_api_finish_world_evaluation(
+                        report, verified_retained_world, world_apl,
+                    )?;
+                self.retained_world = verified_retained_world;
                 self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report, retain));
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
@@ -570,6 +668,121 @@ fn run_native_api() -> Result<(), Failure> {
 #[cfg(test)]
 mod native_optimizer_api_tests {
     use super::{NativeApiError, NativeApiSession, PrepareError};
+
+    #[test]
+    fn rejected_rolling_receipt_drops_unverified_retained_fight() {
+        use std::{cell::Cell, rc::Rc};
+        struct TrackedWorld(Rc<Cell<bool>>);
+        impl Drop for TrackedWorld {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let dropped = Rc::new(Cell::new(false));
+        let policy = serde_json::json!({
+            "pull_mode": "rolling",
+            "switch_trigger": {
+                "type": "current_target_hp_fraction_at_most", "fraction": 0.5
+            },
+            "max_live_targets": 2
+        });
+        // A source result that never actually acquired/ACKed both mobs must
+        // not expose the API echo or retain a Fight for the next evaluation.
+        let refused = super::native_api_finish_world_evaluation(
+            serde_json::json!({"world_overlap": null}),
+            Some(TrackedWorld(dropped.clone())),
+            Some(policy.clone()),
+        );
+        assert_eq!(
+            refused.err().unwrap().code,
+            "native_rolling_world_apl_not_applied"
+        );
+        assert!(dropped.get());
+
+        // A source-ACKed positive report carries the same policy unchanged;
+        // this is a pure ownership/receipt contract test, not paid world proof.
+        let (report, kept) = super::native_api_finish_world_evaluation(
+            serde_json::json!({"world_overlap": {
+                "source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true,
+                "two_concurrently_live_world_targets_acked": true,
+                "old_a_post_switch_dot_hp_acks": 1
+            }}),
+            Some(7_u32),
+            Some(policy.clone()),
+        )
+        .unwrap();
+        assert_eq!(report["applied_world_apl"], policy);
+        assert_eq!(kept, Some(7));
+        for (receipt, code) in [
+            (
+                serde_json::json!({"source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true,
+                "two_concurrently_live_world_targets_acked": false,
+                "old_a_post_switch_dot_hp_acks": 1}),
+                "native_rolling_two_live_targets_not_acked",
+            ),
+            (
+                serde_json::json!({"source_apl_selected_b": true,
+                "both_world_targets_lethal_ack": true,
+                "two_concurrently_live_world_targets_acked": true,
+                "old_a_post_switch_dot_hp_acks": 0}),
+                "native_rolling_old_a_dot_not_acked",
+            ),
+        ] {
+            let refusal = super::native_api_finish_world_evaluation(
+                serde_json::json!({"world_overlap": receipt}),
+                Some(8_u32),
+                Some(policy.clone()),
+            )
+            .unwrap_err();
+            assert_eq!(refusal.code, code);
+        }
+    }
+
+    #[test]
+    fn world_apl_api_accepts_only_exact_source_executable_rolling_policy() {
+        use super::native_api_world_apl;
+        let policy = serde_json::json!({
+            "pull_mode": "rolling",
+            "switch_trigger": {
+                "type": "current_target_hp_fraction_at_most", "fraction": 0.5
+            },
+            "max_live_targets": 2
+        });
+        assert_eq!(native_api_world_apl(&serde_json::json!({})).unwrap(), None);
+        assert_eq!(
+            native_api_world_apl(&serde_json::json!({
+                "world_apl": policy.clone()
+            }))
+            .unwrap(),
+            Some(policy.clone())
+        );
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!({"pull_mode": "serial"}),
+            serde_json::json!({"pull_mode": "rolling",
+                "switch_trigger": {"type": "current_target_hp_fraction_at_most",
+                    "fraction": 0.6}, "max_live_targets": 2}),
+            serde_json::json!({"pull_mode": "rolling",
+                "switch_trigger": {"type": "current_target_hp_fraction_at_most",
+                    "fraction": 0.5}, "max_live_targets": 3}),
+        ] {
+            let refusal = native_api_world_apl(&serde_json::json!({
+                "world_apl": invalid
+            }))
+            .unwrap_err();
+            assert_eq!(refusal.code, "unsupported_world_apl_policy");
+        }
+        let mut session = NativeApiSession::default();
+        let refusal = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "world_apl": {"pull_mode": "rolling"},
+                "targets": 2, "rng_mode": "balanced", "recover_at_end": true
+            }))
+            .unwrap_err();
+        assert_eq!(refusal.code, "unsupported_world_apl_policy");
+    }
 
     #[test]
     fn native_prepare_refusal_keeps_source_code_and_reason() {
