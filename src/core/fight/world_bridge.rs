@@ -133,6 +133,10 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
 /// must separately switch its *native* APL target to Side::Extra(0); this
 /// bridge does not synthesize an APL cast, a second mob or a world kill.
 /// A's current HP must come from a committed native-index-0 2D ACK.
+// The caller-facing World-APL scheduler is not wired yet. Do not claim a paid
+// overlap from this state transition alone; allow the admission primitive to
+// be compiled and exercised by its focused unit tests until the caller lands.
+#[allow(dead_code)]
 pub(crate) fn begin_overlapping_target(
     at_ns: i64,
     health_fraction_at_most: f64,
