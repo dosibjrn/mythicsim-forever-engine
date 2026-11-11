@@ -573,7 +573,16 @@ fn curse_of_elements_effect(
     unrepresented: &mut Vec<String>,
 ) -> Value {
     let sim = &env.sim;
-    let row = super::spells::actor_rank(&spell_data().curse_of_the_elements, sim, env.player, false);
+    // The existing native shared debuff aura uses the frozen top-rank
+    // resistances/multipliers. Read those mechanics from the same aura source,
+    // but identify the cast by the rank actually registered for this actor.
+    let row = spell_data().curse_of_the_elements.highest();
+    let cast_rank = super::spells::actor_rank(
+        &spell_data().curse_of_the_elements,
+        sim,
+        env.player,
+        false,
+    );
     let mut resistance: BTreeMap<&'static str, f64> = BTreeMap::new();
     let mut multipliers: BTreeMap<&'static str, f64> = BTreeMap::new();
     let level = sim.unit(env.player).level;
@@ -628,7 +637,7 @@ fn curse_of_elements_effect(
         check_target_aura_changes(env, &label, &resistance, &multipliers, unrepresented);
     }
     let mut effect = json!({
-        "kind": "curse_of_the_elements", "spell_id": row.id, "aura": label,
+        "kind": "curse_of_the_elements", "spell_id": cast_rank.id, "aura": label,
         "resistance_delta": resistance, "school_damage_taken_multiplier": multipliers,
     });
     if blocked {
