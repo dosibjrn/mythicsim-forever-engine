@@ -544,8 +544,12 @@ mod native_optimizer_api_tests {
         )))
         .unwrap();
         let sha = prepared.request_sha256.clone();
-        let mut session = NativeApiSession { prepared: Some(prepared) };
-        let state = session.dispatch(&serde_json::json!({"op": "state"})).unwrap();
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+        };
+        let state = session
+            .dispatch(&serde_json::json!({"op": "state"}))
+            .unwrap();
         assert_eq!(state["kind"], "source_prepared_actor");
         assert_eq!(state["actor_level"], 60);
         assert_eq!(state["source_sha256"], sha);
@@ -555,23 +559,29 @@ mod native_optimizer_api_tests {
 
         // The native engine has no XP/level-up source transition: never
         // manufacture a successful 60->61 advancement or run a new fight.
-        let refusal = session.dispatch(&serde_json::json!({
-            "op": "advance", "from_level": 60, "to_level": 61
-        })).unwrap_err();
+        let refusal = session
+            .dispatch(&serde_json::json!({
+                "op": "advance", "from_level": 60, "to_level": 61
+            }))
+            .unwrap_err();
         assert_eq!(refusal.code, "native_level_transition_unsupported");
         assert!(refusal.reason.contains("post-combat actor"));
 
-        let continuation = session.dispatch(&serde_json::json!({
-            "op": "evaluate", "continue_from_previous": true,
-            "actor_level": 60, "targets": 2,
-            "rng_mode": "balanced", "recover_at_end": true
-        })).unwrap_err();
+        let continuation = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "continue_from_previous": true,
+                "actor_level": 60, "targets": 2,
+                "rng_mode": "balanced", "recover_at_end": true
+            }))
+            .unwrap_err();
         assert_eq!(continuation.code, "native_combat_continuation_unsupported");
         assert!(continuation.reason.contains("recreates a native Fight"));
 
-        let invalid_flag = session.dispatch(&serde_json::json!({
-            "op": "evaluate", "continue_from_previous": "true"
-        })).unwrap_err();
+        let invalid_flag = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "continue_from_previous": "true"
+            }))
+            .unwrap_err();
         assert_eq!(invalid_flag.code, "invalid_api_request");
         assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
         assert_eq!(session.prepared.as_ref().unwrap().request_sha256, sha);
