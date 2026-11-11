@@ -397,15 +397,23 @@ fn validate_native_target_damage_acks(
     for event in events {
         *damage_by_target.entry(event.native_target_index).or_default() += event.damage;
     }
-    // Preserve the exact existing serial wire contract. A source effect on
-    // Extra(0) must never be folded into the primary mob's scalar ACK.
-    if damage_by_target.keys().all(|&index| index == 0) {
+    // A serial scalar receipt is valid only while the selected native
+    // target is zero. After an early switch to target 1, a tick containing
+    // ONLY target 0's old DoT must still use the per-world-ID ACK ledger.
+    // Otherwise it could subtract old-target damage from the new mob's HP.
+    let selected_index = ack.get("selected_native_target_index")
+        .map(|value| value.as_u64()
+            .expect("RUST_WORLD_MULTI_TARGET_SELECTED_INDEX_INVALID"));
+    if selected_index.unwrap_or(0) == 0
+        && ack.get("native_target_health_acks").is_none()
+        && damage_by_target.keys().all(|&index| index == 0)
+    {
         let damage = damage_by_target.get(&0).copied().unwrap_or(0.0);
         assert!((ack_after - (selected_before - damage).max(0.0)).abs() < 1e-6,
             "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
         return;
     }
-    let selected_index = ack["selected_native_target_index"].as_u64()
+    let selected_index = selected_index
         .expect("RUST_WORLD_MULTI_TARGET_SELECTED_INDEX_MISSING");
     assert!(selected_index < super::MAX_TARGETS as u64,
         "RUST_WORLD_MULTI_TARGET_SELECTED_INDEX_INVALID");
@@ -684,6 +692,42 @@ mod native_multi_target_ack_ledger_tests {
         });
         validate_native_target_damage_acks(
             &[dot(0, 15.0), dot(1, 30.0)], &ack, 100.0, 100.0, 70.0);
+    }
+
+    #[test]
+    fn only_old_mob_dot_can_kill_old_mob_after_new_target_is_selected() {
+        // The selected new mob stays at 100 HP. Only the old mob's real
+        // gsim-owned DoT damage is lethal; no native forecast or fake kill.
+        let ack = json!({
+            "selected_native_target_index": 1,
+            "native_target_health_acks": [
+                {"native_target_index": 0, "world_target_id": "old-mob",
+                 "world_target_health_before": 15.0, "world_target_health_after": 0.0,
+                 "world_target_max_health": 100.0}
+            ]
+        });
+        validate_native_target_damage_acks(
+            &[dot(0, 15.0)], &ack, 100.0, 100.0, 100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_ACK_MISSING")]
+    fn only_old_mob_dot_must_not_use_new_mobs_scalar_hp_ack() {
+        // Previously this exact event set used the serial fast path and
+        // falsely accepted a 15-HP loss on B as old A's DoT receipt.
+        validate_native_target_damage_acks(
+            &[dot(0, 15.0)],
+            &json!({"selected_native_target_index": 1}),
+            100.0, 100.0, 85.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_ACK_MISSING")]
+    fn selected_new_mob_hit_cannot_use_scalar_without_world_id() {
+        validate_native_target_damage_acks(
+            &[dot(1, 30.0)],
+            &json!({"selected_native_target_index": 1}),
+            100.0, 100.0, 70.0);
     }
 
     #[test]
