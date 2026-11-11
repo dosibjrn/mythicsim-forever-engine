@@ -35,6 +35,28 @@ pub(super) enum Summon {
     Felhunter,
 }
 
+/// Native Warlock pet choices offered to build search. The four modeled
+/// summons are resolved against the pinned client spell rows, rather than
+/// advertising an unlearned L30 Felhunter to a sampled L20 actor.
+/// Source spell level is a necessary condition, not a trainer/quest certificate.
+pub(crate) fn native_summons_at_level(level: u8) -> Vec<&'static str> {
+    let mut choices = vec!["NoSummon"];
+    for (summon, spell_id) in [
+        (Summon::Imp, 688),
+        (Summon::Voidwalker, 697),
+        (Summon::Succubus, 712),
+        (Summon::Felhunter, 691),
+    ] {
+        let spell = crate::prepare::spelldata::find(spell_id);
+        if !spell.is_nil() && spell.spell_level > 0
+            && spell.spell_level <= i16::from(level)
+        {
+            choices.push(summon.name());
+        }
+    }
+    choices
+}
+
 impl Summon {
     /// `proto.WarlockOptions_Summon_name`.
     fn name(self) -> &'static str {
