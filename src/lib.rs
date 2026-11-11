@@ -116,6 +116,11 @@ mod native_rolling_world_apl_tests {
         assert!(engine::coverage::rotation_changes_target(&parsed));
         assert!(matches!(&parsed.priority_list[0].action,
             rotation::Action::ChangeTarget(rotation::UnitRef::Target(1))));
+        // Go-style syntax validation alone is insufficient: the actual
+        // source Fight must compile both target-specific APL rotation copies
+        // and the Warlock spell/pet effects for this same prepared actor.
+        let native = NativeWarlockWorldSession::new(&prepared, RngMode::Balanced);
+        assert!(native.is_ok(), "source native World-APL Fight refused: {:?}", native.err());
     }
 
     #[test]
