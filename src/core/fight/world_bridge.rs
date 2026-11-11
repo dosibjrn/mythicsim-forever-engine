@@ -125,6 +125,63 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
     })
 }
 
+/// Source-ACK-authorized acquisition of B while A is still alive.
+///
+/// Unlike serial begin_next_target, this does not retire or clear A's world
+/// identity, native periodic effects, ACK ancestry, or the shared clock. It
+/// only advances the world-boundary selection to slot 1. The calling Fight
+/// must separately switch its *native* APL target to Side::Extra(0); this
+/// bridge does not synthesize an APL cast, a second mob or a world kill.
+/// A's current HP must come from a committed native-index-0 2D ACK.
+pub(crate) fn begin_overlapping_target(
+    at_ns: i64,
+    health_fraction_at_most: f64,
+) -> Result<(), &'static str> {
+    BRIDGE.with(|state| {
+        let mut state = state.borrow_mut();
+        let bridge = state.as_mut().ok_or("RUST_WORLD_NOT_STARTED")?;
+        if !health_fraction_at_most.is_finite()
+            || !(0.0..=1.0).contains(&health_fraction_at_most)
+        {
+            return Err("RUST_WORLD_OVERLAP_THRESHOLD_INVALID");
+        }
+        if !bridge.pending.is_empty() {
+            return Err("RUST_WORLD_UNACKNOWLEDGED_DAMAGE");
+        }
+        if at_ns <= bridge.last_tick_ns || at_ns < 0 {
+            return Err("RUST_WORLD_NEXT_TARGET_CLOCK_REWOUND");
+        }
+        if bridge.iteration != 0 || bridge.native_world_target_vitals.contains_key(&1) {
+            return Err("RUST_WORLD_OVERLAP_TWO_LIVE_TARGET_LIMIT");
+        }
+        if bridge.sequence == 0 || bridge.previous_ack_id.len() != 64 {
+            return Err("RUST_WORLD_OVERLAP_SOURCE_ACK_MISSING");
+        }
+        let Some((world_id, health, maximum)) =
+            bridge.native_world_target_vitals.get(&0)
+        else {
+            return Err("RUST_WORLD_OVERLAP_FIRST_TARGET_ID_MISSING");
+        };
+        if world_id.is_empty() || !health.is_finite() || !maximum.is_finite()
+            || *maximum <= 0.0 || *health <= 0.0 || *health > *maximum
+            || bridge.last_health != Some(*health)
+        {
+            return Err("RUST_WORLD_OVERLAP_FIRST_TARGET_NOT_LIVE_ACKED");
+        }
+        if *health / *maximum > health_fraction_at_most {
+            return Err("RUST_WORLD_OVERLAP_THRESHOLD_NOT_REACHED");
+        }
+        bridge.iteration = 1;
+        bridge.last_health = None; // Selected B's HP awaits its OWN world ACK.
+        bridge.last_max_health = None;
+        // Keep index 0 and its last ACKed HP; old-A DoT events still target 0.
+        // Never reset sequence, previous_ack_id, pending native effects or
+        // event_ordinal. B must bind a distinct world ID on its next damage.
+        bridge.next_tick_ns = at_ns;
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod persistent_next_target_world_lethal_ack_tests {
     use super::*;
@@ -616,6 +673,82 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
             "native_total_damage": cumulative_damage,
         }));
     });
+}
+
+#[cfg(test)]
+mod world_overlap_acquisition_tests {
+    use super::{begin_overlapping_target, begin_next_target, Bridge, BRIDGE};
+    use std::collections::BTreeMap;
+
+    fn acknowledged_first_target(health: f64) {
+        let mut vitals = BTreeMap::new();
+        vitals.insert(0, ("real-world-A".to_owned(), health, 100.0));
+        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
+            iteration: 0, sequence: 3, next_tick_ns: 200, last_tick_ns: 100,
+            last_health: Some(health), last_max_health: Some(100.0),
+            native_world_target_vitals: vitals,
+            previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
+            event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
+        }));
+    }
+
+    #[test]
+    fn source_ack_at_half_hp_acquires_b_without_erasing_a_or_doing_a_kill() {
+        acknowledged_first_target(45.0);
+        // Serial transitions still cannot advance after a merely nonlethal ACK.
+        assert_eq!(begin_next_target(200), Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL"));
+        assert_eq!(begin_overlapping_target(200, 0.5), Ok(()));
+        BRIDGE.with(|slot| {
+            let borrowed = slot.borrow();
+            let bridge = borrowed.as_ref().unwrap();
+            assert_eq!(bridge.iteration, 1);
+            assert_eq!(bridge.sequence, 3);
+            assert_eq!(bridge.previous_ack_id, "a".repeat(64));
+            assert_eq!(bridge.event_ordinal, 9);
+            assert_eq!(bridge.last_tick_ns, 100);
+            assert_eq!(bridge.next_tick_ns, 200);
+            assert_eq!(bridge.last_health, None);
+            assert_eq!(bridge.native_world_target_vitals.get(&0).unwrap().1, 45.0);
+            assert!(!bridge.native_world_target_vitals.contains_key(&1));
+        });
+        // The same encounter may never acquire an unbounded third world mob.
+        assert_eq!(begin_overlapping_target(300, 0.5),
+            Err("RUST_WORLD_OVERLAP_TWO_LIVE_TARGET_LIMIT"));
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn source_ack_threshold_and_distinct_first_world_identity_are_mandatory() {
+        acknowledged_first_target(60.0);
+        assert_eq!(begin_overlapping_target(200, 0.5),
+            Err("RUST_WORLD_OVERLAP_THRESHOLD_NOT_REACHED"));
+        assert_eq!(begin_overlapping_target(200, f64::NAN),
+            Err("RUST_WORLD_OVERLAP_THRESHOLD_INVALID"));
+        BRIDGE.with(|slot| {
+            slot.borrow_mut().as_mut().unwrap().native_world_target_vitals.clear();
+        });
+        assert_eq!(begin_overlapping_target(200, 1.0),
+            Err("RUST_WORLD_OVERLAP_FIRST_TARGET_ID_MISSING"));
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn dead_or_unacknowledged_a_is_not_an_early_pull() {
+        acknowledged_first_target(0.0);
+        assert_eq!(begin_overlapping_target(200, 0.5),
+            Err("RUST_WORLD_OVERLAP_FIRST_TARGET_NOT_LIVE_ACKED"));
+        BRIDGE.with(|slot| {
+            slot.borrow_mut().as_mut().unwrap().last_health = Some(20.0);
+        });
+        assert_eq!(begin_overlapping_target(200, 0.5),
+            Err("RUST_WORLD_OVERLAP_FIRST_TARGET_NOT_LIVE_ACKED"));
+        BRIDGE.with(|slot| {
+            slot.borrow_mut().as_mut().unwrap().previous_ack_id.clear();
+        });
+        assert_eq!(begin_overlapping_target(200, 0.5),
+            Err("RUST_WORLD_OVERLAP_SOURCE_ACK_MISSING"));
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 #[cfg(test)]
