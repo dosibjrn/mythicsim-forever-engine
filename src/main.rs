@@ -677,7 +677,10 @@ mod native_optimizer_api_tests {
             Some(TrackedWorld(dropped.clone())),
             Some(policy.clone()),
         );
-        assert_eq!(refused.err().unwrap().code, "native_rolling_world_apl_not_applied");
+        assert_eq!(
+            refused.err().unwrap().code,
+            "native_rolling_world_apl_not_applied"
+        );
         assert!(dropped.get());
 
         // A source-ACKed positive report carries the same policy unchanged;
@@ -689,7 +692,8 @@ mod native_optimizer_api_tests {
             }}),
             Some(7_u32),
             Some(policy.clone()),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(report["applied_world_apl"], policy);
         assert_eq!(kept, Some(7));
     }
