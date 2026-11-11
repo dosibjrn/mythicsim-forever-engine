@@ -167,6 +167,20 @@ struct NativeApiSession {
     prepared: Option<PreparedV2>,
 }
 
+/// Preserve the requested sampled actor level. A malformed value must not be
+/// interpreted as absent and silently prepare a default L60 character.
+fn native_api_actor_level(request: &serde_json::Value) -> Result<Option<i32>, String> {
+    let Some(value) = request.get("actor_level") else {
+        return Ok(None);
+    };
+    value
+        .as_i64()
+        .and_then(|n| i32::try_from(n).ok())
+        .filter(|level| (1..=60).contains(level))
+        .map(Some)
+        .ok_or_else(|| "actor_level must be an integer in 1..=60".to_owned())
+}
+
 /// Prepare directly from the exact source request. No raw-JSON/protobuf SHA
 /// comparison: the native PreparedV2 carries the engine's canonical identity.
 fn native_api_prepare(
@@ -174,10 +188,7 @@ fn native_api_prepare(
 ) -> Result<(serde_json::Value, PreparedV2), String> {
     let source = request.get("request").ok_or("prepare needs request")?;
     let bytes = serde_json::to_vec(source).map_err(|e| e.to_string())?;
-    let actor_level = request
-        .get("actor_level")
-        .and_then(serde_json::Value::as_i64)
-        .and_then(|n| i32::try_from(n).ok());
+    let actor_level = native_api_actor_level(request)?;
     let source_prepared = std::panic::catch_unwind(|| {
         prepare_json_with_actor_level(&bytes, "rust", Rules::Forever, actor_level)
     })
@@ -291,6 +302,35 @@ fn run_native_api() -> Result<(), Failure> {
 #[cfg(test)]
 mod native_optimizer_api_tests {
     use super::NativeApiSession;
+
+    #[test]
+    fn sampled_actor_level_rejects_malformed_values_without_l60_fallback() {
+        use super::native_api_actor_level;
+
+        for invalid in [
+            serde_json::json!(null),
+            serde_json::json!("40"),
+            serde_json::json!(40.5),
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!(61),
+            serde_json::json!(4_294_967_296_i64),
+        ] {
+            let request = serde_json::json!({"actor_level": invalid});
+            assert_eq!(
+                native_api_actor_level(&request).unwrap_err(),
+                "actor_level must be an integer in 1..=60"
+            );
+        }
+        assert_eq!(
+            native_api_actor_level(&serde_json::json!({"actor_level": 40})).unwrap(),
+            Some(40)
+        );
+        assert_eq!(
+            native_api_actor_level(&serde_json::json!({})).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn options_from_native_and_eval_without_prepared_actor_refuses() {
