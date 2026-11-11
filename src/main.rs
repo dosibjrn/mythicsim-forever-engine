@@ -3,8 +3,8 @@ use forever_engine::{
     native_player_context, native_talent_options, native_two_pull_windows,
     native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
     prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated, validate_prepared, Gated, OptionsClass, PrepareError, PreparedError,
-    NativeWarlockWorldSession, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    simulate_prepared_gated, validate_prepared, Gated, NativeWarlockWorldSession, OptionsClass,
+    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -669,7 +669,9 @@ mod native_optimizer_api_tests {
             }))
             .unwrap_err();
         assert_eq!(continuation.code, "native_combat_continuation_unsupported");
-        assert!(continuation.reason.contains("requires a preceding paid retained native Fight"));
+        assert!(continuation
+            .reason
+            .contains("requires a preceding paid retained native Fight"));
 
         let invalid_flag = session
             .dispatch(&serde_json::json!({
@@ -702,8 +704,9 @@ mod native_optimizer_api_tests {
             .unwrap_err();
         assert_eq!(error.code, "native_retained_class_unsupported");
         assert_eq!(
-            session.dispatch(&serde_json::json!({"op": "state"})).unwrap()
-                ["retained_combat_runtime"],
+            session
+                .dispatch(&serde_json::json!({"op": "state"}))
+                .unwrap()["retained_combat_runtime"],
             false
         );
         let invalid = session
