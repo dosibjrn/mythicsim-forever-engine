@@ -110,8 +110,7 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         // Expiring a duration does not kill a distinct gsim world mob.
         // Only the previous source-native effects' committed HP/death/hash ACK
         // can authorize this retained Rust actor to acquire its next target.
-        if bridge.sequence == 0 || bridge.previous_ack_id.len() != 64
-            || bridge.last_health != Some(0.0) {
+        if !has_lethal_ack(bridge) {
             return Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL");
         }
         bridge.iteration = bridge.iteration.checked_add(1)
