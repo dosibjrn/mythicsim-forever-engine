@@ -240,7 +240,10 @@ fn native_api_prepare(
 }
 
 impl NativeApiSession {
-    fn dispatch(&mut self, request: &serde_json::Value) -> Result<serde_json::Value, NativeApiError> {
+    fn dispatch(
+        &mut self,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, NativeApiError> {
         match request.get("op").and_then(serde_json::Value::as_str) {
             Some("options") => {
                 let class = request
@@ -327,7 +330,9 @@ fn run_native_api() -> Result<(), Failure> {
             return Ok(());
         }
         let response = match serde_json::from_str::<serde_json::Value>(&line)
-            .map_err(|e| NativeApiError::new("invalid_api_request", format!("invalid API request: {e}")))
+            .map_err(|e| {
+                NativeApiError::new("invalid_api_request", format!("invalid API request: {e}"))
+            })
             .and_then(|request| session.dispatch(&request))
         {
             Ok(result) => serde_json::json!({"ok": true, "result": result}),
@@ -348,12 +353,10 @@ mod native_optimizer_api_tests {
 
     #[test]
     fn native_prepare_refusal_keeps_source_code_and_reason() {
-        let error = NativeApiError::from(PrepareError::Refused(
-            forever_engine::PrepareRefusal {
-                code: "source_item_refused",
-                reason: "unsupported candidate item".to_owned(),
-            },
-        ));
+        let error = NativeApiError::from(PrepareError::Refused(forever_engine::PrepareRefusal {
+            code: "source_item_refused",
+            reason: "unsupported candidate item".to_owned(),
+        }));
         assert_eq!(error.code, "source_item_refused");
         assert_eq!(error.reason, "unsupported candidate item");
         let error = NativeApiError::from(PrepareError::Invalid("missing iterations".to_owned()));
