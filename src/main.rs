@@ -161,7 +161,6 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
     serde_json::to_string_pretty(&report).map_err(|err| err.to_string())
 }
 
-
 #[derive(Default)]
 struct NativeApiSession {
     // Rust owns the prepared protobuf-derived actor, not a JSON file handle.
@@ -237,7 +236,9 @@ impl NativeApiSession {
                     .and_then(serde_json::Value::as_str)
                     .ok_or("evaluate needs rng_mode")?;
                 let mode = RngMode::parse_cli(rng)?;
-                if request.get("recover_at_end").and_then(serde_json::Value::as_bool)
+                if request
+                    .get("recover_at_end")
+                    .and_then(serde_json::Value::as_bool)
                     != Some(true)
                 {
                     return Err("evaluate requires recover_at_end true".to_owned());
