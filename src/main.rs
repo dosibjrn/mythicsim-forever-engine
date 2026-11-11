@@ -383,7 +383,9 @@ fn native_api_finish_world_evaluation<T>(
             ));
         }
         if report["world_overlap"]["old_a_post_switch_dot_hp_acks"]
-            .as_u64().unwrap_or(0) == 0
+            .as_u64()
+            .unwrap_or(0)
+            == 0
         {
             return Err(NativeApiError::new(
                 "native_rolling_old_a_dot_not_acked",
@@ -713,21 +715,27 @@ mod native_optimizer_api_tests {
         assert_eq!(report["applied_world_apl"], policy);
         assert_eq!(kept, Some(7));
         for (receipt, code) in [
-            (serde_json::json!({"source_apl_selected_b": true,
+            (
+                serde_json::json!({"source_apl_selected_b": true,
                 "both_world_targets_lethal_ack": true,
                 "two_concurrently_live_world_targets_acked": false,
                 "old_a_post_switch_dot_hp_acks": 1}),
-                "native_rolling_two_live_targets_not_acked"),
-            (serde_json::json!({"source_apl_selected_b": true,
+                "native_rolling_two_live_targets_not_acked",
+            ),
+            (
+                serde_json::json!({"source_apl_selected_b": true,
                 "both_world_targets_lethal_ack": true,
                 "two_concurrently_live_world_targets_acked": true,
                 "old_a_post_switch_dot_hp_acks": 0}),
-                "native_rolling_old_a_dot_not_acked"),
+                "native_rolling_old_a_dot_not_acked",
+            ),
         ] {
             let refusal = super::native_api_finish_world_evaluation(
                 serde_json::json!({"world_overlap": receipt}),
-                Some(8_u32), Some(policy.clone()),
-            ).unwrap_err();
+                Some(8_u32),
+                Some(policy.clone()),
+            )
+            .unwrap_err();
             assert_eq!(refusal.code, code);
         }
     }
