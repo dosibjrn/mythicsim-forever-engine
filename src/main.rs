@@ -3,9 +3,8 @@ use forever_engine::{
     native_player_context, native_talent_options, native_two_pull_windows,
     native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
     prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated,
-    validate_prepared, Gated, OptionsClass, PrepareError, PreparedError, Refusal, Request, RngMode,
-    Rules, SOURCE_REVISION,
+    simulate_prepared_gated, validate_prepared, Gated, OptionsClass, PrepareError, PreparedError,
+    Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -162,49 +161,160 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
     serde_json::to_string_pretty(&report).map_err(|err| err.to_string())
 }
 
+
+#[derive(Default)]
+struct NativeApiSession {
+    // Rust owns the prepared protobuf-derived actor, not a JSON file handle.
+    prepared: Option<PreparedV2>,
+}
+
+/// Prepare directly from the exact source request. No raw-JSON/protobuf SHA
+/// comparison: the native PreparedV2 carries the engine's canonical identity.
+fn native_api_prepare(
+    request: &serde_json::Value,
+) -> Result<(serde_json::Value, PreparedV2), String> {
+    let source = request.get("request").ok_or("prepare needs request")?;
+    let bytes = serde_json::to_vec(source).map_err(|e| e.to_string())?;
+    let actor_level = request
+        .get("actor_level")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|n| i32::try_from(n).ok());
+    let source_prepared = std::panic::catch_unwind(|| {
+        prepare_json_with_actor_level(&bytes, "rust", Rules::Forever, actor_level)
+    })
+    .map_err(|_| "native prepare panicked".to_owned())?
+    .map_err(|e| e.to_string())?;
+    let value = serde_json::to_value(source_prepared).map_err(|e| e.to_string())?;
+    let prepared = serde_json::from_value::<PreparedV2>(value.clone())
+        .map_err(|e| format!("native prepared-v2 rejected: {e}"))?;
+    Ok((value, prepared))
+}
+
+impl NativeApiSession {
+    fn dispatch(&mut self, request: &serde_json::Value) -> Result<serde_json::Value, String> {
+        match request.get("op").and_then(serde_json::Value::as_str) {
+            Some("options") => {
+                let class = request
+                    .get("class")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("options needs class")?;
+                let level = request
+                    .get("level")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| u8::try_from(n).ok())
+                    .filter(|n| (1..=60).contains(n))
+                    .ok_or("options needs level 1..60")?;
+                serde_json::to_value(get_options(level, class.parse::<OptionsClass>()?)?)
+                    .map_err(|e| e.to_string())
+            }
+            Some("prepare") => {
+                // On refusal no earlier actor may accidentally be evaluated.
+                self.prepared = None;
+                let (value, prepared) = native_api_prepare(request)?;
+                self.prepared = Some(prepared);
+                Ok(value)
+            }
+            Some("evaluate") => {
+                // Evaluate either the actor retained by a preceding prepare in
+                // this session, or prepare a new source inline in this call.
+                if request.get("request").is_some() {
+                    self.prepared = None;
+                    let (_, prepared) = native_api_prepare(request)?;
+                    self.prepared = Some(prepared);
+                }
+                let prepared = self
+                    .prepared
+                    .as_ref()
+                    .ok_or("evaluate needs a preceding prepare or inline request")?;
+                let targets = request
+                    .get("targets")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (2..=100).contains(n))
+                    .ok_or("evaluate needs targets 2..100")?;
+                let rng = request
+                    .get("rng_mode")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("evaluate needs rng_mode")?;
+                let mode = RngMode::parse_cli(rng)?;
+                if request.get("recover_at_end").and_then(serde_json::Value::as_bool)
+                    != Some(true)
+                {
+                    return Err("evaluate requires recover_at_end true".to_owned());
+                }
+                // This is the existing real two-dimensional gsim tick/ACK
+                // boundary and native Decisions terminal dual-resource rest.
+                // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
+                // stdout and consumes causal ACKs on stdin during this call.
+                let report = native_two_world_targets_with_decisions_recovery(
+                    prepared, targets, mode, 1.0, 1.0,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({
+                    "engine": "forever-engine",
+                    "source_sha256": prepared.request_sha256,
+                    "result": report,
+                    "checkpoint_certified": false
+                }))
+            }
+            _ => Err("unsupported API op (expected options, prepare or evaluate)".to_owned()),
+        }
+    }
+}
+
+/// Persistent NDJSON Rust API; gsim's world ACKs use the same stdin/stdout
+/// stream during evaluate and are consumed by the existing native bridge.
+fn run_native_api() -> Result<(), Failure> {
+    let mut session = NativeApiSession::default();
+    loop {
+        let mut line = String::new();
+        if std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            return Ok(());
+        }
+        let response = match serde_json::from_str::<serde_json::Value>(&line)
+            .map_err(|e| format!("invalid API request: {e}"))
+            .and_then(|request| session.dispatch(&request))
+        {
+            Ok(result) => serde_json::json!({"ok": true, "result": result}),
+            Err(error) => serde_json::json!({"ok": false, "error": error}),
+        };
+        println!("{}", response);
+        std::io::stdout().flush().map_err(|e| e.to_string())?;
+    }
+}
+
+#[cfg(test)]
+mod native_optimizer_api_tests {
+    use super::NativeApiSession;
+
+    #[test]
+    fn options_from_native_and_eval_without_prepared_actor_refuses() {
+        let mut session = NativeApiSession::default();
+        let options = session
+            .dispatch(&serde_json::json!({
+                "op": "options", "class": "warlock", "level": 40
+            }))
+            .unwrap();
+        assert_eq!(options["level"], 40);
+        assert_eq!(options["class"], "warlock");
+        assert!(session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "targets": 2,
+                "rng_mode": "balanced", "recover_at_end": true
+            }))
+            .unwrap_err()
+            .contains("preceding prepare"));
+    }
+}
+
 fn run() -> Result<(), Failure> {
     let args: Vec<String> = env::args().skip(1).collect();
     if args == ["api"] {
-        // In-memory API for optimizer calls. No source/prepared JSON files and
-        // no comparison between raw JSON and canonical protobuf SHA domains.
-        use std::io::Read;
-        let mut input = Vec::new();
-        std::io::stdin().read_to_end(&mut input).map_err(|e| e.to_string())?;
-        let request: serde_json::Value =
-            serde_json::from_slice(&input).map_err(|e| format!("invalid API request: {e}"))?;
-        let call = || -> Result<serde_json::Value, String> {
-            match request.get("op").and_then(serde_json::Value::as_str) {
-                Some("options") => {
-                    let class = request.get("class").and_then(serde_json::Value::as_str)
-                        .ok_or("options needs class")?;
-                    let level = request.get("level").and_then(serde_json::Value::as_u64)
-                        .and_then(|n| u8::try_from(n).ok())
-                        .filter(|n| (1..=60).contains(n))
-                        .ok_or("options needs level 1..60")?;
-                    let class = class.parse::<OptionsClass>()?;
-                    serde_json::to_value(get_options(level, class)?).map_err(|e| e.to_string())
-                }
-                Some("prepare") => {
-                    let source = request.get("request").ok_or("prepare needs request")?;
-                    let source = serde_json::to_vec(source).map_err(|e| e.to_string())?;
-                    let actor_level = request.get("actor_level")
-                        .and_then(serde_json::Value::as_i64)
-                        .and_then(|n| i32::try_from(n).ok());
-                    let prepared = std::panic::catch_unwind(|| {
-                        prepare_json_with_actor_level(&source, "rust", Rules::Forever, actor_level)
-                    }).map_err(|_| "native prepare panicked".to_owned())?
-                        .map_err(|e| e.to_string())?;
-                    serde_json::to_value(prepared).map_err(|e| e.to_string())
-                }
-                _ => Err("unsupported API op (expected options or prepare)".to_owned()),
-            }
-        };
-        let response = match call() {
-            Ok(value) => serde_json::json!({"ok": true, "result": value}),
-            Err(error) => serde_json::json!({"ok": false, "error": error}),
-        };
-        println!("{}", serde_json::to_string(&response).map_err(|e| e.to_string())?);
-        return Ok(());
+        return run_native_api();
     }
     if args == ["version"] {
         println!(
@@ -422,7 +532,9 @@ fn run() -> Result<(), Failure> {
         // existing bidirectional live 2D world tick/ACK protocol.
         let input = if args[2] == "-" {
             let mut line = String::new();
-            std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+            std::io::stdin()
+                .read_line(&mut line)
+                .map_err(|e| e.to_string())?;
             if line.is_empty() {
                 return Err("native-world-pulls stdin needs prepared-v2 JSON line".into());
             }
@@ -580,11 +692,17 @@ fn run() -> Result<(), Failure> {
         let request = request_file.ok_or("prepare requires --request")?;
         if infile.is_some() || trace || gate {
             return Err(
-                "prepare takes --request, --actor-level, --scenario, --outfile and --go-rules".into(),
+                "prepare takes --request, --actor-level, --scenario, --outfile and --go-rules"
+                    .into(),
             );
         }
         let input = fs::read(request).map_err(|err| err.to_string())?;
-        let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
+        let prepared = prepare_request(
+            &input,
+            scenario.as_deref().unwrap_or("rust"),
+            rules,
+            actor_level,
+        )?;
         let output = serde_json::to_string_pretty(&prepared).map_err(|err| err.to_string())?;
         if let Some(path) = outfile {
             write_atomically(&path, &(output + "\n"))?;
@@ -604,7 +722,12 @@ fn run() -> Result<(), Failure> {
                 return Err("--request replaces --infile and is for sim and prepare".into());
             }
             let input = fs::read(request).map_err(|err| err.to_string())?;
-            let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
+            let prepared = prepare_request(
+                &input,
+                scenario.as_deref().unwrap_or("rust"),
+                rules,
+                actor_level,
+            )?;
             Some(serde_json::to_vec(&prepared).map_err(|err| err.to_string())?)
         }
         None => None,
