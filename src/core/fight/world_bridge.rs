@@ -482,6 +482,13 @@ fn validate_overlap_selected_world_ack(bridge: &Bridge, ack: &Value) {
     }
 }
 
+/// A native effect cannot be sent to gsim for an ACK earlier than the
+/// source scheduler time at which that effect was actually emitted.
+fn assert_damage_due_for_world_ack(events: &[DamageEvent], clock_ns: i64) {
+    assert!(events.iter().all(|event| event.native_time_ns <= clock_ns),
+        "RUST_WORLD_DAMAGE_EVENT_AFTER_WORLD_CLOCK");
+}
+
 /// One retained Rust process. The next native scheduler action cannot execute
 /// before the gsim CombatRuntime applied every real source damage event.
 pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) -> (f64, bool, bool) {
@@ -490,6 +497,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     assert!(clock_ns > bridge.last_tick_ns && clock_ns >= 0,
         "RUST_WORLD_CLOCK_NOT_MONOTONIC");
     let events = std::mem::take(&mut bridge.pending);
+    assert_damage_due_for_world_ack(&events, clock_ns);
     let event_ids: Vec<String> = events.iter().map(|event| event.event_id.clone()).collect();
     let pid = std::process::id();
     send(&json!({
@@ -1123,6 +1131,14 @@ mod world_overlap_acquisition_tests {
             assert!(!bridge.observed_two_live_targets);
         });
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_DAMAGE_EVENT_AFTER_WORLD_CLOCK")]
+    fn future_native_damage_cannot_enter_an_earlier_world_ack() {
+        // At-clock source damage is eligible; a later effect is not.
+        super::assert_damage_due_for_world_ack(&[source_b_hit(201, 10.0)], 201);
+        super::assert_damage_due_for_world_ack(&[source_b_hit(202, 10.0)], 201);
     }
 
     #[test]
