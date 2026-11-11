@@ -774,6 +774,71 @@ mod native_optimizer_api_tests {
     }
 
     #[test]
+    fn source_prepared_l20_l40_warlock_effects_bind_to_registered_ranks() {
+        // Real Rust preparation and native Fight construction, no gsim peer or
+        // paid world claim. This regresses the L20 live refusal caused by
+        // exporting Immolate 11668 from L60 while registering the L20 rank.
+        let mut source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/classes/warlock/prepare/affliction-no-summon.request.json"
+        )))
+        .unwrap();
+        let actor = &mut source["raid"]["parties"][0]["players"][0];
+        actor["race"] = serde_json::json!("RaceTroll");
+        actor["talentsString"] = serde_json::json!("0-0-0");
+        actor["rotation"] = serde_json::json!({
+            "type": "TypeAPL", "priorityList": []
+        });
+        actor["warlock"]["options"]["classOptions"] =
+            serde_json::json!({"summon": "NoSummon"});
+        source["simOptions"]["iterations"] = serde_json::json!(1);
+        let source_bytes = serde_json::to_vec(&source).unwrap();
+        for level in [20, 40] {
+            let value = forever_engine::prepare_json_with_actor_level(
+                &source_bytes,
+                "rust",
+                forever_engine::Rules::Forever,
+                Some(level),
+            )
+            .unwrap_or_else(|err| panic!("Warlock L{level} source prepare refused: {err}"));
+            let registered: std::collections::HashSet<i64> = value["player"]["spells"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|spell| spell["action_id"]["spell_id"].as_i64())
+                .collect();
+            for effect in value["effects"].as_array().unwrap() {
+                let kind = effect["kind"].as_str().unwrap_or_default();
+                if matches!(
+                    kind,
+                    "immolate"
+                        | "corruption"
+                        | "bane_of_doom"
+                        | "drain_life"
+                        | "hellfire"
+                        | "rain_of_fire"
+                        | "siphon_life"
+                        | "bane_of_agony"
+                        | "life_tap"
+                ) {
+                    let spell_id = effect["spell_id"].as_i64().unwrap();
+                    assert!(
+                        registered.contains(&spell_id),
+                        "Warlock L{level} effect {kind} uses unregistered spell {spell_id}"
+                    );
+                }
+            }
+            let prepared: forever_engine::contracts::prepared_v2::PreparedV2 =
+                serde_json::from_value(value).unwrap();
+            forever_engine::NativeWarlockWorldSession::new(
+                &prepared,
+                forever_engine::RngMode::Balanced,
+            )
+            .unwrap_or_else(|err| panic!("Warlock L{level} native world binding refused: {err}"));
+        }
+    }
+
+    #[test]
     fn options_from_native_and_eval_without_prepared_actor_refuses() {
         let mut session = NativeApiSession::default();
         let options = session
