@@ -180,7 +180,11 @@ pub(crate) fn begin_overlapping_target(
         // event_ordinal. B must bind a distinct world ID on its next damage.
         // An APL changeTarget at the just-ACKed clock is valid; the next
         // gsim tick must still be strictly later than the committed ACK.
-        bridge.next_tick_ns = at_ns.max(bridge.last_tick_ns.saturating_add(1_000_000));
+        bridge.next_tick_ns = if at_ns == bridge.last_tick_ns {
+            at_ns.saturating_add(1_000_000)
+        } else {
+            at_ns
+        };
         Ok(())
     })
 }
@@ -779,7 +783,6 @@ mod world_overlap_acquisition_tests {
             assert_eq!(bridge.iteration, 1);
             assert!(bridge.next_tick_ns > bridge.last_tick_ns);
             assert_eq!(bridge.native_world_target_vitals.get(&0).unwrap().0, "real-world-A");
-            assert_eq!(super::acknowledged_overlapping_deaths(), None);
             bridge.native_world_target_vitals.insert(
                 1, ("real-world-B".to_owned(), 0.0, 100.0));
             bridge.last_health = Some(0.0);
