@@ -239,6 +239,26 @@ fn native_api_prepare(
     Ok((value, prepared))
 }
 
+/// Native world/ACK exchange is an untrusted bidirectional pipe. A malformed
+/// peer frame triggers fail-closed assertions inside the existing causal
+/// bridge; it must refuse this candidate without killing the persistent API
+/// process (and the remaining sampled candidate search).
+fn native_api_world_operation<T, E: std::fmt::Display>(
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, NativeApiError> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).map_err(
+        |panic| {
+            let reason = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
+                .unwrap_or_else(|| "native world/ACK protocol panicked".to_owned());
+            NativeApiError::new("native_world_protocol_panic", reason)
+        },
+    )?;
+    result.map_err(|error| NativeApiError::new("native_world_refused", error.to_string()))
+}
+
 impl NativeApiSession {
     fn dispatch(
         &mut self,
@@ -300,10 +320,11 @@ impl NativeApiSession {
                 // boundary and native Decisions terminal dual-resource rest.
                 // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
                 // stdout and consumes causal ACKs on stdin during this call.
-                let report = native_two_world_targets_with_decisions_recovery(
-                    prepared, targets, mode, 1.0, 1.0,
-                )
-                .map_err(|e| NativeApiError::new("native_world_refused", e.to_string()))?;
+                let report = native_api_world_operation(|| {
+                    native_two_world_targets_with_decisions_recovery(
+                        prepared, targets, mode, 1.0, 1.0,
+                    )
+                })?;
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
                     "source_sha256": prepared.request_sha256,
@@ -391,6 +412,34 @@ mod native_optimizer_api_tests {
         assert_eq!(
             native_api_actor_level(&serde_json::json!({})).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn malformed_world_ack_refuses_one_candidate_without_ending_the_session() {
+        use super::native_api_world_operation;
+
+        let refused = native_api_world_operation(|| -> Result<(), &str> {
+            panic!("RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID");
+        })
+        .unwrap_err();
+        assert_eq!(refused.code, "native_world_protocol_panic");
+        assert!(refused.reason.contains("RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID"));
+
+        let refused = native_api_world_operation(|| -> Result<(), &str> {
+            Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL")
+        })
+        .unwrap_err();
+        assert_eq!(refused.code, "native_world_refused");
+        assert_eq!(refused.reason, "RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
+
+        assert_eq!(native_api_world_operation(|| Ok::<_, &str>(7)).unwrap(), 7);
+        let mut session = NativeApiSession::default();
+        assert_eq!(
+            session
+                .dispatch(&serde_json::json!({"op":"options","class":"warlock","level":40}))
+                .unwrap()["level"],
+            40
         );
     }
 
