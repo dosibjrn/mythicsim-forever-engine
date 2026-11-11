@@ -309,6 +309,11 @@ pub(crate) fn implemented_effects() -> &'static [&'static str] {
 /// Match only native source-backed actor-level coverage already accepted by
 /// native preparation. Unsupported races/builds still receive native refusals.
 fn sourced_actor_level(class: &str, level: i32) -> bool {
+    // Rust preparation has exact source-backed Troll Warlock actor rows at
+    // L20 and L21-L59. Do not veto those actors before native combat runs.
+    if class == "ClassWarlock" && (20..=59).contains(&level) {
+        return true;
+    }
     match level {
         20 => matches!(
             class,
@@ -3789,7 +3794,14 @@ mod sourced_level_gate_tests {
             assert!(sourced_actor_level(class, 20), "{class} L20");
         }
         assert!(sourced_actor_level("ClassDruid", 30));
-        assert!(!sourced_actor_level("ClassWarlock", 30));
+        for level in 20..=59 {
+            assert!(
+                sourced_actor_level("ClassWarlock", level),
+                "Warlock L{level}"
+            );
+        }
+        assert!(!sourced_actor_level("ClassWarlock", 19));
+        assert!(!sourced_actor_level("ClassWarlock", 61));
         assert!(!sourced_actor_level("ClassRogue", 30));
         assert!(!sourced_actor_level("ClassMage", 20));
         assert!(!sourced_actor_level("ClassDruid", 40));

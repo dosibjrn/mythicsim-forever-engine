@@ -30,7 +30,9 @@
     "spell-extras.json": "c05122af693b86f561f90f59472dbee305f03b1eaf7b7b96eb51e8c859d8f396",
     "spells.jsonl": "b8501937b28a7c149cd49a57462f08ca1a1e85d88afb4a17df71a1a0cacc7d25",
     "talentsforever_talent_options.json": "ab04c6b49517a9d51c5232fea3904a56850159029125ad7b83773d1debc1aa05",
-    "warlock-l20-actor-source.json": "dab0b91c0f1122d271729251e4f24a9bfb26dd30c9b56982a579b820c86e4632"
+    "warlock-l10-l40-actor-source.json": "efbe8cfc43787beeddc096f4a28fb790a89f0cc801cc030e7fa2858f8f5d284c",
+    "warlock-l20-actor-source.json": "dab0b91c0f1122d271729251e4f24a9bfb26dd30c9b56982a579b820c86e4632",
+    "warlock-l41-l59-actor-source.json": "f06fe13e1147b4c29ccf5a7e529f22dbbb2f7ef0d026cb593750c1fb2e13ec59"
   },
   "schema_version": 1,
   "tool": "tools/rust-data",

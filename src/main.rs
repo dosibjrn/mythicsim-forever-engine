@@ -3,9 +3,8 @@ use forever_engine::{
     native_player_context, native_talent_options, native_two_pull_windows,
     native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
     prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated,
-    validate_prepared, Gated, OptionsClass, PrepareError, PreparedError, Refusal, Request, RngMode,
-    Rules, SOURCE_REVISION,
+    simulate_prepared_gated, validate_prepared, Gated, OptionsClass, PrepareError, PreparedError,
+    Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -162,8 +161,315 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
     serde_json::to_string_pretty(&report).map_err(|err| err.to_string())
 }
 
+#[derive(Default)]
+struct NativeApiSession {
+    // Rust owns the prepared protobuf-derived actor, not a JSON file handle.
+    prepared: Option<PreparedV2>,
+}
+
+/// A refused native candidate must carry a machine-readable reason, while
+/// retaining the original string error field for existing API consumers.
+#[derive(Debug)]
+struct NativeApiError {
+    code: String,
+    reason: String,
+}
+
+impl NativeApiError {
+    fn new(code: &str, reason: impl Into<String>) -> Self {
+        Self {
+            code: code.to_owned(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl From<String> for NativeApiError {
+    fn from(reason: String) -> Self {
+        Self::new("invalid_api_request", reason)
+    }
+}
+
+impl From<&str> for NativeApiError {
+    fn from(reason: &str) -> Self {
+        Self::new("invalid_api_request", reason)
+    }
+}
+
+impl From<PrepareError> for NativeApiError {
+    fn from(error: PrepareError) -> Self {
+        match error {
+            PrepareError::Invalid(reason) => Self::new("invalid_prepare_request", reason),
+            PrepareError::Refused(refusal) => Self::new(refusal.code, refusal.reason),
+            PrepareError::Fault(reason) => Self::new("native_prepare_fault", reason),
+        }
+    }
+}
+
+/// Preserve the requested sampled actor level. A malformed value must not be
+/// interpreted as absent and silently prepare a default L60 character.
+fn native_api_actor_level(request: &serde_json::Value) -> Result<Option<i32>, String> {
+    let Some(value) = request.get("actor_level") else {
+        return Ok(None);
+    };
+    value
+        .as_i64()
+        .and_then(|n| i32::try_from(n).ok())
+        .filter(|level| (1..=60).contains(level))
+        .map(Some)
+        .ok_or_else(|| "actor_level must be an integer in 1..=60".to_owned())
+}
+
+/// Prepare directly from the exact source request. No raw-JSON/protobuf SHA
+/// comparison: the native PreparedV2 carries the engine's canonical identity.
+fn native_api_prepare(
+    request: &serde_json::Value,
+) -> Result<(serde_json::Value, PreparedV2), NativeApiError> {
+    let source = request.get("request").ok_or("prepare needs request")?;
+    let bytes = serde_json::to_vec(source).map_err(|e| e.to_string())?;
+    let actor_level = native_api_actor_level(request)?;
+    let source_prepared = std::panic::catch_unwind(|| {
+        prepare_json_with_actor_level(&bytes, "rust", Rules::Forever, actor_level)
+    })
+    .map_err(|_| NativeApiError::new("native_prepare_fault", "native prepare panicked"))?
+    .map_err(NativeApiError::from)?;
+    let value = serde_json::to_value(source_prepared).map_err(|e| e.to_string())?;
+    let prepared = serde_json::from_value::<PreparedV2>(value.clone())
+        .map_err(|e| format!("native prepared-v2 rejected: {e}"))?;
+    Ok((value, prepared))
+}
+
+/// Native world/ACK exchange is an untrusted bidirectional pipe. A malformed
+/// peer frame triggers fail-closed assertions inside the existing causal
+/// bridge; it must refuse this candidate without killing the persistent API
+/// process (and the remaining sampled candidate search).
+fn native_api_world_operation<T, E: std::fmt::Display>(
+    operation: impl FnOnce() -> Result<T, E>,
+) -> Result<T, NativeApiError> {
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation)).map_err(|panic| {
+            let reason = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
+                .unwrap_or_else(|| "native world/ACK protocol panicked".to_owned());
+            NativeApiError::new("native_world_protocol_panic", reason)
+        })?;
+    result.map_err(|error| NativeApiError::new("native_world_refused", error.to_string()))
+}
+
+impl NativeApiSession {
+    fn dispatch(
+        &mut self,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, NativeApiError> {
+        match request.get("op").and_then(serde_json::Value::as_str) {
+            Some("options") => {
+                let class = request
+                    .get("class")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("options needs class")?;
+                let level = request
+                    .get("level")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| u8::try_from(n).ok())
+                    .filter(|n| (1..=60).contains(n))
+                    .ok_or("options needs level 1..60")?;
+                serde_json::to_value(get_options(level, class.parse::<OptionsClass>()?)?)
+                    .map_err(|e| NativeApiError::from(e.to_string()))
+            }
+            Some("prepare") => {
+                // On refusal no earlier actor may accidentally be evaluated.
+                self.prepared = None;
+                let (value, prepared) = native_api_prepare(request)?;
+                self.prepared = Some(prepared);
+                Ok(value)
+            }
+            Some("evaluate") => {
+                // Evaluate either the actor retained by a preceding prepare in
+                // this session, or prepare a new source inline in this call.
+                if request.get("request").is_some() {
+                    self.prepared = None;
+                    let (_, prepared) = native_api_prepare(request)?;
+                    self.prepared = Some(prepared);
+                }
+                let prepared = self
+                    .prepared
+                    .as_ref()
+                    .ok_or("evaluate needs a preceding prepare or inline request")?;
+                let targets = request
+                    .get("targets")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|n| (2..=100).contains(n))
+                    .ok_or("evaluate needs targets 2..100")?;
+                let rng = request
+                    .get("rng_mode")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("evaluate needs rng_mode")?;
+                let mode = RngMode::parse_cli(rng)?;
+                if request
+                    .get("recover_at_end")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+                {
+                    return Err("evaluate requires recover_at_end true".into());
+                }
+                // This is the existing real two-dimensional gsim tick/ACK
+                // boundary and native Decisions terminal dual-resource rest.
+                // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
+                // stdout and consumes causal ACKs on stdin during this call.
+                let report = native_api_world_operation(|| {
+                    native_two_world_targets_with_decisions_recovery(
+                        prepared, targets, mode, 1.0, 1.0,
+                    )
+                })?;
+                Ok(serde_json::json!({
+                    "engine": "forever-engine",
+                    "source_sha256": prepared.request_sha256,
+                    "result": report,
+                    "checkpoint_certified": false
+                }))
+            }
+            _ => Err("unsupported API op (expected options, prepare or evaluate)".into()),
+        }
+    }
+}
+
+/// Persistent NDJSON Rust API; gsim's world ACKs use the same stdin/stdout
+/// stream during evaluate and are consumed by the existing native bridge.
+fn run_native_api() -> Result<(), Failure> {
+    let mut session = NativeApiSession::default();
+    loop {
+        let mut line = String::new();
+        if std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            return Ok(());
+        }
+        let response = match serde_json::from_str::<serde_json::Value>(&line)
+            .map_err(|e| {
+                NativeApiError::new("invalid_api_request", format!("invalid API request: {e}"))
+            })
+            .and_then(|request| session.dispatch(&request))
+        {
+            Ok(result) => serde_json::json!({"ok": true, "result": result}),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.reason.clone(),
+                "refusal": {"code": error.code, "reason": error.reason}
+            }),
+        };
+        println!("{}", response);
+        std::io::stdout().flush().map_err(|e| e.to_string())?;
+    }
+}
+
+#[cfg(test)]
+mod native_optimizer_api_tests {
+    use super::{NativeApiError, NativeApiSession, PrepareError};
+
+    #[test]
+    fn native_prepare_refusal_keeps_source_code_and_reason() {
+        let error = NativeApiError::from(PrepareError::Refused(forever_engine::PrepareRefusal {
+            code: "source_item_refused",
+            reason: "unsupported candidate item".to_owned(),
+        }));
+        assert_eq!(error.code, "source_item_refused");
+        assert_eq!(error.reason, "unsupported candidate item");
+        let error = NativeApiError::from(PrepareError::Invalid("missing iterations".to_owned()));
+        assert_eq!(error.code, "invalid_prepare_request");
+        let error = NativeApiError::from(PrepareError::Fault("internal failure".to_owned()));
+        assert_eq!(error.code, "native_prepare_fault");
+    }
+
+    #[test]
+    fn sampled_actor_level_rejects_malformed_values_without_l60_fallback() {
+        use super::native_api_actor_level;
+
+        for invalid in [
+            serde_json::json!(null),
+            serde_json::json!("40"),
+            serde_json::json!(40.5),
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!(61),
+            serde_json::json!(4_294_967_296_i64),
+        ] {
+            let request = serde_json::json!({"actor_level": invalid});
+            assert_eq!(
+                native_api_actor_level(&request).unwrap_err(),
+                "actor_level must be an integer in 1..=60"
+            );
+        }
+        assert_eq!(
+            native_api_actor_level(&serde_json::json!({"actor_level": 40})).unwrap(),
+            Some(40)
+        );
+        assert_eq!(
+            native_api_actor_level(&serde_json::json!({})).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn malformed_world_ack_refuses_one_candidate_without_ending_the_session() {
+        use super::native_api_world_operation;
+
+        let refused = native_api_world_operation(|| -> Result<(), &str> {
+            panic!("RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID");
+        })
+        .unwrap_err();
+        assert_eq!(refused.code, "native_world_protocol_panic");
+        assert!(refused
+            .reason
+            .contains("RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID"));
+
+        let refused = native_api_world_operation(|| -> Result<(), &str> {
+            Err("RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL")
+        })
+        .unwrap_err();
+        assert_eq!(refused.code, "native_world_refused");
+        assert_eq!(refused.reason, "RUST_MULTI_WORLD_TARGET_NOT_NATIVE_LETHAL");
+
+        assert_eq!(native_api_world_operation(|| Ok::<_, &str>(7)).unwrap(), 7);
+        let mut session = NativeApiSession::default();
+        assert_eq!(
+            session
+                .dispatch(&serde_json::json!({"op":"options","class":"warlock","level":40}))
+                .unwrap()["level"],
+            40
+        );
+    }
+
+    #[test]
+    fn options_from_native_and_eval_without_prepared_actor_refuses() {
+        let mut session = NativeApiSession::default();
+        let options = session
+            .dispatch(&serde_json::json!({
+                "op": "options", "class": "warlock", "level": 40
+            }))
+            .unwrap();
+        assert_eq!(options["level"], 40);
+        assert_eq!(options["class"], "warlock");
+        assert!(session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "targets": 2,
+                "rng_mode": "balanced", "recover_at_end": true
+            }))
+            .unwrap_err()
+            .reason
+            .contains("preceding prepare"));
+    }
+}
+
 fn run() -> Result<(), Failure> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args == ["api"] {
+        return run_native_api();
+    }
     if args == ["version"] {
         println!(
             "forever-rust-prototype-{} source-{SOURCE_REVISION}",
@@ -376,7 +682,20 @@ fn run() -> Result<(), Failure> {
         if !(2..=100).contains(&target_count) {
             return Err("native-world-pulls requires --targets 2..100".into());
         }
-        let input = fs::read(&args[2]).map_err(|err| err.to_string())?;
+        // '-' accepts one prepared-v2 JSON line on stdin, followed by the
+        // existing bidirectional live 2D world tick/ACK protocol.
+        let input = if args[2] == "-" {
+            let mut line = String::new();
+            std::io::stdin()
+                .read_line(&mut line)
+                .map_err(|e| e.to_string())?;
+            if line.is_empty() {
+                return Err("native-world-pulls stdin needs prepared-v2 JSON line".into());
+            }
+            line.into_bytes()
+        } else {
+            fs::read(&args[2]).map_err(|err| err.to_string())?
+        };
         let prepared =
             prepared_v2(&input)?.ok_or("native-world-pulls requires a prepared v2 input")?;
         let mode = RngMode::parse_cli(&args[6])?;
@@ -527,11 +846,17 @@ fn run() -> Result<(), Failure> {
         let request = request_file.ok_or("prepare requires --request")?;
         if infile.is_some() || trace || gate {
             return Err(
-                "prepare takes --request, --actor-level, --scenario, --outfile and --go-rules".into(),
+                "prepare takes --request, --actor-level, --scenario, --outfile and --go-rules"
+                    .into(),
             );
         }
         let input = fs::read(request).map_err(|err| err.to_string())?;
-        let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
+        let prepared = prepare_request(
+            &input,
+            scenario.as_deref().unwrap_or("rust"),
+            rules,
+            actor_level,
+        )?;
         let output = serde_json::to_string_pretty(&prepared).map_err(|err| err.to_string())?;
         if let Some(path) = outfile {
             write_atomically(&path, &(output + "\n"))?;
@@ -551,7 +876,12 @@ fn run() -> Result<(), Failure> {
                 return Err("--request replaces --infile and is for sim and prepare".into());
             }
             let input = fs::read(request).map_err(|err| err.to_string())?;
-            let prepared = prepare_request(&input, scenario.as_deref().unwrap_or("rust"), rules, actor_level)?;
+            let prepared = prepare_request(
+                &input,
+                scenario.as_deref().unwrap_or("rust"),
+                rules,
+                actor_level,
+            )?;
             Some(serde_json::to_vec(&prepared).map_err(|err| err.to_string())?)
         }
         None => None,
