@@ -4,7 +4,7 @@ use forever_engine::{
     native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
     prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
     simulate_prepared_gated, validate_prepared, Gated, OptionsClass, PrepareError, PreparedError,
-    Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    NativeWarlockWorldSession, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -168,6 +168,9 @@ struct NativeApiSession {
     // Last completed and charged native world measurement, NOT a resumable
     // Fight. Invalidate it before a new candidate starts or prepare is called.
     last_paid_world: Option<serde_json::Value>,
+    // Unlike PreparedV2, this owns an actual retained source-native Fight.
+    // It remains level-locked: no earned XP/training implementation yet.
+    retained_world: Option<NativeWarlockWorldSession>,
 }
 
 /// A refused native candidate must carry a machine-readable reason, while
@@ -267,6 +270,7 @@ fn native_api_world_operation<T, E: std::fmt::Display>(
 fn native_paid_world_snapshot(
     prepared: &PreparedV2,
     report: &serde_json::Value,
+    retained: bool,
 ) -> serde_json::Value {
     let final_kill_clock_ns = report["windows"]
         .as_array()
@@ -274,13 +278,13 @@ fn native_paid_world_snapshot(
         .and_then(|window| window.get("native_kill_ns"))
         .cloned();
     serde_json::json!({
-        "kind": "completed_independent_native_world",
+        "kind": if retained { "retained_native_world_segment" } else { "completed_independent_native_world" },
         "source_sha256": prepared.request_sha256,
         "actor_level": prepared.player.level,
         "world_targets_killed": report.get("world_targets_killed"),
         "final_kill_clock_ns": final_kill_clock_ns,
         "terminal_recovery": report.get("terminal_recovery"),
-        "post_combat_actor_retained": false,
+        "post_combat_actor_retained": retained,
         "xp_earned": null,
         "level_transition_supported": false
     })
@@ -305,7 +309,7 @@ impl NativeApiSession {
                     "actor_level": prepared.player.level,
                     "actor_class": prepared.player.class,
                     "source_sha256": prepared.request_sha256,
-                    "retained_combat_runtime": false,
+                    "retained_combat_runtime": self.retained_world.is_some(),
                     "retained_xp": false,
                     "level_transition_supported": false,
                     "last_paid_world": self.last_paid_world.as_ref()
@@ -316,7 +320,7 @@ impl NativeApiSession {
             // describe it as the old actor gaining XP or training.
             Some("advance") => Err(NativeApiError::new(
                 "native_level_transition_unsupported",
-                "native API retains source preparation but not the post-combat actor, XP, training or cross-level world state",
+                "native API may retain same-level combat but has no earned XP, training or cross-level actor transition",
             )),
             Some("options") => {
                 let class = request
@@ -336,6 +340,7 @@ impl NativeApiSession {
                 // No measured world from the previous candidate can be attached
                 // to a newly prepared actor, even when its preparation refuses.
                 self.last_paid_world = None;
+                self.retained_world = None;
                 // On refusal no earlier actor may accidentally be evaluated.
                 self.prepared = None;
                 let (value, prepared) = native_api_prepare(request)?;
@@ -343,21 +348,35 @@ impl NativeApiSession {
                 Ok(value)
             }
             Some("evaluate") => {
-                // Evaluating the same PreparedV2 again is a fresh native Fight,
-                // not a continuation of the previous paid combat. Reject a
-                // continuous-route request before any new prepare/world work.
-                if let Some(continuation) = request.get("continue_from_previous") {
-                    match continuation.as_bool() {
-                        Some(false) => {}
-                        Some(true) => return Err(NativeApiError::new(
-                            "native_combat_continuation_unsupported",
-                            "evaluate recreates a native Fight from the source-prepared actor; no post-combat actor, XP or cooldown state is retained",
-                        )),
-                        None => return Err(NativeApiError::new(
-                            "invalid_api_request",
-                            "continue_from_previous must be a boolean",
-                        )),
-                    }
+                // An opt-in retained native Warlock world spans multiple paid
+                // evaluate messages without resetting its Fight, queue or clock.
+                // All historical sampled calls still create independent fights.
+                let continued = match request.get("continue_from_previous") {
+                    None | Some(serde_json::Value::Bool(false)) => false,
+                    Some(serde_json::Value::Bool(true)) => true,
+                    _ => return Err(NativeApiError::new(
+                        "invalid_api_request", "continue_from_previous must be a boolean")),
+                };
+                let retain = match request.get("retain_native_actor") {
+                    None | Some(serde_json::Value::Bool(false)) => false,
+                    Some(serde_json::Value::Bool(true)) => true,
+                    _ => return Err(NativeApiError::new(
+                        "invalid_api_request", "retain_native_actor must be a boolean")),
+                };
+                if continued && (!retain || self.retained_world.is_none()) {
+                    return Err(NativeApiError::new(
+                        "native_combat_continuation_unsupported",
+                        "continue_from_previous requires a preceding paid retained native Fight and retain_native_actor true",
+                    ));
+                }
+                if continued && request.get("request").is_some() {
+                    return Err(NativeApiError::new(
+                        "native_combat_continuation_source_mismatch",
+                        "a retained Fight cannot be replaced with a newly prepared actor",
+                    ));
+                }
+                if !continued {
+                    self.retained_world = None;
                 }
                 // A new world attempt supersedes the previous paid segment.
                 // A native refusal must not leave a stale measured checkpoint
@@ -367,6 +386,7 @@ impl NativeApiSession {
                 // this session, or prepare a new source inline in this call.
                 if request.get("request").is_some() {
                     self.prepared = None;
+                    self.retained_world = None;
                     let (_, prepared) = native_api_prepare(request)?;
                     self.prepared = Some(prepared);
                 }
@@ -412,21 +432,51 @@ impl NativeApiSession {
                 // boundary and native Decisions terminal dual-resource rest.
                 // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
                 // stdout and consumes causal ACKs on stdin during this call.
-                let report = native_api_world_operation(|| {
-                    native_two_world_targets_with_decisions_recovery(
-                        prepared, targets, mode, 1.0, 1.0,
-                    )
-                })?;
-                // This is the actual native paid-world result from the causal
-                // ACK bridge; it does not retain Fight or imply progression.
-                self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report));
+                let report = if retain {
+                    if prepared.player.class != "ClassWarlock" {
+                        return Err(NativeApiError::new(
+                            "native_retained_class_unsupported",
+                            "retained native Fight currently supports Warlock only",
+                        ));
+                    }
+                    let mut live = if continued {
+                        self.retained_world.take().ok_or_else(|| NativeApiError::new(
+                            "native_combat_continuation_unsupported", "no retained Fight",
+                        ))?
+                    } else {
+                        native_api_world_operation(|| NativeWarlockWorldSession::new(prepared, mode))?
+                    };
+                    if live.rng_mode() != mode {
+                        self.retained_world = Some(live);
+                        return Err(NativeApiError::new(
+                            "native_continuation_rng_mismatch",
+                            "cannot reseed or change RNG mode of an already retained native Fight",
+                        ));
+                    }
+                    // A failed native segment drops the potentially partial
+                    // Fight rather than allowing an unACKed continuation.
+                    let result = native_api_world_operation(|| {
+                        live.evaluate_segment(targets, continued)
+                    });
+                    if result.is_ok() {
+                        self.retained_world = Some(live);
+                    }
+                    result?
+                } else {
+                    native_api_world_operation(|| {
+                        native_two_world_targets_with_decisions_recovery(
+                            prepared, targets, mode, 1.0, 1.0,
+                        )
+                    })?
+                };
+                self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report, retain));
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
                     "source_sha256": prepared.request_sha256,
                     "result": report,
                     "continuity": {
-                        "kind": "independent_source_prepared_fight",
-                        "post_combat_actor_retained": false,
+                        "kind": if retain { "retained_native_world_segment" } else { "independent_source_prepared_fight" },
+                        "post_combat_actor_retained": retain,
                         "xp_earned": null,
                         "level_transition_supported": false
                     },
@@ -559,6 +609,7 @@ mod native_optimizer_api_tests {
         let mut session = NativeApiSession {
             prepared: Some(prepared),
             last_paid_world: None,
+            retained_world: None,
         };
         let refusal = session
             .dispatch(&serde_json::json!({
@@ -587,6 +638,7 @@ mod native_optimizer_api_tests {
         let mut session = NativeApiSession {
             prepared: Some(prepared),
             last_paid_world: None,
+            retained_world: None,
         };
         let state = session
             .dispatch(&serde_json::json!({"op": "state"}))
@@ -607,7 +659,7 @@ mod native_optimizer_api_tests {
             }))
             .unwrap_err();
         assert_eq!(refusal.code, "native_level_transition_unsupported");
-        assert!(refusal.reason.contains("post-combat actor"));
+        assert!(refusal.reason.contains("earned XP"));
 
         let continuation = session
             .dispatch(&serde_json::json!({
@@ -617,7 +669,7 @@ mod native_optimizer_api_tests {
             }))
             .unwrap_err();
         assert_eq!(continuation.code, "native_combat_continuation_unsupported");
-        assert!(continuation.reason.contains("recreates a native Fight"));
+        assert!(continuation.reason.contains("requires a preceding paid retained native Fight"));
 
         let invalid_flag = session
             .dispatch(&serde_json::json!({
@@ -646,7 +698,7 @@ mod native_optimizer_api_tests {
                 "max_health": 1350.0, "max_mana": 2000.0
             }
         });
-        let snapshot = super::native_paid_world_snapshot(&prepared, &report);
+        let snapshot = super::native_paid_world_snapshot(&prepared, &report, false);
         let mut session = NativeApiSession {
             prepared: Some(prepared),
             last_paid_world: Some(snapshot),

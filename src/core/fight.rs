@@ -5779,7 +5779,7 @@ impl<A: Agent> Fight<A> {
         recovery_seconds: u32,
     ) -> Result<serde_json::Value, &'static str> {
         self.native_two_world_targets_with_strategy(
-            target_count, WorldRecoveryStrategy::Fixed(recovery_seconds))
+            target_count, WorldRecoveryStrategy::Fixed(recovery_seconds), false, false)
     }
 
     /// Full ordinary vendor food/water when real carried resource thresholds
@@ -5790,13 +5790,28 @@ impl<A: Agent> Fight<A> {
         health_fraction: f64, mana_fraction: f64,
     ) -> Result<serde_json::Value, &'static str> {
         self.native_two_world_targets_with_strategy(target_count,
-            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction })
+            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction }, false, false)
+    }
+
+    /// Retain the SAME source-native Fight, pending actions, resources, timers
+    /// and monotonic gsim ACK chain across separate API evaluate messages.
+    /// This is same-level combat continuation; no XP or level transition exists.
+    pub(crate) fn native_world_session_segment(
+        &mut self, target_count: usize, continued: bool,
+    ) -> Result<serde_json::Value, &'static str> {
+        self.native_two_world_targets_with_strategy(
+            target_count,
+            WorldRecoveryStrategy::Decisions { health_fraction: 1.0, mana_fraction: 1.0 },
+            continued, true,
+        )
     }
 
     fn native_two_world_targets_with_strategy(
         &mut self,
         target_count: usize,
         strategy: WorldRecoveryStrategy,
+        continued: bool,
+        retain_runtime: bool,
     ) -> Result<serde_json::Value, &'static str> {
         if let WorldRecoveryStrategy::Fixed(recovery_seconds) = strategy {
             if !(1..=120).contains(&recovery_seconds) {
@@ -5814,27 +5829,47 @@ impl<A: Agent> Fight<A> {
             self.build_exclusive_tracking();
             self.apply_enemy_slow_priorities();
         }
-        self.rng.reseed(self.config.seed as u64);
-        self.log = None;
-        world_bridge::begin_iteration(0);
-        self.prepare_first_native_pull();
+        if continued {
+            // Only a previously ACKed lethal target allows the same native
+            // actor/world to proceed. Never reset RNG, queue or source buffs.
+            if !world_bridge::acknowledged_lethal() {
+                return Err("RUST_NATIVE_SESSION_PREVIOUS_WORLD_NOT_LETHAL");
+            }
+        } else {
+            self.rng.reseed(self.config.seed as u64);
+            self.log = None;
+            world_bridge::begin_iteration(0);
+            self.prepare_first_native_pull();
+        }
         let food_water_metrics = if matches!(strategy, WorldRecoveryStrategy::Decisions { .. }) {
             Some(self.register_world_food_water_metrics())
         } else {
             None
         };
         let mut windows = Vec::with_capacity(target_count);
-        let mut previous_damage = 0.0;
-        let mut previous_health_damage = 0.0_f64;
-        let mut previous_health_damage_events = 0;
-        let mut previous_mana_regen_gain = 0.0_f64;
-        let mut previous_mana_regen_events = 0_i32;
+        // A resumed segment reports only its own deltas, not the lifetime
+        // metrics already paid by earlier requests on this same native Fight.
+        let mut previous_damage = if continued { self.encounter_damage_taken } else { 0.0 };
+        let mut previous_health_damage = if continued {
+            -self.resources[self.damage_taken_health].gain
+        } else { 0.0 };
+        let mut previous_health_damage_events = if continued {
+            self.resources[self.damage_taken_health].events
+        } else { 0 };
+        let mut previous_mana_regen_gain = if continued {
+            self.resources[self.mana_regen_casting].actual_gain
+                + self.resources[self.mana_regen_not_casting].actual_gain
+        } else { 0.0 };
+        let mut previous_mana_regen_events = if continued {
+            self.resources[self.mana_regen_casting].events
+                + self.resources[self.mana_regen_not_casting].events
+        } else { 0 };
 
         for index in 0..target_count {
             let mut native_recovery_ticks = 0;
             let mut native_recovery_elapsed_ns = 0;
             let mut decisions_receipt = WorldRecoveryReceipt::default();
-            if index != 0 {
+            if index != 0 || continued {
                 // Retain the Rust actor, resources and all native queue state.
                 // Start next 2D target's range feed before paid travel/rest.
                 let killed_at = self.now;
@@ -5922,7 +5957,7 @@ impl<A: Agent> Fight<A> {
         // Count only native scheduler regeneration actually paid on the
         // retained actor between ACKed world kills. Time alone, an assumed
         // refill or a completed movement schedule is not regeneration proof.
-        let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
+        let native_passive_recovery_paid = windows.iter().skip(if continued { 0 } else { 1 }).all(|window| {
             native_world_gap_paid(
                 window, matches!(strategy, WorldRecoveryStrategy::Decisions { .. }))
         });
@@ -5977,6 +6012,8 @@ impl<A: Agent> Fight<A> {
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
+            "continued_from_previous_native_segment": continued,
+            "native_fight_retained_after_segment": retain_runtime,
             "terminal_recovery": terminal_recovery,
             "recovery_mode": match strategy {
                 WorldRecoveryStrategy::Fixed(_) => "fixed_passive",
@@ -5996,7 +6033,11 @@ impl<A: Agent> Fight<A> {
             },
             "windows": windows,
         });
-        self.cleanup();
+        // cleanup destroys live auras/pets and pending scheduler state.
+        // Only independent scored samples finalize the Fight here.
+        if !retain_runtime {
+            self.cleanup();
+        }
         Ok(report)
     }
 
