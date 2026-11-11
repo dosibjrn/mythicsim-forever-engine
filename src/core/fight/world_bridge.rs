@@ -385,6 +385,31 @@ fn string<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or_else(|| panic!("RUST_WORLD_MISSING_{key}"))
 }
 
+/// After an ACK-backed changeTarget from A to B, gsim must actually have
+/// selected a distinct world mob before native effects can be sent. The source
+/// switch record is retained unchanged over every tick of this joint Fight.
+fn validate_overlap_selected_world_tick(bridge: &Bridge, tick: &Value) {
+    if let Some(switch) = bridge.source_apl_world_switch.as_ref() {
+        let selected = tick["selected_target_id"].as_str();
+        assert!(bridge.iteration == switch.to_native_target_index
+            && selected.is_some_and(|id| !id.is_empty()
+                && id != switch.prior_world_target_id),
+            "RUST_WORLD_OVERLAP_SELECTED_WORLD_ID_INVALID");
+    }
+}
+
+/// A matching iteration_index on the outer ACK is not enough: the selected
+/// damage-ACK's *native slot* must be B, with the multi-target ledger retained.
+/// Otherwise A's scalar HP could be misrepresented as B's selected HP.
+fn validate_overlap_selected_world_ack(bridge: &Bridge, ack: &Value) {
+    if let Some(switch) = bridge.source_apl_world_switch.as_ref() {
+        assert!(ack["selected_native_target_index"].as_u64()
+                == Some(u64::from(switch.to_native_target_index))
+            && ack["native_target_health_acks"].is_array(),
+            "RUST_WORLD_OVERLAP_SELECTED_B_ACK_INVALID");
+    }
+}
+
 /// One retained Rust process. The next native scheduler action cannot execute
 /// before the gsim CombatRuntime applied every real source damage event.
 pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) -> (f64, bool, bool) {
@@ -413,6 +438,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         && tick["world_source"] == "gsim.CombatRuntime"
         && tick["previous_world_ack_id"] == bridge.previous_ack_id,
         "RUST_WORLD_TICK_IDENTITY_OR_ACK_CHAIN_INVALID");
+    validate_overlap_selected_world_tick(&bridge, &tick);
     let distance = number(&tick, "distance_yards");
     assert!((0.0..=100.0).contains(&distance), "RUST_WORLD_DISTANCE_INVALID");
     let front = tick["in_front_of_target"].as_bool()
@@ -463,6 +489,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
         && ack["native_process_id"] == pid
         && ack["world_before_sha256"] == before_hash,
         "RUST_WORLD_DAMAGE_ACK_IDENTITY_INVALID");
+    validate_overlap_selected_world_ack(&bridge, &ack);
     let accepted = ack["applied_event_ids"].as_array()
         .expect("RUST_WORLD_DAMAGE_ACK_EVENT_IDS_MISSING");
     assert_damage_acknowledgement(&event_ids, accepted);
@@ -801,6 +828,66 @@ mod world_overlap_acquisition_tests {
         assert_eq!(begin_overlapping_target(300, 0.5),
             Err("RUST_WORLD_OVERLAP_TWO_LIVE_TARGET_LIMIT"));
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn selected_b_world_and_native_ack_must_match_source_switch() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            let bridge = state.as_ref().unwrap();
+            super::validate_overlap_selected_world_tick(
+                bridge, &serde_json::json!({"selected_target_id": "real-world-B"}));
+            super::validate_overlap_selected_world_ack(
+                bridge, &serde_json::json!({
+                    "selected_native_target_index": 1,
+                    "native_target_health_acks": []
+                }));
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_OVERLAP_SELECTED_WORLD_ID_INVALID")]
+    fn source_switched_b_cannot_keep_selecting_old_world_a() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            super::validate_overlap_selected_world_tick(
+                state.as_ref().unwrap(),
+                &serde_json::json!({"selected_target_id": "real-world-A"}));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_OVERLAP_SELECTED_B_ACK_INVALID")]
+    fn source_switched_b_cannot_accept_native_a_as_selected_ack() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            super::validate_overlap_selected_world_ack(
+                state.as_ref().unwrap(),
+                &serde_json::json!({
+                    "selected_native_target_index": 0,
+                    "native_target_health_acks": []
+                }));
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_OVERLAP_SELECTED_B_ACK_INVALID")]
+    fn source_switched_b_cannot_accept_scalar_only_ack() {
+        acknowledged_first_target(45.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            super::validate_overlap_selected_world_ack(
+                state.as_ref().unwrap(),
+                &serde_json::json!({"selected_native_target_index": 1}));
+        });
     }
 
     #[test]
