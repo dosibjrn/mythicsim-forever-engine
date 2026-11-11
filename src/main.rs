@@ -297,6 +297,22 @@ impl NativeApiSession {
                     .prepared
                     .as_ref()
                     .ok_or("evaluate needs a preceding prepare or inline request")?;
+                // A persistent session may retain a source-prepared L40 actor
+                // while the next route sample requests L50. Never silently
+                // charge an L40 world as evidence for a named L50 candidate.
+                // For inline requests, this also confirms the actual native
+                // prepared actor matches the explicit level after preparation.
+                if let Some(requested_level) = native_api_actor_level(request)? {
+                    if prepared.player.level != requested_level {
+                        return Err(NativeApiError::new(
+                            "native_actor_level_mismatch",
+                            format!(
+                                "evaluate requested actor level {requested_level} but native prepared actor is level {}",
+                                prepared.player.level
+                            ),
+                        ));
+                    }
+                }
                 let targets = request
                     .get("targets")
                     .and_then(serde_json::Value::as_u64)
@@ -442,6 +458,35 @@ mod native_optimizer_api_tests {
                 .unwrap()["level"],
             40
         );
+    }
+
+    #[test]
+    fn reused_prepared_actor_cannot_be_scored_as_another_level() {
+        // A real v2 prepared source actor, without any gsim process or paid
+        // world simulation: the refusal must precede the world bridge.
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        assert_eq!(prepared.player.level, 60);
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+        };
+        let refusal = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate",
+                "actor_level": 40,
+                "targets": 2,
+                "rng_mode": "balanced",
+                "recover_at_end": true
+            }))
+            .unwrap_err();
+        assert_eq!(refusal.code, "native_actor_level_mismatch");
+        assert!(refusal.reason.contains("requested actor level 40"));
+        assert!(refusal.reason.contains("prepared actor is level 60"));
+        // A refused comparison must not mutate the source-prepared actor.
+        assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
     }
 
     #[test]
