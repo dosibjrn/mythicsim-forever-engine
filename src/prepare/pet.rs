@@ -101,7 +101,9 @@ impl Sim {
         let label = format!("{} - {}", self.unit(owner).label, config.name);
         let mut unit = super::sim::Unit::new(UnitType::Pet, label);
         unit.index = pet_index;
-        unit.level = super::character::constants::CHARACTER_LEVEL;
+        // A native world pet must fight at the owner's actual prepared level.
+        // The Go raid reference's fixed level 60 is only valid for L60 actors.
+        unit.level = self.unit(owner).level;
         unit.reaction_time = self.unit(owner).reaction_time;
         unit.start_distance_from_target = distance;
         unit.distance_from_target = distance;
@@ -962,8 +964,13 @@ mod tests {
     use crate::prepare::sim::{EnvState, Unit};
 
     fn owner_with_pet(inherit: PetStatInheritance) -> (Sim, UnitId, UnitId) {
+        owner_with_pet_at_level(60, inherit)
+    }
+
+    fn owner_with_pet_at_level(level: i32, inherit: PetStatInheritance) -> (Sim, UnitId, UnitId) {
         let mut sim = Sim::new();
         let mut unit = Unit::new(UnitType::Player, "owner".to_string());
+        unit.level = level;
         unit.reaction_time = 100_000_000;
         unit.start_distance_from_target = 12.0;
         unit.distance_from_target = 12.0;
@@ -997,6 +1004,17 @@ mod tests {
         assert_eq!(sim.unit(pet).reaction_time, 100_000_000);
         // The first pet takes the first index past the party.
         assert_eq!(sim.unit(pet).index, 5);
+    }
+
+    #[test]
+    fn native_pets_match_prepared_owner_level_across_warlock_samples() {
+        for level in [20, 40, 60] {
+            let (sim, owner, pet) =
+                owner_with_pet_at_level(level, Rc::new(|_, _| Stats::default()));
+            assert_eq!(sim.unit(owner).level, level);
+            assert_eq!(sim.unit(pet).level, level, "pet at L{level}");
+            assert_eq!(sim.unit(pet).owner, Some(owner));
+        }
     }
 
     #[test]

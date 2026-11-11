@@ -3,8 +3,8 @@ use forever_engine::{
     native_player_context, native_talent_options, native_two_pull_windows,
     native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
     prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated, validate_prepared, Gated, OptionsClass, PrepareError, PreparedError,
-    Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    simulate_prepared_gated, validate_prepared, Gated, NativeWarlockWorldSession, OptionsClass,
+    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -165,6 +165,12 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
 struct NativeApiSession {
     // Rust owns the prepared protobuf-derived actor, not a JSON file handle.
     prepared: Option<PreparedV2>,
+    // Last completed and charged native world measurement, NOT a resumable
+    // Fight. Invalidate it before a new candidate starts or prepare is called.
+    last_paid_world: Option<serde_json::Value>,
+    // Unlike PreparedV2, this owns an actual retained source-native Fight.
+    // It remains level-locked: no earned XP/training implementation yet.
+    retained_world: Option<NativeWarlockWorldSession>,
 }
 
 /// A refused native candidate must carry a machine-readable reason, while
@@ -258,12 +264,64 @@ fn native_api_world_operation<T, E: std::fmt::Display>(
     result.map_err(|error| NativeApiError::new("native_world_refused", error.to_string()))
 }
 
+/// Extract only observations made by the original paid native world/ACK
+/// execution. A terminal receipt is a measurement, not a transferable player,
+/// cooldown, XP, inventory or world object.
+fn native_paid_world_snapshot(
+    prepared: &PreparedV2,
+    report: &serde_json::Value,
+    retained: bool,
+) -> serde_json::Value {
+    let final_kill_clock_ns = report["windows"]
+        .as_array()
+        .and_then(|windows| windows.last())
+        .and_then(|window| window.get("native_kill_ns"))
+        .cloned();
+    serde_json::json!({
+        "kind": if retained { "retained_native_world_segment" } else { "completed_independent_native_world" },
+        "source_sha256": prepared.request_sha256,
+        "actor_level": prepared.player.level,
+        "world_targets_killed": report.get("world_targets_killed"),
+        "final_kill_clock_ns": final_kill_clock_ns,
+        "terminal_recovery": report.get("terminal_recovery"),
+        "post_combat_actor_retained": retained,
+        "xp_earned": null,
+        "level_transition_supported": false
+    })
+}
+
 impl NativeApiSession {
     fn dispatch(
         &mut self,
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, NativeApiError> {
         match request.get("op").and_then(serde_json::Value::as_str) {
+            // Native source preparation is a snapshot, not a retained Fight.
+            // Expose this capability boundary so a level-range coordinator can
+            // distinguish a paid sampled fight from true continuous progression.
+            Some("state") => {
+                let prepared = self
+                    .prepared
+                    .as_ref()
+                    .ok_or("state needs a preceding prepare")?;
+                Ok(serde_json::json!({
+                    "kind": "source_prepared_actor",
+                    "actor_level": prepared.player.level,
+                    "actor_class": prepared.player.class,
+                    "source_sha256": prepared.request_sha256,
+                    "retained_combat_runtime": self.retained_world.is_some(),
+                    "retained_xp": false,
+                    "level_transition_supported": false,
+                    "last_paid_world": self.last_paid_world.as_ref()
+                }))
+            }
+            // The current API retains PreparedV2 only. A request to cross a
+            // level boundary must never silently prepare a new actor and
+            // describe it as the old actor gaining XP or training.
+            Some("advance") => Err(NativeApiError::new(
+                "native_level_transition_unsupported",
+                "native API may retain same-level combat but has no earned XP, training or cross-level actor transition",
+            )),
             Some("options") => {
                 let class = request
                     .get("class")
@@ -279,6 +337,10 @@ impl NativeApiSession {
                     .map_err(|e| NativeApiError::from(e.to_string()))
             }
             Some("prepare") => {
+                // No measured world from the previous candidate can be attached
+                // to a newly prepared actor, even when its preparation refuses.
+                self.last_paid_world = None;
+                self.retained_world = None;
                 // On refusal no earlier actor may accidentally be evaluated.
                 self.prepared = None;
                 let (value, prepared) = native_api_prepare(request)?;
@@ -286,10 +348,45 @@ impl NativeApiSession {
                 Ok(value)
             }
             Some("evaluate") => {
+                // An opt-in retained native Warlock world spans multiple paid
+                // evaluate messages without resetting its Fight, queue or clock.
+                // All historical sampled calls still create independent fights.
+                let continued = match request.get("continue_from_previous") {
+                    None | Some(serde_json::Value::Bool(false)) => false,
+                    Some(serde_json::Value::Bool(true)) => true,
+                    _ => return Err(NativeApiError::new(
+                        "invalid_api_request", "continue_from_previous must be a boolean")),
+                };
+                let retain = match request.get("retain_native_actor") {
+                    None | Some(serde_json::Value::Bool(false)) => false,
+                    Some(serde_json::Value::Bool(true)) => true,
+                    _ => return Err(NativeApiError::new(
+                        "invalid_api_request", "retain_native_actor must be a boolean")),
+                };
+                if continued && (!retain || self.retained_world.is_none()) {
+                    return Err(NativeApiError::new(
+                        "native_combat_continuation_unsupported",
+                        "continue_from_previous requires a preceding paid retained native Fight and retain_native_actor true",
+                    ));
+                }
+                if continued && request.get("request").is_some() {
+                    return Err(NativeApiError::new(
+                        "native_combat_continuation_source_mismatch",
+                        "a retained Fight cannot be replaced with a newly prepared actor",
+                    ));
+                }
+                if !continued {
+                    self.retained_world = None;
+                }
+                // A new world attempt supersedes the previous paid segment.
+                // A native refusal must not leave a stale measured checkpoint
+                // that a route coordinator might mistake for this candidate.
+                self.last_paid_world = None;
                 // Evaluate either the actor retained by a preceding prepare in
                 // this session, or prepare a new source inline in this call.
                 if request.get("request").is_some() {
                     self.prepared = None;
+                    self.retained_world = None;
                     let (_, prepared) = native_api_prepare(request)?;
                     self.prepared = Some(prepared);
                 }
@@ -297,6 +394,22 @@ impl NativeApiSession {
                     .prepared
                     .as_ref()
                     .ok_or("evaluate needs a preceding prepare or inline request")?;
+                // A persistent session may retain a source-prepared L40 actor
+                // while the next route sample requests L50. Never silently
+                // charge an L40 world as evidence for a named L50 candidate.
+                // For inline requests, this also confirms the actual native
+                // prepared actor matches the explicit level after preparation.
+                if let Some(requested_level) = native_api_actor_level(request)? {
+                    if prepared.player.level != requested_level {
+                        return Err(NativeApiError::new(
+                            "native_actor_level_mismatch",
+                            format!(
+                                "evaluate requested actor level {requested_level} but native prepared actor is level {}",
+                                prepared.player.level
+                            ),
+                        ));
+                    }
+                }
                 let targets = request
                     .get("targets")
                     .and_then(serde_json::Value::as_u64)
@@ -319,19 +432,58 @@ impl NativeApiSession {
                 // boundary and native Decisions terminal dual-resource rest.
                 // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
                 // stdout and consumes causal ACKs on stdin during this call.
-                let report = native_api_world_operation(|| {
-                    native_two_world_targets_with_decisions_recovery(
-                        prepared, targets, mode, 1.0, 1.0,
-                    )
-                })?;
+                let report = if retain {
+                    if prepared.player.class != "ClassWarlock" {
+                        return Err(NativeApiError::new(
+                            "native_retained_class_unsupported",
+                            "retained native Fight currently supports Warlock only",
+                        ));
+                    }
+                    let mut live = if continued {
+                        self.retained_world.take().ok_or_else(|| NativeApiError::new(
+                            "native_combat_continuation_unsupported", "no retained Fight",
+                        ))?
+                    } else {
+                        native_api_world_operation(|| NativeWarlockWorldSession::new(prepared, mode))?
+                    };
+                    if live.rng_mode() != mode {
+                        self.retained_world = Some(live);
+                        return Err(NativeApiError::new(
+                            "native_continuation_rng_mismatch",
+                            "cannot reseed or change RNG mode of an already retained native Fight",
+                        ));
+                    }
+                    // A failed native segment drops the potentially partial
+                    // Fight rather than allowing an unACKed continuation.
+                    let result = native_api_world_operation(|| {
+                        live.evaluate_segment(targets, continued)
+                    });
+                    if result.is_ok() {
+                        self.retained_world = Some(live);
+                    }
+                    result?
+                } else {
+                    native_api_world_operation(|| {
+                        native_two_world_targets_with_decisions_recovery(
+                            prepared, targets, mode, 1.0, 1.0,
+                        )
+                    })?
+                };
+                self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report, retain));
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
                     "source_sha256": prepared.request_sha256,
                     "result": report,
+                    "continuity": {
+                        "kind": if retain { "retained_native_world_segment" } else { "independent_source_prepared_fight" },
+                        "post_combat_actor_retained": retain,
+                        "xp_earned": null,
+                        "level_transition_supported": false
+                    },
                     "checkpoint_certified": false
                 }))
             }
-            _ => Err("unsupported API op (expected options, prepare or evaluate)".into()),
+            _ => Err("unsupported API op (expected options, prepare, state, evaluate or advance)".into()),
         }
     }
 }
@@ -442,6 +594,247 @@ mod native_optimizer_api_tests {
                 .unwrap()["level"],
             40
         );
+    }
+
+    #[test]
+    fn reused_prepared_actor_cannot_be_scored_as_another_level() {
+        // A real v2 prepared source actor, without any gsim process or paid
+        // world simulation: the refusal must precede the world bridge.
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        assert_eq!(prepared.player.level, 60);
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+            last_paid_world: None,
+            retained_world: None,
+        };
+        let refusal = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate",
+                "actor_level": 40,
+                "targets": 2,
+                "rng_mode": "balanced",
+                "recover_at_end": true
+            }))
+            .unwrap_err();
+        assert_eq!(refusal.code, "native_actor_level_mismatch");
+        assert!(refusal.reason.contains("requested actor level 40"));
+        assert!(refusal.reason.contains("prepared actor is level 60"));
+        // A refused comparison must not mutate the source-prepared actor.
+        assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
+    }
+
+    #[test]
+    fn native_session_exposes_prepared_state_but_refuses_unearned_level_continuity() {
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        let sha = prepared.request_sha256.clone();
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+            last_paid_world: None,
+            retained_world: None,
+        };
+        let state = session
+            .dispatch(&serde_json::json!({"op": "state"}))
+            .unwrap();
+        assert_eq!(state["kind"], "source_prepared_actor");
+        assert_eq!(state["actor_level"], 60);
+        assert_eq!(state["source_sha256"], sha);
+        assert_eq!(state["retained_combat_runtime"], false);
+        assert_eq!(state["retained_xp"], false);
+        assert_eq!(state["level_transition_supported"], false);
+        assert!(state["last_paid_world"].is_null());
+
+        // The native engine has no XP/level-up source transition: never
+        // manufacture a successful 60->61 advancement or run a new fight.
+        let refusal = session
+            .dispatch(&serde_json::json!({
+                "op": "advance", "from_level": 60, "to_level": 61
+            }))
+            .unwrap_err();
+        assert_eq!(refusal.code, "native_level_transition_unsupported");
+        assert!(refusal.reason.contains("earned XP"));
+
+        let continuation = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "continue_from_previous": true,
+                "actor_level": 60, "targets": 2,
+                "rng_mode": "balanced", "recover_at_end": true
+            }))
+            .unwrap_err();
+        assert_eq!(continuation.code, "native_combat_continuation_unsupported");
+        assert!(continuation
+            .reason
+            .contains("requires a preceding paid retained native Fight"));
+
+        let invalid_flag = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "continue_from_previous": "true"
+            }))
+            .unwrap_err();
+        assert_eq!(invalid_flag.code, "invalid_api_request");
+        assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
+        assert_eq!(session.prepared.as_ref().unwrap().request_sha256, sha);
+    }
+
+    #[test]
+    fn retained_world_rejects_non_warlock_before_any_native_payment() {
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+            last_paid_world: None,
+            retained_world: None,
+        };
+        let error = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "retain_native_actor": true,
+                "actor_level": 60, "targets": 2,
+                "rng_mode": "balanced", "recover_at_end": true,
+            }))
+            .unwrap_err();
+        assert_eq!(error.code, "native_retained_class_unsupported");
+        assert_eq!(
+            session
+                .dispatch(&serde_json::json!({"op": "state"}))
+                .unwrap()["retained_combat_runtime"],
+            false
+        );
+        let invalid = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "retain_native_actor": "true",
+            }))
+            .unwrap_err();
+        assert_eq!(invalid.code, "invalid_api_request");
+    }
+
+    #[test]
+    fn paid_world_snapshot_keeps_actual_terminal_receipt_without_claiming_continuity() {
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        let report = serde_json::json!({
+            "world_targets_killed": 2,
+            "windows": [{"native_kill_ns": 11}, {"native_kill_ns": 43}],
+            "terminal_recovery": {
+                "paid": true, "native_clock_accounted": true,
+                "end_clock_ns": 99,
+                "health_after": 1350.0, "mana_after": 2000.0,
+                "max_health": 1350.0, "max_mana": 2000.0
+            }
+        });
+        let snapshot = super::native_paid_world_snapshot(&prepared, &report, false);
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+            last_paid_world: Some(snapshot),
+            retained_world: None,
+        };
+        let state = session
+            .dispatch(&serde_json::json!({"op": "state"}))
+            .unwrap();
+        let paid = &state["last_paid_world"];
+        assert_eq!(paid["kind"], "completed_independent_native_world");
+        assert_eq!(paid["source_sha256"], state["source_sha256"]);
+        assert_eq!(paid["actor_level"], state["actor_level"]);
+        assert_eq!(paid["world_targets_killed"], 2);
+        assert_eq!(paid["final_kill_clock_ns"], 43);
+        assert_eq!(paid["terminal_recovery"], report["terminal_recovery"]);
+        assert_eq!(paid["post_combat_actor_retained"], false);
+        assert!(paid["xp_earned"].is_null());
+        assert_eq!(paid["level_transition_supported"], false);
+
+        // Unsupported continuation must not promote the saved observation to
+        // a resumed Fight or mutate the source-prepared actor.
+        assert_eq!(
+            session
+                .dispatch(&serde_json::json!({
+                    "op": "advance", "from_level": 60, "to_level": 61
+                }))
+                .unwrap_err()
+                .code,
+            "native_level_transition_unsupported"
+        );
+        assert_eq!(
+            session
+                .dispatch(&serde_json::json!({"op": "state"}))
+                .unwrap()["last_paid_world"],
+            *paid
+        );
+    }
+
+    #[test]
+    fn source_prepared_l20_l40_warlock_effects_bind_to_registered_ranks() {
+        // Real Rust preparation and native Fight construction, no gsim peer or
+        // paid world claim. This regresses the L20 live refusal caused by
+        // exporting Immolate 11668 from L60 while registering the L20 rank.
+        let mut source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/classes/warlock/prepare/affliction-no-summon.request.json"
+        )))
+        .unwrap();
+        let actor = &mut source["raid"]["parties"][0]["players"][0];
+        actor["race"] = serde_json::json!("RaceTroll");
+        actor["talentsString"] = serde_json::json!("0-0-0");
+        actor["rotation"] = serde_json::json!({
+            "type": "TypeAPL", "priorityList": []
+        });
+        actor["warlock"]["options"]["classOptions"] = serde_json::json!({"summon": "NoSummon"});
+        source["simOptions"]["iterations"] = serde_json::json!(1);
+        let source_bytes = serde_json::to_vec(&source).unwrap();
+        for level in [20, 40] {
+            let value = forever_engine::prepare_json_with_actor_level(
+                &source_bytes,
+                "rust",
+                forever_engine::Rules::Forever,
+                Some(level),
+            )
+            .unwrap_or_else(|err| panic!("Warlock L{level} source prepare refused: {err}"));
+            let registered: std::collections::HashSet<i64> = value["player"]["spells"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|spell| spell["action_id"]["spell_id"].as_i64())
+                .collect();
+            for effect in value["effects"].as_array().unwrap() {
+                let kind = effect["kind"].as_str().unwrap_or_default();
+                if matches!(
+                    kind,
+                    "immolate"
+                        | "corruption"
+                        | "bane_of_doom"
+                        | "drain_life"
+                        | "hellfire"
+                        | "rain_of_fire"
+                        | "siphon_life"
+                        | "bane_of_agony"
+                        | "life_tap"
+                ) {
+                    let spell_id = effect["spell_id"].as_i64().unwrap();
+                    assert!(
+                        registered.contains(&spell_id),
+                        "Warlock L{level} effect {kind} uses unregistered spell {spell_id}"
+                    );
+                }
+            }
+            let prepared: forever_engine::contracts::prepared_v2::PreparedV2 =
+                serde_json::from_value(value).unwrap();
+            forever_engine::NativeWarlockWorldSession::new(
+                &prepared,
+                forever_engine::RngMode::Balanced,
+            )
+            .unwrap_or_else(|err| panic!("Warlock L{level} native world binding refused: {err}"));
+        }
     }
 
     #[test]

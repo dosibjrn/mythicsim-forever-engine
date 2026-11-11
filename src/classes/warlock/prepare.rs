@@ -20,6 +20,7 @@ use crate::prepare::sim::{AuraId, Sim, SpellId, UnitId};
 use crate::prepare::stats::Stat;
 use crate::prepare::Refusal;
 
+pub(crate) use pets::native_summons_at_level;
 use pets::WarlockPets;
 
 /// Go warlock.TalentTreeSizes.
@@ -200,6 +201,18 @@ pub(crate) fn new_warlock(
             )
         })?
         .clone();
+    // The same native summon source offered by get_options must govern actual
+    // prepared actors. Otherwise an L20 candidate can execute an L30 demon
+    // that the optimizer's native options correctly withheld.
+    let summon = options.enum_name("summon");
+    let actor_level = sim.unit(unit).level;
+    let available = native_summons_at_level(u8::try_from(actor_level).unwrap_or(0));
+    if !summon.is_empty() && !available.contains(&summon.as_str()) {
+        return Err(Refusal::new(
+            "native_summon_level_unsupported",
+            format!("Warlock summon {summon} is unavailable at prepared actor level {actor_level}"),
+        ));
+    }
     let talents = fill_talents(
         "proto.WarlockTalents",
         player.str("talents_string"),
@@ -428,6 +441,35 @@ impl PrepAgent for Warlock {
 #[cfg(test)]
 mod sourced_warlock_level_crit_tests {
     use super::*;
+
+    #[test]
+    fn native_warlock_prepare_rejects_undiscovered_level_pet_but_accepts_available_pet() {
+        for (level, summon, allowed) in [
+            (20, "Felhunter", false),
+            (20, "Imp", true),
+            (40, "Felhunter", true),
+        ] {
+            let wire = serde_json::json!({
+                "class": "ClassWarlock",
+                "race": "RaceTroll",
+                "warlock": {"options": {"classOptions": {"summon": summon}}}
+            })
+            .to_string();
+            let player = Message::from_json_text("proto.Player", &wire).unwrap();
+            let mut sim = Sim::new();
+            let actor = sim
+                .new_character_at_level(0, 0, &player, &[], Some(level))
+                .unwrap();
+            let prepared = new_warlock(&mut sim, actor, &player);
+            if allowed {
+                assert!(prepared.is_ok(), "{summon} must prepare at L{level}");
+            } else {
+                let refusal = prepared.err().expect("level-invalid summon must refuse");
+                assert_eq!(refusal.code, "native_summon_level_unsupported");
+                assert!(refusal.reason.contains(&format!("level {level}")));
+            }
+        }
+    }
 
     #[test]
     fn sourced_warlock_preparation_uses_level_appropriate_melee_crit() {

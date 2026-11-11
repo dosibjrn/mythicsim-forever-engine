@@ -187,26 +187,29 @@ impl Warlock {
         let talents = &self.talents;
         let target = env.encounter.targets[0];
         let mut effects: Vec<Value> = Vec::new();
+        // The exported effect spell IDs must match the source-prepared actor's
+        // registered ranks, not the L60 reference fixture's highest ranks.
+        let native_rank = |ladder: &Ladder, skip_book_at_60: bool| {
+            super::spells::actor_rank(ladder, sim, unit, skip_book_at_60)
+        };
 
         // shadowbolt.go: every rank, the hit lands after travel.
         effects.push(json!({"kind": "shadow_bolt"}));
         // immolate.go, corruption.go: a snapshot dot of the client's periodic effect.
-        effects.push(with_kind(
-            "immolate",
-            warlock_tick(data.immolate.highest_for(env.rules), unrepresented),
-        ));
-        effects.push(with_kind(
-            "corruption",
-            warlock_tick(data.corruption.highest_for(env.rules), unrepresented),
-        ));
+        for (kind, ladder) in [("immolate", &data.immolate), ("corruption", &data.corruption)] {
+            let rank = native_rank(ladder, true);
+            if !rank.is_nil() {
+                effects.push(with_kind(kind, warlock_tick(rank, unrepresented)));
+            }
+        }
         // doom.go: one snapshot tick a minute on, on the bane slot.
-        effects.push(with_kind(
-            "bane_of_doom",
-            warlock_tick(data.bane_of_doom.highest(), unrepresented),
-        ));
+        let doom = native_rank(&data.bane_of_doom, false);
+        if !doom.is_nil() {
+            effects.push(with_kind("bane_of_doom", warlock_tick(doom, unrepresented)));
+        }
         // drain_life.go: a channeled dot scaled by Soul Siphon, which counts every registered
         // Affliction aura on the target (warlock.go AfflictionCount), and healing for each tick.
-        let mut drain = warlock_tick(data.drain_life.highest(), unrepresented);
+        let mut drain = warlock_tick(native_rank(&data.drain_life, false), unrepresented);
         let mut soul_siphon = 1.0;
         let soul_siphon_points = talents.i32("soul_siphon");
         if soul_siphon_points > 0 {
@@ -240,23 +243,27 @@ impl Warlock {
         }
         // hellfire.go: each tick rolls the periodic effect's average on every target, then burns
         // the warlock; the area hits crit unless the client row of the triggered spell cannot.
-        let hellfire = data.hellfire.highest();
-        effects.push(json!({
-            "kind": "hellfire", "spell_id": hellfire.id,
-            "tick_base": hellfire.effect(dbcenums::A_PERIODIC_DAMAGE, 0).average(CHARACTER_LEVEL),
-            "tick_can_crit": !hellfire
-                .effect(dbcenums::A_PERIODIC_TRIGGER_SPELL, 0)
-                .trigger()
-                .cannot_crit(),
-        }));
+        let hellfire = native_rank(&data.hellfire, false);
+        if !hellfire.is_nil() {
+            effects.push(json!({
+                "kind": "hellfire", "spell_id": hellfire.id,
+                "tick_base": hellfire.effect(dbcenums::A_PERIODIC_DAMAGE, 0).average(CHARACTER_LEVEL),
+                "tick_can_crit": !hellfire
+                    .effect(dbcenums::A_PERIODIC_TRIGGER_SPELL, 0)
+                    .trigger()
+                    .cannot_crit(),
+            }));
+        }
         // rain_of_fire.go: the cast hits every target without damage, then the channel casts the
         // triggered tick of its rank every period.
-        let rain = data.rain_of_fire.highest();
-        let rain_tick = data.rain_of_fire_triggered.rank(rain.rank_number());
-        effects.push(json!({
-            "kind": "rain_of_fire", "spell_id": rain.id, "tick_spell_id": rain_tick.id,
-            "tick_base": rain_tick.damage_effect().average(CHARACTER_LEVEL),
-        }));
+        let rain = native_rank(&data.rain_of_fire, false);
+        if !rain.is_nil() {
+            let rain_tick = data.rain_of_fire_triggered.rank(rain.rank_number());
+            effects.push(json!({
+                "kind": "rain_of_fire", "spell_id": rain.id, "tick_spell_id": rain_tick.id,
+                "tick_base": rain_tick.damage_effect().average(CHARACTER_LEVEL),
+            }));
+        }
         if talents.bool("bane_of_havoc") {
             // talents_destruction.go applyBaneOfHavoc
             let row = data.bane_of_havoc.highest();
@@ -271,14 +278,17 @@ impl Warlock {
         // travel, and a heal of the damage through its tagged healing spell on the warlock.
         // Go notes dynamic healing taken modifiers on the warlock; Rust registers none.
         let pseudo = &sim.unit(unit).pseudo_stats;
-        effects.push(json!({
-            "kind": "death_coil",
-            "base_damage": data.death_coil.highest().effect_n(1).average(CHARACTER_LEVEL),
-            "healing_dealt_multiplier": pseudo.healing_dealt_multiplier,
-            "healing_taken_multiplier": pseudo.healing_taken_multiplier,
-            "table_healing_dealt_multiplier": env.attack_table(unit, unit).healing_dealt_multiplier,
-            "healing_power": sim.stat(unit, Stat::HealingPower) + pseudo.bonus_healing_taken,
-        }));
+        let death_coil = native_rank(&data.death_coil, false);
+        if !death_coil.is_nil() {
+            effects.push(json!({
+                "kind": "death_coil",
+                "base_damage": death_coil.effect_n(1).average(CHARACTER_LEVEL),
+                "healing_dealt_multiplier": pseudo.healing_dealt_multiplier,
+                "healing_taken_multiplier": pseudo.healing_taken_multiplier,
+                "table_healing_dealt_multiplier": env.attack_table(unit, unit).healing_dealt_multiplier,
+                "healing_power": sim.stat(unit, Stat::HealingPower) + pseudo.bonus_healing_taken,
+            }));
+        }
         if talents.bool("incinerate") {
             // incinerate.go: the client roll, raised on a burning target
             effects.push(json!({
@@ -288,7 +298,7 @@ impl Warlock {
         }
         if talents.bool("siphon_life") {
             // siphon_life.go: Corruption's shape, healing for each tick
-            let mut siphon = warlock_tick(data.siphon_life.highest(), unrepresented);
+            let mut siphon = warlock_tick(native_rank(&data.siphon_life, false), unrepresented);
             // The ticks crit though the client row lacks periodic-can-crit (community #782).
             siphon.insert("tick_can_crit".into(), json!(true));
             siphon.insert(
@@ -299,7 +309,7 @@ impl Warlock {
         }
         // agony.go: the snapshot pays half the tick and every fourth tick adds that half back,
         // Go literals.
-        let mut agony = warlock_tick(data.bane_of_agony.highest(), unrepresented);
+        let mut agony = warlock_tick(native_rank(&data.bane_of_agony, false), unrepresented);
         agony.insert("ramp_share".into(), json!(0.5));
         agony.insert("ramp_every_ticks".into(), json!(4));
         if talents.bool("amplify_curse") {
@@ -331,7 +341,7 @@ impl Warlock {
             ));
         }
         // lifetap.go: (base + Spirit) * (1 + Improved Life Tap) health into as much mana.
-        let life_tap = data.life_tap.highest();
+        let life_tap = native_rank(&data.life_tap, false);
         let mut tap = json!({
             "kind": "life_tap", "spell_id": life_tap.id,
             "base_amount": life_tap.effect_n(1).average(CHARACTER_LEVEL),
@@ -401,20 +411,38 @@ impl Warlock {
                 "wait_ns": nanos(100 * MILLISECOND),
             }));
         }
-        if self.pets.imp.is_some() {
-            // pets.go registerFireboltSpell: impFireboltEffect, unexported, mirrored here
-            let effect = imp_firebolt_effect();
-            let average = effect.average(CHARACTER_LEVEL);
+        if let Some(imp) = self.pets.imp {
+            // Client-ranked source data for lower-level pets; frozen Go rank
+            // 7 source at 60. Damage is still dealt by the canonical Rust core.
+            let level = sim.unit(imp).level;
+            let (average, variance) = if level == 60 {
+                let effect = imp_firebolt_effect();
+                (effect.average(level), effect.variance)
+            } else {
+                let rank = super::pets::native_pet_rank("firebolt", level)
+                    .expect("rank exists when Imp can be summoned");
+                let min = rank[2].as_f64().expect("source Firebolt minimum");
+                let max = rank[3].as_f64().expect("source Firebolt maximum");
+                let average = (min + max) / 2.0;
+                (average, if average == 0.0 { 0.0 } else { (max - min) / average })
+            };
             effects.push(json!({
                 "kind": "firebolt",
-                "min_damage": average * (1.0 - effect.variance / 2.0),
-                "max_damage": average * (1.0 + effect.variance / 2.0),
-                "average": average, "variance": effect.variance,
+                "min_damage": average * (1.0 - variance / 2.0),
+                "max_damage": average * (1.0 + variance / 2.0),
+                "average": average, "variance": variance,
             }));
         }
-        if self.pets.succubus.is_some() {
-            // pets.go registerLashOfPainSpell: a Go literal base
-            effects.push(json!({"kind": "lash_of_pain", "base_damage": 50.0}));
+        if let Some(succubus) = self.pets.succubus {
+            let level = sim.unit(succubus).level;
+            let base = if level == 60 {
+                50.0
+            } else {
+                super::pets::native_pet_rank("lash_of_pain", level)
+                    .and_then(|rank| rank[2].as_f64())
+                    .unwrap_or(0.0)
+            };
+            effects.push(json!({"kind": "lash_of_pain", "base_damage": base}));
         }
         // talents_demonology.go applyFelEnergy: the Voidwalker's sacrifice restores a share of
         // maximum mana every period, from a periodic action its permanent aura starts.
@@ -545,7 +573,16 @@ fn curse_of_elements_effect(
     unrepresented: &mut Vec<String>,
 ) -> Value {
     let sim = &env.sim;
+    // The existing native shared debuff aura uses the frozen top-rank
+    // resistances/multipliers. Read those mechanics from the same aura source,
+    // but identify the cast by the rank actually registered for this actor.
     let row = spell_data().curse_of_the_elements.highest();
+    let cast_rank = super::spells::actor_rank(
+        &spell_data().curse_of_the_elements,
+        sim,
+        env.player,
+        false,
+    );
     let mut resistance: BTreeMap<&'static str, f64> = BTreeMap::new();
     let mut multipliers: BTreeMap<&'static str, f64> = BTreeMap::new();
     let level = sim.unit(env.player).level;
@@ -600,7 +637,7 @@ fn curse_of_elements_effect(
         check_target_aura_changes(env, &label, &resistance, &multipliers, unrepresented);
     }
     let mut effect = json!({
-        "kind": "curse_of_the_elements", "spell_id": row.id, "aura": label,
+        "kind": "curse_of_the_elements", "spell_id": cast_rank.id, "aura": label,
         "resistance_delta": resistance, "school_damage_taken_multiplier": multipliers,
     });
     if blocked {
@@ -712,7 +749,12 @@ fn curse_of_recklessness_effect(
     let after_pseudo = fresh.sim.unit(unit).pseudo_stats.clone();
     let mut effect = json!({
         "kind": "curse_of_recklessness",
-        "spell_id": spell_data().curse_of_recklessness.highest().id,
+        "spell_id": super::spells::actor_rank(
+            &spell_data().curse_of_recklessness,
+            sim,
+            env.player,
+            false,
+        ).id,
         "aura": label,
         "armor_delta": after_stats[Stat::Armor] - before_stats[Stat::Armor],
     });

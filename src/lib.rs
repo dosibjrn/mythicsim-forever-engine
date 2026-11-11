@@ -35,6 +35,43 @@ pub use engine::prepared::{
     CLIENT_BUILD, REFUSAL_CODES,
 };
 pub use engine::simulate;
+
+/// Retained native L20 Warlock combat across multiple paid gsim world/ACK
+/// requests within ONE Rust API process. The Rust Fight is private and owns
+/// all resources, cooldowns, randomness and simulation time. XP, training,
+/// new-level abilities and actor-level changes are deliberately unsupported.
+pub struct NativeWarlockWorldSession {
+    fight: core::fight::Fight<classes::warlock::agent::WarlockAgent>,
+    rng_mode: RngMode,
+}
+
+impl NativeWarlockWorldSession {
+    pub fn new(
+        prepared: &contracts::prepared_v2::PreparedV2,
+        rng_mode: RngMode,
+    ) -> Result<Self, String> {
+        if prepared.player.class != "ClassWarlock" {
+            return Err("native retained world currently supports ClassWarlock only".into());
+        }
+        let fight = classes::warlock::agent::WarlockAgent::fight(prepared, rng_mode)?;
+        Ok(Self { fight, rng_mode })
+    }
+
+    pub fn rng_mode(&self) -> RngMode {
+        self.rng_mode
+    }
+
+    pub fn evaluate_segment(
+        &mut self,
+        targets: usize,
+        continue_from_previous: bool,
+    ) -> Result<serde_json::Value, String> {
+        self.fight
+            .native_world_session_segment(targets, continue_from_previous)
+            .map_err(str::to_string)
+    }
+}
+
 pub use prepare::{
     prepare, prepare_json, prepare_json_with, prepare_json_with_actor_level, PrepareError,
     Refusal as PrepareRefusal, Rules,

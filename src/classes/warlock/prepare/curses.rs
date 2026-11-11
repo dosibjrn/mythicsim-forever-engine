@@ -10,7 +10,7 @@ use crate::prepare::spell::{
 
 use super::masks;
 use super::spell_data::spell_data;
-use super::spells::{damage_config, default_cast, flat_cost, longest_cooldown, spell_action};
+use super::spells::{actor_rank, damage_config, default_cast, flat_cost, longest_cooldown, spell_action};
 use super::Warlock;
 
 /// Go `NewEnemyAuraArray`: one aura for each enemy, by unit index.
@@ -44,7 +44,10 @@ impl Warlock {
     /// resistance and raises all magic damage taken by 10%, which is what core's aura already
     /// does.
     pub(super) fn register_curse_of_elements(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().curse_of_the_elements.highest();
+        let rank = actor_rank(&spell_data().curse_of_the_elements, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
 
         // The player copy (untagged 1311680, one label per target): the APLs ask for aura
         // 1311680 on the target, and every warlock of a raid shares it.
@@ -76,7 +79,10 @@ impl Warlock {
     /// Forever renamed Curse of Doom to Bane of Doom (603): one tick after a minute, on the bane
     /// slot.
     pub(super) fn register_curse_of_doom(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().bane_of_doom.highest();
+        let rank = actor_rank(&spell_data().bane_of_doom, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
         let tick = rank.periodic_effect();
         let timer = sim.new_timer(unit);
         sim.register_spell(
@@ -112,7 +118,10 @@ impl Warlock {
     /// ramps: the snapshot pays half the tick, and the other half is added back every four
     /// ticks.
     pub(super) fn register_curse_of_agony(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().bane_of_agony.highest();
+        let rank = actor_rank(&spell_data().bane_of_agony, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
         let tick = rank.periodic_effect();
         sim.register_spell(
             unit,
@@ -138,7 +147,10 @@ impl Warlock {
     }
 
     pub(super) fn register_curse_of_recklessness(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().curse_of_recklessness.highest();
+        let rank = actor_rank(&spell_data().curse_of_recklessness, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
 
         let auras = new_enemy_aura_array(sim, |sim, target| {
             CURSE_OF_RECKLESSNESS.aura(sim, target, true, 0, 0.0)
