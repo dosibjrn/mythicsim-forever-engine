@@ -36,7 +36,7 @@ pub use engine::prepared::{
 };
 pub use engine::simulate;
 
-///// Install the requested rolling World-APL in the real prepared Warlock rotation.
+/// Install the requested rolling World-APL in the real prepared Warlock rotation.
 ///
 /// This is a scenario/policy choice, not a replacement combat or source-data
 /// implementation. The canonical source actor and its request SHA are retained;
@@ -114,7 +114,7 @@ mod native_rolling_world_apl_tests {
             serde_json::json!({"type": "Target", "index": 1}));
         let parsed = rotation::parse(&prepared.player.rotation).unwrap();
         assert!(engine::coverage::rotation_changes_target(&parsed));
-        assert!(matches!(parsed.priority_list[0].action,
+        assert!(matches!(&parsed.priority_list[0].action,
             rotation::Action::ChangeTarget(rotation::UnitRef::Target(1))));
     }
 
