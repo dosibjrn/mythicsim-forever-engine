@@ -288,7 +288,10 @@ impl Warlock {
         if !self.talents.bool("incinerate") {
             return;
         }
-        let rank = spell_data().incinerate.highest();
+        let rank = actor_rank(&spell_data().incinerate, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
         sim.register_spell(
             unit,
             SpellConfig {
@@ -519,7 +522,10 @@ impl Warlock {
     /// Conflagrate burns the Immolate on the target. Shadow and Flame's second effect is the
     /// chance it survives.
     pub(super) fn register_conflagrate(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().conflagrate.highest();
+        let rank = actor_rank(&spell_data().conflagrate, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
         let timer = sim.new_timer(unit);
         sim.register_spell(
             unit,
@@ -541,7 +547,10 @@ impl Warlock {
     }
 
     pub(super) fn register_shadow_burn(&mut self, sim: &mut Sim, unit: UnitId) {
-        let rank = spell_data().shadowburn.highest();
+        let rank = actor_rank(&spell_data().shadowburn, sim, unit, false);
+        if rank.is_nil() {
+            return;
+        }
         let timer = sim.new_timer(unit);
         sim.register_spell(
             unit,
@@ -559,5 +568,36 @@ impl Warlock {
                 ..damage_config(rank, masks::SHADOW_BURN, SpellFlag::APL | SpellFlag::BINARY)
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod sampled_destruction_talent_rank_tests {
+    use super::*;
+    use crate::prepare::sim::Rules;
+
+    #[test]
+    fn sampled_destruction_talent_ranks_are_source_level_bounded() {
+        // These three talented casts are registered by the same actor_rank
+        // selector used for baseline Warlock spells. At 20/40, no unlearned
+        // rank may leak into the prepared actor; at 60, keep the legacy rank.
+        for ladder in [
+            &spell_data().incinerate,
+            &spell_data().conflagrate,
+            &spell_data().shadowburn,
+        ] {
+            for level in [20, 40] {
+                let rank = ladder.highest_at_level(level, Rules::Forever);
+                if !rank.is_nil() {
+                    assert!(rank.spell_level > 0);
+                    assert!(i32::from(rank.spell_level) <= level);
+                }
+            }
+            assert_eq!(
+                ladder.highest().id,
+                ladder.highest_at_level(60, Rules::GoReference).id,
+                "L60 legacy rank must remain unchanged"
+            );
+        }
     }
 }
