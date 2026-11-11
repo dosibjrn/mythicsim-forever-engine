@@ -368,10 +368,10 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     assert_damage_acknowledgement(&event_ids, accepted);
     let ack_before = number(&ack, "world_target_health_before");
     let ack_after = number(&ack, "world_target_health_after");
-    let expected_damage: f64 = events.iter().map(|e| e.damage).sum();
-    assert!((ack_before - before_health).abs() < 1e-6
-        && (ack_after - (before_health - expected_damage).max(0.0)).abs() < 1e-6,
-        "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
+    // A scalar HP ACK only describes the selected world mob. Never certify
+    // an old target's DoT by subtracting its damage from a different mob.
+    // Concurrent targets need separate gsim-produced, hash-bound HP ACKs.
+    validate_native_target_damage_acks(&events, &ack, before_health, ack_before, ack_after);
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
     bridge.last_health = Some(ack_after);
@@ -381,6 +381,75 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     bridge.next_tick_ns = next_world_boundary_ns;
     BRIDGE.with(|state| *state.borrow_mut() = Some(bridge));
     (distance, front, moving)
+}
+
+/// A single-target ACK cannot certify damage to two distinct living enemies.
+/// For overlapping damage require the 2D peer's per-native-index, per-world-ID
+/// post-application vitals, under the same committed world_after_sha256.
+/// These are observations from gsim, not native projections of enemy HP.
+fn validate_native_target_damage_acks(
+    events: &[DamageEvent], ack: &Value, selected_before: f64,
+    ack_before: f64, ack_after: f64,
+) {
+    assert!((ack_before - selected_before).abs() < 1e-6,
+        "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
+    let mut damage_by_target = std::collections::BTreeMap::<u32, f64>::new();
+    for event in events {
+        *damage_by_target.entry(event.native_target_index).or_default() += event.damage;
+    }
+    // Preserve the exact existing serial wire contract. A source effect on
+    // Extra(0) must never be folded into the primary mob's scalar ACK.
+    if damage_by_target.keys().all(|&index| index == 0) {
+        let damage = damage_by_target.get(&0).copied().unwrap_or(0.0);
+        assert!((ack_after - (selected_before - damage).max(0.0)).abs() < 1e-6,
+            "RUST_WORLD_DAMAGE_ACK_HEALTH_MISMATCH");
+        return;
+    }
+    let selected_index = ack["selected_native_target_index"].as_u64()
+        .expect("RUST_WORLD_MULTI_TARGET_SELECTED_INDEX_MISSING");
+    assert!(selected_index < super::MAX_TARGETS as u64,
+        "RUST_WORLD_MULTI_TARGET_SELECTED_INDEX_INVALID");
+    let rows = ack["native_target_health_acks"].as_array()
+        .expect("RUST_WORLD_MULTI_TARGET_ACK_MISSING");
+    let mut seen = std::collections::BTreeSet::new();
+    let mut ids = std::collections::BTreeSet::new();
+    let mut selected_after_verified = false;
+    for row in rows {
+        let index = row["native_target_index"].as_u64()
+            .expect("RUST_WORLD_MULTI_TARGET_ACK_INDEX_MISSING");
+        assert!(index < super::MAX_TARGETS as u64
+            && seen.insert(index), "RUST_WORLD_MULTI_TARGET_ACK_DUPLICATE_OR_INVALID");
+        let id = row["world_target_id"].as_str()
+            .expect("RUST_WORLD_MULTI_TARGET_ACK_ID_MISSING");
+        assert!(!id.is_empty() && ids.insert(id),
+            "RUST_WORLD_MULTI_TARGET_ACK_WORLD_ID_NOT_DISTINCT");
+        let health_before = number(row, "world_target_health_before");
+        let health_after = number(row, "world_target_health_after");
+        let max_health = number(row, "world_target_max_health");
+        assert!(max_health > 0.0 && health_before > 0.0
+            && health_before <= max_health && health_after >= 0.0
+            && health_after <= max_health,
+            "RUST_WORLD_MULTI_TARGET_ACK_HEALTH_INVALID");
+        let damage = damage_by_target.get(&(index as u32))
+            .expect("RUST_WORLD_MULTI_TARGET_ACK_UNSOLICITED");
+        assert!((health_after - (health_before - damage).max(0.0)).abs() < 1e-6,
+            "RUST_WORLD_MULTI_TARGET_ACK_DAMAGE_MISMATCH");
+        if index == selected_index {
+            assert!((health_before - selected_before).abs() < 1e-6
+                && (health_after - ack_after).abs() < 1e-6,
+                "RUST_WORLD_MULTI_TARGET_SELECTED_ACK_MISMATCH");
+            selected_after_verified = true;
+        }
+    }
+    // If the selected target did not take damage, the scalar ACK still
+    // describes its unchanged HP; never invent an extra receipt.
+    if !selected_after_verified {
+        assert!(!damage_by_target.contains_key(&(selected_index as u32))
+            && (ack_after - selected_before).abs() < 1e-6,
+            "RUST_WORLD_MULTI_TARGET_SELECTED_ACK_MISSING");
+    }
+    assert_eq!(seen.len(), damage_by_target.len(),
+        "RUST_WORLD_MULTI_TARGET_ACK_INCOMPLETE");
 }
 
 fn has_lethal_ack(bridge: &Bridge) -> bool {
@@ -579,6 +648,69 @@ mod rolling_target_identity_tests {
     #[should_panic(expected = "RUST_WORLD_DAMAGE_TARGET_OUT_OF_RANGE")]
     fn unprepared_target_index_is_not_silently_attributed_to_first_mob() {
         append_damage_event(&mut empty_world(), native_dot(MAX_TARGETS as u32, "invalid"));
+    }
+}
+
+#[cfg(test)]
+mod native_multi_target_ack_ledger_tests {
+    use super::{validate_native_target_damage_acks, DamageEvent};
+    use serde_json::json;
+
+    fn dot(index: u32, damage: f64) -> DamageEvent {
+        DamageEvent {
+            event_id: format!("native-effect-{}", index + 1),
+            native_time_ns: 100_000_000, damage,
+            source_action_id: "Corruption".into(), rank: 1, landed: true,
+            crit: false, periodic: true, native_target_index: index,
+            native_target_unit_index: index,
+            native_target_label: format!("mob-{index}"),
+            native_caster_type: "player".into(), native_caster_unit_index: 0,
+            native_caster_label: "Warlock".into(),
+        }
+    }
+
+    #[test]
+    fn separate_old_dot_and_new_target_damage_need_distinct_world_lethal_acks() {
+        let ack = json!({
+            "selected_native_target_index": 1,
+            "native_target_health_acks": [
+                {"native_target_index": 0, "world_target_id": "old-mob",
+                 "world_target_health_before": 15.0, "world_target_health_after": 0.0,
+                 "world_target_max_health": 100.0},
+                {"native_target_index": 1, "world_target_id": "new-mob",
+                 "world_target_health_before": 100.0, "world_target_health_after": 70.0,
+                 "world_target_max_health": 100.0}
+            ]
+        });
+        validate_native_target_damage_acks(
+            &[dot(0, 15.0), dot(1, 30.0)], &ack, 100.0, 100.0, 70.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_ACK_MISSING")]
+    fn scalar_world_ack_cannot_launder_old_mob_dot_into_current_target() {
+        validate_native_target_damage_acks(
+            &[dot(0, 15.0), dot(1, 30.0)],
+            &json!({"selected_native_target_index": 1}),
+            100.0, 100.0, 55.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_ACK_WORLD_ID_NOT_DISTINCT")]
+    fn two_native_indices_cannot_both_claim_one_gsim_mob() {
+        let ack = json!({
+            "selected_native_target_index": 1,
+            "native_target_health_acks": [
+                {"native_target_index": 0, "world_target_id": "same",
+                 "world_target_health_before": 15.0, "world_target_health_after": 0.0,
+                 "world_target_max_health": 100.0},
+                {"native_target_index": 1, "world_target_id": "same",
+                 "world_target_health_before": 100.0, "world_target_health_after": 70.0,
+                 "world_target_max_health": 100.0}
+            ]
+        });
+        validate_native_target_damage_acks(
+            &[dot(0, 15.0), dot(1, 30.0)], &ack, 100.0, 100.0, 70.0);
     }
 }
 
