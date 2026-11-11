@@ -32,6 +32,8 @@ struct Bridge {
     next_tick_ns: i64,
     last_tick_ns: i64,
     last_health: Option<f64>,
+    /// Maximum HP accompanying the same committed gsim target ACK.
+    last_max_health: Option<f64>,
     previous_ack_id: String,
     source_hash: String,
     event_ordinal: u64,
@@ -52,7 +54,7 @@ pub(crate) fn start(source_hash: &str) {
     assert!(enabled() && source_hash.len() == 64, "RUST_WORLD_INVALID_SOURCE");
     BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
         iteration: 0, sequence: 0, next_tick_ns: 0, last_tick_ns: -1,
-        last_health: None, previous_ack_id: String::new(),
+        last_health: None, last_max_health: None, previous_ack_id: String::new(),
         source_hash: source_hash.to_owned(), event_ordinal: 0,
         pending: Vec::new(), iteration_finished: false,
     }));
@@ -82,6 +84,7 @@ pub(crate) fn begin_iteration(iteration: u32) {
         bridge.next_tick_ns = 0;
         bridge.last_tick_ns = -1;
         bridge.last_health = None;
+        bridge.last_max_health = None;
         bridge.previous_ack_id.clear();
         bridge.event_ordinal = 0;
         bridge.iteration_finished = false;
@@ -111,6 +114,7 @@ pub(crate) fn begin_next_target(at_ns: i64) -> Result<(), &'static str> {
         bridge.iteration = bridge.iteration.checked_add(1)
             .ok_or("RUST_WORLD_TARGET_INDEX_OVERFLOW")?;
         bridge.last_health = None; // new world target, not a healed old one
+        bridge.last_max_health = None;
         bridge.next_tick_ns = at_ns;
         // Deliberately preserve sequence, previous_ack_id, last_tick_ns,
         // event_ordinal and source identity across targets.
@@ -129,7 +133,7 @@ mod persistent_next_target_world_lethal_ack_tests {
         // in production.
         BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(25.0),
+            last_tick_ns: 100, last_health: Some(25.0), last_max_health: None,
             previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
             event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
         }));
@@ -171,7 +175,7 @@ mod world_lethal_terminal_tests {
     fn world_lethal_terminal_requires_committed_native_world_ack() {
         BRIDGE.with(|state| *state.borrow_mut() = Some(Bridge {
             iteration: 0, sequence: 1, next_tick_ns: 200,
-            last_tick_ns: 100, last_health: Some(10.0),
+            last_tick_ns: 100, last_health: Some(10.0), last_max_health: None,
             previous_ack_id: "a".repeat(64), source_hash: "b".repeat(64),
             event_ordinal: 1, pending: Vec::new(), iteration_finished: false,
         }));
@@ -371,6 +375,7 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
     bridge.last_health = Some(ack_after);
+    bridge.last_max_health = Some(max_health);
     bridge.last_tick_ns = clock_ns;
     bridge.sequence += 1;
     bridge.next_tick_ns = next_world_boundary_ns;
@@ -382,6 +387,24 @@ fn has_lethal_ack(bridge: &Bridge) -> bool {
     bridge.sequence > 0
         && bridge.last_health == Some(0.0)
         && bridge.previous_ack_id.len() == 64
+}
+
+/// Source-native current target HP from a completed 2D world ACK, never a
+/// forecast using damage, DPS or a neighbouring target's health.
+pub(crate) fn current_target_health_percent() -> Option<f64> {
+    BRIDGE.with(|state| {
+        let state = state.borrow();
+        let bridge = state.as_ref()?;
+        if bridge.sequence == 0 || bridge.previous_ack_id.len() != 64 {
+            return None;
+        }
+        let (health, max_health) = bridge.last_health.zip(bridge.last_max_health)?;
+        if !health.is_finite() || !max_health.is_finite()
+            || max_health <= 0.0 || health < 0.0 || health > max_health {
+            return None;
+        }
+        Some(health / max_health)
+    })
 }
 
 pub(crate) fn lethal_ack_received() -> bool {
@@ -468,7 +491,7 @@ mod persistent_next_target_tests {
                 sequence: 4,
                 next_tick_ns: 130_000_000,
                 last_tick_ns: 120_000_000,
-                last_health: Some(0.0),
+                last_health: Some(0.0), last_max_health: None,
                 previous_ack_id: "a".repeat(64),
                 source_hash: "a".repeat(64),
                 event_ordinal: 3,
@@ -507,7 +530,7 @@ mod rolling_target_identity_tests {
             sequence: 1,
             next_tick_ns: 0,
             last_tick_ns: -1,
-            last_health: Some(100.0),
+            last_health: Some(100.0), last_max_health: None,
             previous_ack_id: "a".repeat(64),
             source_hash: "b".repeat(64),
             event_ordinal: 0,
@@ -560,6 +583,61 @@ mod rolling_target_identity_tests {
 }
 
 #[cfg(test)]
+mod acked_world_target_hp_tests {
+    use super::{current_target_health_percent, begin_next_target, Bridge, BRIDGE};
+
+    #[test]
+    fn target_health_requires_matching_committed_world_ack_and_resets_on_new_target() {
+        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
+            iteration: 0, sequence: 2, next_tick_ns: 200,
+            last_tick_ns: 100, last_health: Some(50.0),
+            last_max_health: Some(100.0), previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64), event_ordinal: 0,
+            pending: Vec::new(), iteration_finished: false,
+        }));
+        assert_eq!(current_target_health_percent(), Some(0.5));
+        BRIDGE.with(|slot| slot.borrow_mut().as_mut().unwrap().previous_ack_id.clear());
+        assert_eq!(current_target_health_percent(), None);
+        BRIDGE.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let world = slot.as_mut().unwrap();
+            world.previous_ack_id = "a".repeat(64);
+            world.last_health = Some(0.0);
+        });
+        assert_eq!(current_target_health_percent(), Some(0.0));
+        assert_eq!(begin_next_target(200), Ok(()));
+        assert_eq!(current_target_health_percent(), None);
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn invalid_or_uncommitted_world_health_is_not_an_apl_threshold() {
+        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
+            iteration: 0, sequence: 0, next_tick_ns: 0,
+            last_tick_ns: -1, last_health: Some(50.0),
+            last_max_health: Some(100.0), previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64), event_ordinal: 0,
+            pending: Vec::new(), iteration_finished: false,
+        }));
+        assert_eq!(current_target_health_percent(), None);
+        BRIDGE.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let world = slot.as_mut().unwrap();
+            world.sequence = 1;
+            world.last_health = Some(101.0);
+        });
+        assert_eq!(current_target_health_percent(), None);
+        BRIDGE.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let world = slot.as_mut().unwrap();
+            world.last_health = Some(f64::NAN);
+        });
+        assert_eq!(current_target_health_percent(), None);
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
 mod disabled_bridge_tests {
     use super::{enabled, record_damage, DamageInput};
 
@@ -590,7 +668,7 @@ mod iteration_teardown_tests {
             sequence: 1,
             next_tick_ns: 10,
             last_tick_ns: 5,
-            last_health: Some(100.0),
+            last_health: Some(100.0), last_max_health: None,
             previous_ack_id: "a".repeat(64),
             source_hash: "b".repeat(64),
             event_ordinal: 0,
