@@ -1,10 +1,11 @@
 use forever_engine::{
     contracts::prepared_v2::PreparedV2, gear_options, get_options, native_item_options,
-    native_player_context, native_rolling_world_apl_prepared, native_talent_options, native_two_pull_windows,
-    native_two_world_targets_with_decisions_recovery, native_two_world_targets_with_recovery,
-    prepare_json_with_actor_level, prepared_refusals, simulate, simulate_prepared,
-    simulate_prepared_gated, validate_prepared, Gated, NativeWarlockWorldSession, OptionsClass,
-    PrepareError, PreparedError, Refusal, Request, RngMode, Rules, SOURCE_REVISION,
+    native_player_context, native_rolling_world_apl_prepared, native_talent_options,
+    native_two_pull_windows, native_two_world_targets_with_decisions_recovery,
+    native_two_world_targets_with_recovery, prepare_json_with_actor_level, prepared_refusals,
+    simulate, simulate_prepared, simulate_prepared_gated, validate_prepared, Gated,
+    NativeWarlockWorldSession, OptionsClass, PrepareError, PreparedError, Refusal, Request,
+    RngMode, Rules, SOURCE_REVISION,
 };
 use serde::Deserialize;
 use std::{
@@ -647,9 +648,13 @@ mod native_optimizer_api_tests {
             "max_live_targets": 2
         });
         assert_eq!(native_api_world_apl(&serde_json::json!({})).unwrap(), None);
-        assert_eq!(native_api_world_apl(&serde_json::json!({
-            "world_apl": policy.clone()
-        })).unwrap(), Some(policy.clone()));
+        assert_eq!(
+            native_api_world_apl(&serde_json::json!({
+                "world_apl": policy.clone()
+            }))
+            .unwrap(),
+            Some(policy.clone())
+        );
         for invalid in [
             serde_json::Value::Null,
             serde_json::json!({"pull_mode": "serial"}),
@@ -662,14 +667,17 @@ mod native_optimizer_api_tests {
         ] {
             let refusal = native_api_world_apl(&serde_json::json!({
                 "world_apl": invalid
-            })).unwrap_err();
+            }))
+            .unwrap_err();
             assert_eq!(refusal.code, "unsupported_world_apl_policy");
         }
         let mut session = NativeApiSession::default();
-        let refusal = session.dispatch(&serde_json::json!({
-            "op": "evaluate", "world_apl": {"pull_mode": "rolling"},
-            "targets": 2, "rng_mode": "balanced", "recover_at_end": true
-        })).unwrap_err();
+        let refusal = session
+            .dispatch(&serde_json::json!({
+                "op": "evaluate", "world_apl": {"pull_mode": "rolling"},
+                "targets": 2, "rng_mode": "balanced", "recover_at_end": true
+            }))
+            .unwrap_err();
         assert_eq!(refusal.code, "unsupported_world_apl_policy");
     }
 
