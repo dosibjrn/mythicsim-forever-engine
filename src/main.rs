@@ -528,6 +528,10 @@ impl NativeApiSession {
                 // boundary and native Decisions terminal dual-resource rest.
                 // With FOREVER_GSIM_WORLD_BRIDGE=1 it writes world events to
                 // stdout and consumes causal ACKs on stdin during this call.
+                // Stage a successful retained Fight until the World-APL
+                // receipt is verified. A rejected rolling policy must not
+                // leave an unACKed/partially paid Fight available to continue.
+                let mut verified_retained_world = None;
                 let report = if retain {
                     if prepared.player.class != "ClassWarlock" {
                         return Err(NativeApiError::new(
@@ -557,7 +561,7 @@ impl NativeApiSession {
                         )
                     });
                     if result.is_ok() {
-                        self.retained_world = Some(live);
+                        verified_retained_world = Some(live);
                     }
                     result?
                 } else {
@@ -583,6 +587,9 @@ impl NativeApiSession {
                     }
                     report["applied_world_apl"] = policy;
                 }
+                // A retained Fight is usable only after every requested
+                // source-applied policy has been checked against native ACKs.
+                self.retained_world = verified_retained_world;
                 self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report, retain));
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
