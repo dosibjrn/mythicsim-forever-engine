@@ -428,17 +428,16 @@ fn record_overlap_ack_evidence(bridge: &mut Bridge, events: &[DamageEvent], ack:
     // merely both post-damage ledger values. This is not inferred from a
     // policy echo, a prepared mob, or unACKed native damage.
     let rows = ack["native_target_health_acks"].as_array();
-    let a_before = rows.and_then(|rows| rows.iter().find(|row|
-        row["native_target_index"].as_u64() == Some(0)))
-        .map(|row| number(row, "world_target_health_before") > 0.0)
-        .unwrap_or_else(|| bridge.native_world_target_vitals.get(&0)
-            .is_some_and(|(id, hp, _)| id == &source_switch.prior_world_target_id && *hp > 0.0));
-    let b_before = rows.is_some_and(|rows| rows.iter().any(|row|
+    // The native B hit must be ACKed while A remains alive AFTER the same
+    // gsim damage batch. A's pre-batch HP, or B merely being bound from an
+    // earlier batch, cannot prove simultaneous engagement: A may have died
+    // in this batch before B's first actual damage was applied.
+    let a_still_live = bridge.native_world_target_vitals.get(&0)
+        .is_some_and(|(id, hp, _)| id == &source_switch.prior_world_target_id && *hp > 0.0);
+    let b_damaged_while_a_live = rows.is_some_and(|rows| rows.iter().any(|row|
         row["native_target_index"].as_u64() == Some(1)
             && number(row, "world_target_health_before") > 0.0));
-    let b_after = bridge.native_world_target_vitals.get(&1)
-        .is_some_and(|(_, hp, _)| *hp > 0.0);
-    bridge.observed_two_live_targets |= a_before && (b_before || b_after);
+    bridge.observed_two_live_targets |= a_still_live && b_damaged_while_a_live;
     let old_a_periodic = events.iter().any(|event| {
         event.native_target_index == source_switch.from_native_target_index
             && event.native_time_ns >= source_switch.switch_native_clock_ns
@@ -1020,11 +1019,22 @@ mod world_overlap_acquisition_tests {
             super::record_overlap_ack_evidence(bridge, &[dot.clone()], &real_old_a_ack);
             assert!(!bridge.observed_two_live_targets);
             assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
-            // Only actual source/2D-bound B permits the concurrent-alive proof.
+            // A previously bound B is insufficient without a B damage ACK.
             bridge.native_world_target_vitals.insert(
                 1, ("real-world-B".into(), 90.0, 100.0));
             dot.periodic = false;
             super::record_overlap_ack_evidence(bridge, &[dot.clone()], &real_old_a_ack);
+            assert!(!bridge.observed_two_live_targets);
+            // A fresh native B hit with A still alive after this ACK is proof.
+            dot.native_target_index = 1;
+            dot.damage = 10.0;
+            super::record_overlap_ack_evidence(bridge, &[dot.clone()], &serde_json::json!({
+                "native_target_health_acks": [{
+                    "native_target_index": 1,
+                    "world_target_health_before": 100.0,
+                    "world_target_health_after": 90.0
+                }]
+            }));
             assert!(bridge.observed_two_live_targets);
             assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
             dot.periodic = true;
@@ -1036,6 +1046,39 @@ mod world_overlap_acquisition_tests {
                 }]
             }));
             assert_eq!(bridge.old_a_post_switch_dot_acks, 1);
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn old_a_dying_in_first_b_damage_batch_is_not_a_two_live_hit() {
+        acknowledged_first_target(15.0);
+        begin_overlapping_target(200, 0.5).unwrap();
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            // This is the already committed post-batch ledger. Both targets
+            // were alive before damage, but A died in the B-hit ACK batch.
+            // The event ordering inside that batch is not source-proven.
+            bridge.native_world_target_vitals.get_mut(&0).unwrap().1 = 0.0;
+            bridge.native_world_target_vitals.insert(
+                1, ("real-world-B".into(), 90.0, 100.0));
+            let ambiguous_ack = serde_json::json!({
+                "native_target_health_acks": [
+                    {
+                        "native_target_index": 0,
+                        "world_target_health_before": 15.0,
+                        "world_target_health_after": 0.0
+                    },
+                    {
+                        "native_target_index": 1,
+                        "world_target_health_before": 100.0,
+                        "world_target_health_after": 90.0
+                    }
+                ]
+            });
+            super::record_overlap_ack_evidence(bridge, &[], &ambiguous_ack);
+            assert!(!bridge.observed_two_live_targets);
         });
         BRIDGE.with(|slot| *slot.borrow_mut() = None);
     }
