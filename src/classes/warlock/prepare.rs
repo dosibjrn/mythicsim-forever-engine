@@ -20,6 +20,7 @@ use crate::prepare::sim::{AuraId, Sim, SpellId, UnitId};
 use crate::prepare::stats::Stat;
 use crate::prepare::Refusal;
 
+pub(crate) use pets::native_summons_at_level;
 use pets::WarlockPets;
 
 /// Go warlock.TalentTreeSizes.
