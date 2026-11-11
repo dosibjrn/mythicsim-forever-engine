@@ -55,7 +55,7 @@ pub(super) enum Summon {
 
 /// Native Warlock pet choices from the pinned Forever beta 1.60.1.70170
 /// spellbook (Talents Forever export, 2026-10-03):
-/// https://questing.wiki/wow-forever/spells/warlock/
+/// <https://questing.wiki/wow-forever/spells/warlock/>
 ///
 /// The generated combat-spell store omits some summon spell IDs, so querying
 /// spelldata::find(688) silently hides Imp from an otherwise usable L20 actor.
