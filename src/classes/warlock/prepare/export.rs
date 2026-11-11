@@ -573,7 +573,7 @@ fn curse_of_elements_effect(
     unrepresented: &mut Vec<String>,
 ) -> Value {
     let sim = &env.sim;
-    let row = spell_data().curse_of_the_elements.highest();
+    let row = super::spells::actor_rank(&spell_data().curse_of_the_elements, sim, env.player, false);
     let mut resistance: BTreeMap<&'static str, f64> = BTreeMap::new();
     let mut multipliers: BTreeMap<&'static str, f64> = BTreeMap::new();
     let level = sim.unit(env.player).level;
@@ -740,7 +740,12 @@ fn curse_of_recklessness_effect(
     let after_pseudo = fresh.sim.unit(unit).pseudo_stats.clone();
     let mut effect = json!({
         "kind": "curse_of_recklessness",
-        "spell_id": spell_data().curse_of_recklessness.highest().id,
+        "spell_id": super::spells::actor_rank(
+            &spell_data().curse_of_recklessness,
+            sim,
+            env.player,
+            false,
+        ).id,
         "aura": label,
         "armor_delta": after_stats[Stat::Armor] - before_stats[Stat::Armor],
     });
