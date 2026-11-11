@@ -498,9 +498,23 @@ fn validate_world_target_continuity(
 }
 
 fn has_lethal_ack(bridge: &Bridge) -> bool {
-    bridge.sequence > 0
-        && bridge.last_health == Some(0.0)
-        && bridge.previous_ack_id.len() == 64
+    if bridge.sequence == 0 || bridge.last_health != Some(0.0)
+        || bridge.previous_ack_id.len() != 64 {
+        return false;
+    }
+    // In an overlapping world the currently selected mob can die before the
+    // previous mob's DoTs finish. Never finish the native Fight or permit slot
+    // reuse from B's scalar lethal ACK while A is still alive. Both distinct
+    // source-ACKed world identities must have committed zero HP. The original
+    // serial scalar receipt remains valid when there is no multi-target ledger.
+    if bridge.native_world_target_vitals.contains_key(&1) {
+        return bridge.native_world_target_vitals.len() == 2
+            && bridge.native_world_target_vitals.get(&0)
+                .is_some_and(|(_, health, _)| *health == 0.0)
+            && bridge.native_world_target_vitals.get(&1)
+                .is_some_and(|(_, health, _)| *health == 0.0);
+    }
+    true
 }
 
 /// Source-native current target HP from a completed 2D world ACK, never a
@@ -591,6 +605,67 @@ pub(crate) fn finish(duration_ns: i64, cumulative_damage: f64) {
             "native_total_damage": cumulative_damage,
         }));
     });
+}
+
+#[cfg(test)]
+mod world_overlap_terminal_tests {
+    use super::{acknowledged_lethal, begin_next_target, Bridge, BRIDGE};
+
+    fn set_overlap(old_health: f64, selected_health: f64) {
+        let mut vitals = std::collections::BTreeMap::new();
+        vitals.insert(0, ("world-A".to_owned(), old_health, 100.0));
+        vitals.insert(1, ("world-B".to_owned(), selected_health, 100.0));
+        BRIDGE.with(|slot| *slot.borrow_mut() = Some(Bridge {
+            iteration: 0,
+            sequence: 2,
+            next_tick_ns: 200,
+            last_tick_ns: 100,
+            last_health: Some(selected_health),
+            last_max_health: Some(100.0),
+            native_world_target_vitals: vitals,
+            previous_ack_id: "a".repeat(64),
+            source_hash: "b".repeat(64),
+            event_ordinal: 2,
+            pending: Vec::new(),
+            iteration_finished: false,
+        }));
+    }
+
+    #[test]
+    fn overlapping_target_b_lethal_cannot_finish_while_old_dot_target_a_lives() {
+        set_overlap(15.0, 0.0);
+        assert!(!acknowledged_lethal());
+        assert_eq!(
+            begin_next_target(200),
+            Err("RUST_WORLD_NEXT_TARGET_NOT_NATIVE_LETHAL")
+        );
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn two_independent_world_lethal_acks_allow_terminal_completion() {
+        set_overlap(0.0, 0.0);
+        assert!(acknowledged_lethal());
+        begin_next_target(200).unwrap();
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            let bridge = state.as_ref().unwrap();
+            assert!(bridge.native_world_target_vitals.is_empty());
+            assert_eq!(bridge.last_health, None);
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    fn selected_target_b_lethal_requires_prior_target_identity_receipt() {
+        set_overlap(0.0, 0.0);
+        BRIDGE.with(|slot| {
+            slot.borrow_mut().as_mut().unwrap()
+                .native_world_target_vitals.remove(&0);
+        });
+        assert!(!acknowledged_lethal());
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 #[cfg(test)]
