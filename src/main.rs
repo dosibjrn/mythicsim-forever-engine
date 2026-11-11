@@ -165,6 +165,9 @@ fn coverage_report(prepared: &PreparedV2, refusals: &[Refusal]) -> Result<String
 struct NativeApiSession {
     // Rust owns the prepared protobuf-derived actor, not a JSON file handle.
     prepared: Option<PreparedV2>,
+    // Last completed and charged native world measurement, NOT a resumable
+    // Fight. Invalidate it before a new candidate starts or prepare is called.
+    last_paid_world: Option<serde_json::Value>,
 }
 
 /// A refused native candidate must carry a machine-readable reason, while
@@ -258,6 +261,31 @@ fn native_api_world_operation<T, E: std::fmt::Display>(
     result.map_err(|error| NativeApiError::new("native_world_refused", error.to_string()))
 }
 
+/// Extract only observations made by the original paid native world/ACK
+/// execution. A terminal receipt is a measurement, not a transferable player,
+/// cooldown, XP, inventory or world object.
+fn native_paid_world_snapshot(
+    prepared: &PreparedV2,
+    report: &serde_json::Value,
+) -> serde_json::Value {
+    let final_kill_clock_ns = report["windows"]
+        .as_array()
+        .and_then(|windows| windows.last())
+        .and_then(|window| window.get("native_kill_ns"))
+        .cloned();
+    serde_json::json!({
+        "kind": "completed_independent_native_world",
+        "source_sha256": prepared.request_sha256,
+        "actor_level": prepared.player.level,
+        "world_targets_killed": report.get("world_targets_killed"),
+        "final_kill_clock_ns": final_kill_clock_ns,
+        "terminal_recovery": report.get("terminal_recovery"),
+        "post_combat_actor_retained": false,
+        "xp_earned": null,
+        "level_transition_supported": false
+    })
+}
+
 impl NativeApiSession {
     fn dispatch(
         &mut self,
@@ -279,7 +307,8 @@ impl NativeApiSession {
                     "source_sha256": prepared.request_sha256,
                     "retained_combat_runtime": false,
                     "retained_xp": false,
-                    "level_transition_supported": false
+                    "level_transition_supported": false,
+                    "last_paid_world": self.last_paid_world.as_ref()
                 }))
             }
             // The current API retains PreparedV2 only. A request to cross a
@@ -304,6 +333,9 @@ impl NativeApiSession {
                     .map_err(|e| NativeApiError::from(e.to_string()))
             }
             Some("prepare") => {
+                // No measured world from the previous candidate can be attached
+                // to a newly prepared actor, even when its preparation refuses.
+                self.last_paid_world = None;
                 // On refusal no earlier actor may accidentally be evaluated.
                 self.prepared = None;
                 let (value, prepared) = native_api_prepare(request)?;
@@ -327,6 +359,10 @@ impl NativeApiSession {
                         )),
                     }
                 }
+                // A new world attempt supersedes the previous paid segment.
+                // A native refusal must not leave a stale measured checkpoint
+                // that a route coordinator might mistake for this candidate.
+                self.last_paid_world = None;
                 // Evaluate either the actor retained by a preceding prepare in
                 // this session, or prepare a new source inline in this call.
                 if request.get("request").is_some() {
@@ -381,6 +417,9 @@ impl NativeApiSession {
                         prepared, targets, mode, 1.0, 1.0,
                     )
                 })?;
+                // This is the actual native paid-world result from the causal
+                // ACK bridge; it does not retain Fight or imply progression.
+                self.last_paid_world = Some(native_paid_world_snapshot(prepared, &report));
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
                     "source_sha256": prepared.request_sha256,
@@ -519,6 +558,7 @@ mod native_optimizer_api_tests {
         assert_eq!(prepared.player.level, 60);
         let mut session = NativeApiSession {
             prepared: Some(prepared),
+            last_paid_world: None,
         };
         let refusal = session
             .dispatch(&serde_json::json!({
@@ -546,6 +586,7 @@ mod native_optimizer_api_tests {
         let sha = prepared.request_sha256.clone();
         let mut session = NativeApiSession {
             prepared: Some(prepared),
+            last_paid_world: None,
         };
         let state = session
             .dispatch(&serde_json::json!({"op": "state"}))
@@ -556,6 +597,7 @@ mod native_optimizer_api_tests {
         assert_eq!(state["retained_combat_runtime"], false);
         assert_eq!(state["retained_xp"], false);
         assert_eq!(state["level_transition_supported"], false);
+        assert!(state["last_paid_world"].is_null());
 
         // The native engine has no XP/level-up source transition: never
         // manufacture a successful 60->61 advancement or run a new fight.
@@ -585,6 +627,60 @@ mod native_optimizer_api_tests {
         assert_eq!(invalid_flag.code, "invalid_api_request");
         assert_eq!(session.prepared.as_ref().unwrap().player.level, 60);
         assert_eq!(session.prepared.as_ref().unwrap().request_sha256, sha);
+    }
+
+    #[test]
+    fn paid_world_snapshot_keeps_actual_terminal_receipt_without_claiming_continuity() {
+        let prepared: super::PreparedV2 = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+        )))
+        .unwrap();
+        let report = serde_json::json!({
+            "world_targets_killed": 2,
+            "windows": [{"native_kill_ns": 11}, {"native_kill_ns": 43}],
+            "terminal_recovery": {
+                "paid": true, "native_clock_accounted": true,
+                "end_clock_ns": 99,
+                "health_after": 1350.0, "mana_after": 2000.0,
+                "max_health": 1350.0, "max_mana": 2000.0
+            }
+        });
+        let snapshot = super::native_paid_world_snapshot(&prepared, &report);
+        let mut session = NativeApiSession {
+            prepared: Some(prepared),
+            last_paid_world: Some(snapshot),
+        };
+        let state = session
+            .dispatch(&serde_json::json!({"op": "state"}))
+            .unwrap();
+        let paid = &state["last_paid_world"];
+        assert_eq!(paid["kind"], "completed_independent_native_world");
+        assert_eq!(paid["source_sha256"], state["source_sha256"]);
+        assert_eq!(paid["actor_level"], state["actor_level"]);
+        assert_eq!(paid["world_targets_killed"], 2);
+        assert_eq!(paid["final_kill_clock_ns"], 43);
+        assert_eq!(paid["terminal_recovery"], report["terminal_recovery"]);
+        assert_eq!(paid["post_combat_actor_retained"], false);
+        assert!(paid["xp_earned"].is_null());
+        assert_eq!(paid["level_transition_supported"], false);
+
+        // Unsupported continuation must not promote the saved observation to
+        // a resumed Fight or mutate the source-prepared actor.
+        assert_eq!(
+            session
+                .dispatch(&serde_json::json!({
+                    "op": "advance", "from_level": 60, "to_level": 61
+                }))
+                .unwrap_err()
+                .code,
+            "native_level_transition_unsupported"
+        );
+        assert_eq!(
+            session.dispatch(&serde_json::json!({"op": "state"})).unwrap()
+                ["last_paid_world"],
+            *paid
+        );
     }
 
     #[test]
