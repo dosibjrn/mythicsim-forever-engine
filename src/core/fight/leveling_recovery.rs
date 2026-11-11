@@ -50,6 +50,12 @@ const WATER: [VendorTier; 6] = [
     VendorTier { required_level: 45, amount: 2934.0, duration_s: 30.0 },
 ];
 
+/// An ACKed arrival applies at the end of the world tick. Food and water
+/// cannot be earned during the same tick that the actor was still walking.
+fn can_consume_vendor(full_rest: bool, moving_at_start: bool, moving_at_end: bool) -> bool {
+    full_rest && !moving_at_start && !moving_at_end
+}
+
 fn tier(rows: &[VendorTier], level: i32) -> Option<VendorTier> {
     rows.iter().copied().rfind(|tier| tier.required_level <= level)
 }
@@ -68,6 +74,34 @@ pub(crate) fn needs_full_recovery(
 ) -> bool {
     (maximum_health > 0.0 && health < maximum_health * health_fraction)
         || (maximum_mana > 0.0 && mana < maximum_mana * mana_fraction)
+}
+
+/// A terminal full-resource ACK must start from a credible, finite native
+/// actor. Otherwise NaN/over-cap values can bypass the deficit comparison
+/// and masquerade as a zero-time full rest.
+fn terminal_resource_bounds_valid(
+    health: f64, max_health: f64, mana: f64, max_mana: f64,
+) -> bool {
+    health.is_finite() && max_health.is_finite() && max_health > 0.0
+        && health > 0.0 && health <= max_health + RESOURCE_EPSILON
+        && mana.is_finite() && max_mana.is_finite() && max_mana >= 0.0
+        && mana >= 0.0 && mana <= max_mana + RESOURCE_EPSILON
+}
+
+/// A between-pull world gap is paid when the native source clock advanced
+/// and either native regeneration ran, vendor recovery ran, or Decisions
+/// explicitly chose travel-only recovery. No-refill is not a free reset.
+pub(crate) fn native_world_gap_paid(window: &serde_json::Value, decisions: bool) -> bool {
+    let ns_paid = window["native_passive_recovery_ns"]
+        .as_i64().is_some_and(|ns| ns > 0);
+    let ticks_paid = window["native_passive_recovery_ticks"]
+        .as_u64().is_some_and(|ticks| ticks > 0);
+    let decisions_paid = decisions && (
+        window["food_seconds"].as_f64().is_some_and(|seconds| seconds > 0.0)
+        || window["water_seconds"].as_f64().is_some_and(|seconds| seconds > 0.0)
+        || window["decisions_full_recovery"].as_bool() == Some(false)
+    );
+    ns_paid && (ticks_paid || decisions_paid)
 }
 
 #[derive(Default, Clone, Copy, Debug)]
@@ -95,6 +129,43 @@ impl<A: Agent> Fight<A> {
         &mut self, health_fraction: f64, mana_fraction: f64,
         food_metrics: usize, water_metrics: usize,
     ) -> Result<WorldRecoveryReceipt, &'static str> {
+        self.recover_native_world_actor_decisions_mode(
+            health_fraction, mana_fraction, food_metrics, water_metrics, false)
+    }
+
+    /// Recover after the final ACKed lethal hit. There is no living next
+    /// world target to exchange range ticks with. Only Rust's scheduled
+    /// passive ticks and source-native vendor food/water advance the clock.
+    /// Fully supplied actors need no extra clock advance or free reset.
+    pub(crate) fn recover_native_world_actor_terminal(
+        &mut self, food_metrics: usize, water_metrics: usize,
+    ) -> Result<WorldRecoveryReceipt, &'static str> {
+        if !terminal_resource_bounds_valid(
+            self.player.health, self.player_max_health(),
+            self.player.mana, self.player.powers.max_mana,
+        ) {
+            return Err("RUST_WORLD_TERMINAL_RESOURCES_INVALID");
+        }
+        if !needs_full_recovery(
+            self.player.health, self.player_max_health(),
+            self.player.mana, self.player.powers.max_mana, 1.0, 1.0,
+        ) {
+            return Ok(WorldRecoveryReceipt::default());
+        }
+        // The last target is already dead, so the 2D peer cannot ACK a
+        // remaining movement step. Do not silently stop a moving actor and
+        // grant stationary food/water time before its actual arrival.
+        if self.player.moving {
+            return Err("RUST_WORLD_TERMINAL_MOVEMENT_UNRESOLVED");
+        }
+        self.recover_native_world_actor_decisions_mode(
+            1.0, 1.0, food_metrics, water_metrics, true)
+    }
+
+    fn recover_native_world_actor_decisions_mode(
+        &mut self, health_fraction: f64, mana_fraction: f64,
+        food_metrics: usize, water_metrics: usize, terminal: bool,
+    ) -> Result<WorldRecoveryReceipt, &'static str> {
         if !health_fraction.is_finite() || !mana_fraction.is_finite()
             || !(0.0..=1.0).contains(&health_fraction)
             || !(0.0..=1.0).contains(&mana_fraction)
@@ -118,6 +189,10 @@ impl<A: Agent> Fight<A> {
             if self.now - initial_ns >= MAX_REST_NS {
                 return Err("RUST_WORLD_DECISIONS_RECOVERY_TIMEOUT");
             }
+            // A gsim movement completion is observed at this boundary.
+            // Remember that the player was moving throughout the preceding
+            // interval; the arrival tick itself cannot earn vendor regen.
+            let moving_at_step_start = self.player.moving;
             let boundary = self.now.checked_add(STEP_NS)
                 .ok_or("RUST_WORLD_TARGET_CLOCK_OVERFLOW")?;
             while let Some((at, handle, action)) = self.queue.pop_next_matching_through(
@@ -133,8 +208,13 @@ impl<A: Agent> Fight<A> {
                 }
             }
             self.advance_to(boundary);
-            let (distance, front, moving) =
-                world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken);
+            // A terminally defeated target has no valid health/range tick:
+            // never ask gsim to resurrect it for another movement ACK.
+            let (distance, front, moving) = if terminal {
+                (self.config.distance, self.config.melee.in_front_of_target, false)
+            } else {
+                world_bridge::exchange(boundary, self.duration, self.encounter_damage_taken)
+            };
             if distance != self.config.distance {
                 self.config.distance = distance;
                 self.changed(reads::CASTS);
@@ -148,7 +228,7 @@ impl<A: Agent> Fight<A> {
                 self.changed(reads::CASTS);
             }
 
-            if full && !moving {
+            if can_consume_vendor(full, moving_at_step_start, moving) {
                 // Each channel is credited only while it has a deficit and
                 // the actor is stationary. Passive native mana/health ticks
                 // have already run on this same step and count toward full.
@@ -217,6 +297,104 @@ mod tests {
         assert!(!needs_full_recovery(600.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(499.0, 1000.0, 400.0, 1000.0, 0.5, 0.1));
         assert!(needs_full_recovery(600.0, 1000.0, 99.0, 1000.0, 0.5, 0.1));
+    }
+
+    #[test]
+    fn decisions_paid_gap_accepts_native_travel_without_inventing_regeneration() {
+        let no_vendor = serde_json::json!({
+            "native_passive_recovery_ns": 100_000_000,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 0.0, "water_seconds": 0.0,
+            "decisions_full_recovery": false,
+        });
+        assert!(native_world_gap_paid(&no_vendor, true));
+        assert!(!native_world_gap_paid(&no_vendor, false));
+        let no_clock = serde_json::json!({
+            "native_passive_recovery_ns": 0,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 1.0,
+            "decisions_full_recovery": true,
+        });
+        assert!(!native_world_gap_paid(&no_clock, true));
+        let food = serde_json::json!({
+            "native_passive_recovery_ns": 100_000_000,
+            "native_passive_recovery_ticks": 0,
+            "food_seconds": 0.1,
+            "decisions_full_recovery": true,
+        });
+        assert!(native_world_gap_paid(&food, true));
+    }
+
+    #[test]
+    fn terminal_native_resources_must_be_finite_and_within_source_caps() {
+        assert!(terminal_resource_bounds_valid(80.0, 100.0, 40.0, 100.0));
+        assert!(terminal_resource_bounds_valid(100.0, 100.0, 0.0, 0.0));
+        assert!(!terminal_resource_bounds_valid(f64::NAN, 100.0, 40.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, f64::NAN, 40.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, 40.0, f64::NAN));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, f64::INFINITY, 100.0));
+        assert!(!terminal_resource_bounds_valid(101.0, 100.0, 40.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, -1.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(80.0, 100.0, 101.0, 100.0));
+        assert!(!terminal_resource_bounds_valid(0.0, 100.0, 40.0, 100.0));
+    }
+
+    #[test]
+    fn vendor_recovery_is_not_credited_on_a_gsim_arrival_tick() {
+        // The native clock pays for the walk, but food/water can only start
+        // on an interval observed stationary at BOTH ends.
+        assert!(!can_consume_vendor(true, true, true));
+        assert!(!can_consume_vendor(true, true, false));
+        assert!(!can_consume_vendor(true, false, true));
+        assert!(!can_consume_vendor(false, false, false));
+        assert!(can_consume_vendor(true, false, false));
+    }
+
+    #[test]
+    fn terminal_rest_charges_native_clock_and_restores_both_resources() {
+        let prepared: crate::contracts::prepared_v2::PreparedV2 =
+            serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/fixtures/mage/prepared-v2/balance-druid-revelation.prepared.json"
+            )))
+            .unwrap();
+        let mut fight = crate::classes::druid::agent::DruidAgent::fight(
+            &prepared, crate::core::rng::RngMode::Balanced,
+        )
+        .unwrap();
+        fight.prepare_first_native_pull();
+        while fight.step() {}
+        let (food, water) = fight.register_world_food_water_metrics();
+        let max_health = fight.player_max_health();
+        let max_mana = fight.player.powers.max_mana;
+        fight.player.health = max_health * 0.8;
+        fight.player.mana = max_mana * 0.6;
+        // A lethal ACK during a queued 2D walk cannot be converted into
+        // free stationary vendor recovery. Preserve source clock/resources.
+        fight.player.moving = true;
+        let moving_at = fight.now;
+        assert_eq!(
+            fight.recover_native_world_actor_terminal(food, water).unwrap_err(),
+            "RUST_WORLD_TERMINAL_MOVEMENT_UNRESOLVED",
+        );
+        assert_eq!(fight.now, moving_at);
+        assert_eq!(fight.player.health, max_health * 0.8);
+        assert_eq!(fight.player.mana, max_mana * 0.6);
+        fight.player.moving = false;
+        let at_kill = fight.now;
+        let paid = fight.recover_native_world_actor_terminal(food, water).unwrap();
+        assert!(paid.full_recovery);
+        assert!(paid.elapsed_ns > 0);
+        assert_eq!(fight.now, at_kill + paid.elapsed_ns);
+        assert!((fight.player.health - max_health).abs() <= 1e-6);
+        assert!((fight.player.mana - max_mana).abs() <= 1e-6);
+        assert!(paid.food_health_gain > 0.0 || paid.passive_ticks > 0);
+        assert!(paid.water_mana_gain > 0.0 || paid.passive_ticks > 0);
+
+        let no_debt_at = fight.now;
+        let no_debt = fight.recover_native_world_actor_terminal(food, water).unwrap();
+        assert_eq!(no_debt.elapsed_ns, 0);
+        assert_eq!(fight.now, no_debt_at);
     }
 
     #[test]

@@ -306,6 +306,19 @@ pub(crate) fn implemented_effects() -> &'static [&'static str] {
     })
 }
 
+/// Match only native source-backed actor-level coverage already accepted by
+/// native preparation. Unsupported races/builds still receive native refusals.
+fn sourced_actor_level(class: &str, level: i32) -> bool {
+    match level {
+        20 => matches!(
+            class,
+            "ClassPriest" | "ClassRogue" | "ClassDruid" | "ClassWarlock"
+        ),
+        30 => class == "ClassDruid",
+        _ => false,
+    }
+}
+
 /// The gate of the prepared player's class, if Rust implements it.
 pub(crate) fn class_gate(class: &str) -> Option<&'static ClassGate> {
     gates().into_iter().find(|gate| gate.class == class)
@@ -2043,7 +2056,9 @@ pub(crate) fn prepared_coverage(
             format!("class {} is not supported", player.class),
         )];
     };
-    if player.level != 60 {
+    // The native prepare path already verified the sourced actor identity.
+    let sourced_checkpoint = sourced_actor_level(&player.class, player.level);
+    if player.level != 60 && !sourced_checkpoint {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("player level {} is not supported", player.level),
@@ -2060,7 +2075,9 @@ pub(crate) fn prepared_coverage(
             ),
         ));
     }
-    if !(60..=63).contains(&prepared.target.level) {
+    let target_level_supported = (60..=63).contains(&prepared.target.level)
+        || (sourced_checkpoint && prepared.target.level == player.level);
+    if !target_level_supported {
         reasons.push(Refusal::new(
             "level_unsupported",
             format!("target level {} is not supported", prepared.target.level),
@@ -3760,4 +3777,21 @@ fn unreachable_items(prepared: &PreparedV2, rotation: &Rotation) -> BTreeSet<usi
         })
         .map(|item| item.position)
         .collect()
+}
+
+#[cfg(test)]
+mod sourced_level_gate_tests {
+    use super::sourced_actor_level;
+
+    #[test]
+    fn selected_native_checkpoint_levels_reach_coverage() {
+        for class in ["ClassDruid", "ClassPriest", "ClassRogue", "ClassWarlock"] {
+            assert!(sourced_actor_level(class, 20), "{class} L20");
+        }
+        assert!(sourced_actor_level("ClassDruid", 30));
+        assert!(!sourced_actor_level("ClassWarlock", 30));
+        assert!(!sourced_actor_level("ClassRogue", 30));
+        assert!(!sourced_actor_level("ClassMage", 20));
+        assert!(!sourced_actor_level("ClassDruid", 40));
+    }
 }

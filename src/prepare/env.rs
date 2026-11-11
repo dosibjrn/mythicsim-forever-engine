@@ -55,6 +55,8 @@ pub(crate) struct Environment {
     pub factory: AgentFactory,
     /// The rules it was prepared with, for a separate simulation of the same request.
     pub rules: Rules,
+    /// Selected native player level retained across pristine/fresh environments.
+    pub actor_level: Option<i32>,
     /// Every attacker's table against every defender, by unit index.
     pub attack_tables: Vec<Vec<AttackTable>>,
     /// The party buffs the drivers read: the request's with what the agent adds.
@@ -155,6 +157,17 @@ impl Environment {
         factory: AgentFactory,
         rules: Rules,
     ) -> Result<Environment, Refusal> {
+        Self::with_rules_at_level(request, factory, rules, None)
+    }
+
+    /// Allow a native-selected actor level while retaining the exact legacy
+    /// L60 path for every existing request.
+    pub(crate) fn with_rules_at_level(
+        request: &Message,
+        factory: AgentFactory,
+        rules: Rules,
+        actor_level: Option<i32>,
+    ) -> Result<Environment, Refusal> {
         let mut sim = Sim::new();
         sim.rules = rules;
         let raid = request
@@ -189,7 +202,8 @@ impl Environment {
             ));
         }
         let player_message = players[0].clone();
-        let player = sim.new_character(0, 0, &player_message, &encounter.area_types)?;
+        let player =
+            sim.new_character_at_level(0, 0, &player_message, &encounter.area_types, actor_level)?;
         let agent = factory(&mut sim, player, &player_message)?;
         // Go `NewAgent` then runs the gear pet constructors.
         super::classic_whelp::construct_gear_pets(&mut sim, player);
@@ -223,6 +237,7 @@ impl Environment {
             external_activations: Vec::new(),
             factory,
             rules,
+            actor_level,
             healer_gear: super::healer_gear::HealerGear::default(),
         };
         if let Some(debuffs) = raid.message("debuffs") {
@@ -267,8 +282,13 @@ impl Environment {
     pub(crate) fn fresh(&self) -> Environment {
         self.pristine
             .get_or_init(|| {
-                Environment::with_rules(&self.request, self.factory, self.rules)
-                    .expect("the request prepared once already")
+                Environment::with_rules_at_level(
+                    &self.request,
+                    self.factory,
+                    self.rules,
+                    self.actor_level,
+                )
+                .expect("the request prepared once already")
             })
             .clone()
     }

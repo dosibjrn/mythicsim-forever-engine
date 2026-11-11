@@ -56,7 +56,7 @@ mod thunderfury;
 mod whelp;
 
 use std::collections::{BTreeMap, HashMap};
-use leveling_recovery::{WorldRecoveryReceipt, WorldRecoveryStrategy};
+use leveling_recovery::{native_world_gap_paid, WorldRecoveryReceipt, WorldRecoveryStrategy};
 
 pub(crate) use aura::{AuraBehavior, AuraRef, Tracker};
 pub(crate) use damage::{
@@ -5689,7 +5689,7 @@ impl<A: Agent> Fight<A> {
             // Go keeps one buffer: every iteration with debug, otherwise only the first.
             let logged = self.config.debug || (iteration == 0 && self.config.debug_first_iteration);
             self.log = logged.then(Vec::new);
-            if world_bridge::enabled() { world_bridge::begin_iteration(iteration as u32); }
+            if world_bridge::enabled() { world_bridge::begin_iteration(iteration); }
             self.run_once();
             if let Some(lines) = self.log.take() {
                 logs.extend(lines);
@@ -5923,16 +5923,61 @@ impl<A: Agent> Fight<A> {
         // retained actor between ACKed world kills. Time alone, an assumed
         // refill or a completed movement schedule is not regeneration proof.
         let native_passive_recovery_paid = windows.iter().skip(1).all(|window| {
-            window["native_passive_recovery_ns"]
-                .as_i64().is_some_and(|ns| ns > 0)
-                && window["native_passive_recovery_ticks"]
-                    .as_u64().is_some_and(|ticks| ticks > 0)
+            native_world_gap_paid(
+                window, matches!(strategy, WorldRecoveryStrategy::Decisions { .. }))
         });
+        // With the source-native Decisions 100%/100% policy the terminal
+        // horizon includes actual post-last-kill rest. Do not ask the external
+        // gsim peer for a next-target tick: the final target is dead and its
+        // lethal ACK is already committed. Do not create a free resource reset.
+        let terminal_recovery = match strategy {
+            WorldRecoveryStrategy::Decisions { health_fraction, mana_fraction }
+                if health_fraction == 1.0 && mana_fraction == 1.0 => {
+                if !self.player.health.is_finite() || self.player.health <= 0.0
+                    || !self.player.mana.is_finite()
+                {
+                    return Err("RUST_MULTI_WORLD_TERMINAL_ACTOR_INVALID");
+                }
+                let start_clock_ns = self.now;
+                let health_before = self.player.health;
+                let mana_before = self.player.mana;
+                let (food, water) = food_water_metrics.expect("Decisions source metrics");
+                let receipt = self.recover_native_world_actor_terminal(food, water)?;
+                let end_clock_ns = self.now;
+                let max_health = self.player_max_health();
+                let max_mana = self.player.powers.max_mana;
+                if end_clock_ns < start_clock_ns
+                    || end_clock_ns - start_clock_ns != receipt.elapsed_ns
+                    || (self.player.health - max_health).abs() > 1e-6
+                    || (self.player.mana - max_mana).abs() > 1e-6
+                {
+                    return Err("RUST_MULTI_WORLD_TERMINAL_FULL_RECOVERY_UNPAID");
+                }
+                // The paid native terminal clock is the true end horizon:
+                // do not let cleanup charge an unplayed configured fight tail.
+                self.duration = end_clock_ns.max(1);
+                Some(serde_json::json!({
+                    "paid": true, "native_clock_accounted": true,
+                    "start_clock_ns": start_clock_ns, "end_clock_ns": end_clock_ns,
+                    "health_before": health_before, "mana_before": mana_before,
+                    "health_after": self.player.health,
+                    "mana_after": self.player.mana,
+                    "max_health": max_health, "max_mana": max_mana,
+                    "food_seconds": receipt.food_ns as f64 / 1e9,
+                    "water_seconds": receipt.water_ns as f64 / 1e9,
+                    "food_health_gain": receipt.food_health_gain,
+                    "water_mana_gain": receipt.water_mana_gain,
+                    "native_passive_ticks": receipt.passive_ticks,
+                }))
+            }
+            _ => None,
+        };
         let report = serde_json::json!({
             "scope": "MULTI_GSIM_2D_KILLS_SAME_NATIVE_ACTOR_NOT_P4_P6",
             "continuous_native_actor": true, "actual_2d_ack": true,
             "paid_recovery": native_passive_recovery_paid,
             "world_targets_killed": target_count,
+            "terminal_recovery": terminal_recovery,
             "recovery_mode": match strategy {
                 WorldRecoveryStrategy::Fixed(_) => "fixed_passive",
                 WorldRecoveryStrategy::Decisions { .. } => "decisions_food_water",
@@ -6930,7 +6975,8 @@ mod tests {
         let now = fight.now;
         let cap = fight.end_of_combat;
         assert!(cap > now + 2_000_000);
-        let early = now + 1_000_000;
+        // Prepull may start before the nonnegative gsim world clock.
+        let early = (now + 1_000_000).max(0);
         // A real early gsim world kill can be the next pull timestamp,
         // but the unchanged native-only duration-window cannot.
         assert!(fight.accepts_next_target_clock(early, early + 2_000_000, true));

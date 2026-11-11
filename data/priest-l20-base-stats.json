@@ -1,0 +1,53 @@
+{
+  "source_primary": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f sql/archive/0.8/4537_player_levelstats.sql (race,class=5,level=20; primary attributes only)",
+  "source_resources": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql (class=5,level=20)",
+  "source_crit": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f src/game/Entities/Player.cpp (GetSpellCritFromIntellect and GetMeleeCritFromAgility; class=5)",
+  "class": "ClassPriest",
+  "level": 20,
+  "base_health": 237,
+  "base_mana": 437,
+  "crit": {
+    "spell_base_percent": 2.97,
+    "spell_intellect_rate0": 10.03,
+    "spell_intellect_rate_per_level": 0.82,
+    "melee_agility_rate_level_1": 11.0,
+    "melee_agility_rate_level_60": 20.0
+  },
+  "races": {
+    "RaceHuman": {
+      "Strength": 23,
+      "Agility": 25,
+      "Stamina": 28,
+      "Intellect": 49,
+      "Spirit": 51
+    },
+    "RaceDwarf": {
+      "Strength": 25,
+      "Agility": 21,
+      "Stamina": 31,
+      "Intellect": 48,
+      "Spirit": 50
+    },
+    "RaceNightElf": {
+      "Strength": 21,
+      "Agility": 30,
+      "Stamina": 27,
+      "Intellect": 49,
+      "Spirit": 51
+    },
+    "RaceUndead": {
+      "Strength": 22,
+      "Agility": 23,
+      "Stamina": 29,
+      "Intellect": 47,
+      "Spirit": 56
+    },
+    "RaceTroll": {
+      "Strength": 24,
+      "Agility": 27,
+      "Stamina": 29,
+      "Intellect": 45,
+      "Spirit": 52
+    }
+  }
+}

@@ -2,6 +2,11 @@ name: Native Decisions food-water recovery
 on:
   push:
     branches: [work/decisions-food-water-native-world-20261108]
+  pull_request:
+    paths:
+      - 'src/core/fight.rs'
+      - 'src/core/fight/leveling_recovery.rs'
+      - '.github/workflows/decisions-food-water-rust.yml'
   workflow_dispatch:
 
 permissions:
@@ -15,8 +20,105 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Compile native Rust engine
-        run: cargo check --locked --all-targets
-      - name: Test decisions food/water source parity
-        run: cargo test --locked leveling_recovery -- --nocapture
+        # Product integration compiles with rustc's normal warning policy;
+        # strict lint CI remains separate and is not reclassified as gameplay.
+        run: env RUSTFLAGS='' cargo check --locked --all-targets
+      - name: Test source-native terminal recovery and paid movement
+        run: |
+          cargo test --locked --lib warlock_l20_actor_source_tests -- --nocapture
+          env RUSTFLAGS='' cargo test --locked --lib terminal_rest_charges_native_clock_and_restores_both_resources -- --nocapture
+          env RUSTFLAGS='' cargo test --locked --lib vendor_recovery_is_not_credited_on_a_gsim_arrival_tick -- --nocapture
+          env RUSTFLAGS='' cargo test --locked --lib terminal_native_resources_must_be_finite_and_within_source_caps -- --nocapture
       - name: Confirm command is built
-        run: cargo build --locked --bin forever-engine
+        run: env RUSTFLAGS='' cargo build --locked --bin forever-engine
+
+  warlock-three-hostile-recovered:
+    # One real selected-Rust + gsim/2D scorer integration, not M1 acceptance.
+    # Use the same generic target count and recovery policy as Work2's optimizer.
+    # Never replace this with the old 100-mob first-preparable route replay.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Checkout exact Work1 competitive source scorer and gsim consumer
+        uses: actions/checkout@v4
+        with:
+          repository: dosibjrn/forever-sim
+          # Exact independently pushed Work1 #1394 producer: no unmerged
+          # main assumption, no silent source drift during this paid receipt.
+          ref: 1e8a734f7a5c7b6fa2521705b4b69b279b20afee
+          path: forever
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install existing gsim runtime dependency
+        run: python -m pip install --disable-pip-version-check 'beautifulsoup4==4.13.4'
+      - name: Compile exact PR source-native recovery engine
+        run: env RUSTFLAGS='' cargo build --locked --bin forever-engine
+      - name: Build source-native hostile L20 scenario, not a gameplay proxy
+        run: |
+          set -euo pipefail
+          mkdir -p work1-three-hostile
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          source = json.loads(Path('forever/fixtures/warlock-l20-p71.request.json').read_text())
+          target = source['encounter']['targets'][0]
+          target['name'] = 'Work1 hostile L20 native/2D scorer target'
+          target['minBaseDamage'] = 40
+          source['simOptions']['iterations'] = 1
+          Path('work1-three-hostile/hostile-l20.request.json').write_text(
+              json.dumps(source, indent=2) + '\n')
+          PY
+          printf 'RUST_SHA=%s\nFOREVER_SHA=%s\n' \
+            "$(git rev-parse HEAD)" "$(git -C forever rev-parse HEAD)" \
+            > work1-three-hostile/versions.txt
+      - name: Prepare and score competing Rust-valid L20 sources with paid full recovery
+        run: |
+          set -euo pipefail
+          TARGET_HP=$(PYTHONPATH=forever python3 -c \
+            'from src.scenarios.leveling_targets import representative_hp; print(representative_hp(20))')
+          # One production invocation prepares bounded source-native alternatives
+          # and pays three hostile ACK kills plus real post-final-kill recovery
+          # for each candidate. No first-preparable/30s-DPS optimization claim.
+          PYTHONPATH=forever python3 -m tools.wf_warlock_native_start_source \
+            --binary target/debug/forever-engine \
+            --source work1-three-hostile/hostile-l20.request.json \
+            --actor-level 20 --out work1-three-hostile \
+            --mob-count 3 --target-hp "$TARGET_HP" \
+            --max-scored-candidates 4 \
+            | tee work1-three-hostile/native-scorer.stdout
+      - name: Verify genuine paid source selection without replay
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          output = Path('work1-three-hostile')
+          receipt = json.loads((output / 'proposal.json').read_text())
+          assert receipt['mob_count'] == 3 and receipt['iterations'] == 1
+          assert receipt['rng_mode'] == 'balanced'
+          assert receipt['recover_to_full'] is True
+          comparison = receipt['native_paid_comparison']
+          assert comparison and comparison['comparable_candidates'] >= 1, receipt
+          for row in comparison['candidates']:
+              if row.get('elapsed_seconds') is not None:
+                  assert row['status'] == 'MEASURED_NATIVE_FULLY_RECOVERED', row
+                  assert row['acked_world_kills'] == 3, row
+          assert receipt['selected_candidate_id'] is not None, receipt
+          print('WORK1_PAID_HOSTILE_RECOVERED', json.dumps({
+              'status': receipt['status'],
+              'measured': comparison['comparable_candidates'],
+              'selected': receipt['selected_candidate_id'],
+              'full_recovery': True,
+          }), flush=True)
+          PY
+      - name: Retain genuine source, native ACK and terminal-recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: work1-native-three-hostile-${{ github.run_id }}
+          path: work1-three-hostile/
+          if-no-files-found: warn
+          retention-days: 14

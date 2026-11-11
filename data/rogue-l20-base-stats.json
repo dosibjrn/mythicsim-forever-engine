@@ -1,0 +1,63 @@
+{
+  "source_primary": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f sql/archive/0.8/4537_player_levelstats.sql (race,class=4,level=20; primary attributes)",
+  "source_resources": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f sql/archive/0.12.2/z0144_xxx_01_mangos_player_classlevelstats.sql (class=4,level=20)",
+  "source_crit": "cmangos/mangos-classic@8ec338a1704e7dcb1c0213eb7ed58f9231ade40f src/game/Entities/Player.cpp (GetMeleeCritFromAgility, CLASS_ROGUE)",
+  "class": "ClassRogue",
+  "level": 20,
+  "base_health": 233,
+  "crit": {
+    "melee_agility_rate_level_1": 2.2,
+    "melee_agility_rate_level_60": 29
+  },
+  "races": {
+    "RaceHuman": {
+      "Strength": 37,
+      "Agility": 53,
+      "Stamina": 35,
+      "Intellect": 23,
+      "Spirit": 28
+    },
+    "RaceOrc": {
+      "Strength": 40,
+      "Agility": 50,
+      "Stamina": 37,
+      "Intellect": 21,
+      "Spirit": 31
+    },
+    "RaceDwarf": {
+      "Strength": 39,
+      "Agility": 49,
+      "Stamina": 38,
+      "Intellect": 22,
+      "Spirit": 27
+    },
+    "RaceNightElf": {
+      "Strength": 34,
+      "Agility": 57,
+      "Stamina": 35,
+      "Intellect": 23,
+      "Spirit": 28
+    },
+    "RaceUndead": {
+      "Strength": 36,
+      "Agility": 51,
+      "Stamina": 36,
+      "Intellect": 21,
+      "Spirit": 32
+    },
+    "RaceGnome": {
+      "Strength": 32,
+      "Agility": 56,
+      "Stamina": 35,
+      "Intellect": 27,
+      "Spirit": 28
+    },
+    "RaceTroll": {
+      "Strength": 38,
+      "Agility": 55,
+      "Stamina": 36,
+      "Intellect": 20,
+      "Spirit": 29
+    }
+  }
+}
