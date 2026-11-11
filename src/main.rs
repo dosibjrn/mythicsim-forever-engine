@@ -167,6 +167,45 @@ struct NativeApiSession {
     prepared: Option<PreparedV2>,
 }
 
+/// A refused native candidate must carry a machine-readable reason, while
+/// retaining the original string error field for existing API consumers.
+#[derive(Debug)]
+struct NativeApiError {
+    code: String,
+    reason: String,
+}
+
+impl NativeApiError {
+    fn new(code: &str, reason: impl Into<String>) -> Self {
+        Self {
+            code: code.to_owned(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl From<String> for NativeApiError {
+    fn from(reason: String) -> Self {
+        Self::new("invalid_api_request", reason)
+    }
+}
+
+impl From<&str> for NativeApiError {
+    fn from(reason: &str) -> Self {
+        Self::new("invalid_api_request", reason)
+    }
+}
+
+impl From<PrepareError> for NativeApiError {
+    fn from(error: PrepareError) -> Self {
+        match error {
+            PrepareError::Invalid(reason) => Self::new("invalid_prepare_request", reason),
+            PrepareError::Refused(refusal) => Self::new(refusal.code, refusal.reason),
+            PrepareError::Fault(reason) => Self::new("native_prepare_fault", reason),
+        }
+    }
+}
+
 /// Preserve the requested sampled actor level. A malformed value must not be
 /// interpreted as absent and silently prepare a default L60 character.
 fn native_api_actor_level(request: &serde_json::Value) -> Result<Option<i32>, String> {
@@ -185,15 +224,15 @@ fn native_api_actor_level(request: &serde_json::Value) -> Result<Option<i32>, St
 /// comparison: the native PreparedV2 carries the engine's canonical identity.
 fn native_api_prepare(
     request: &serde_json::Value,
-) -> Result<(serde_json::Value, PreparedV2), String> {
+) -> Result<(serde_json::Value, PreparedV2), NativeApiError> {
     let source = request.get("request").ok_or("prepare needs request")?;
     let bytes = serde_json::to_vec(source).map_err(|e| e.to_string())?;
     let actor_level = native_api_actor_level(request)?;
     let source_prepared = std::panic::catch_unwind(|| {
         prepare_json_with_actor_level(&bytes, "rust", Rules::Forever, actor_level)
     })
-    .map_err(|_| "native prepare panicked".to_owned())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|_| NativeApiError::new("native_prepare_fault", "native prepare panicked"))?
+    .map_err(NativeApiError::from)?;
     let value = serde_json::to_value(source_prepared).map_err(|e| e.to_string())?;
     let prepared = serde_json::from_value::<PreparedV2>(value.clone())
         .map_err(|e| format!("native prepared-v2 rejected: {e}"))?;
@@ -201,7 +240,7 @@ fn native_api_prepare(
 }
 
 impl NativeApiSession {
-    fn dispatch(&mut self, request: &serde_json::Value) -> Result<serde_json::Value, String> {
+    fn dispatch(&mut self, request: &serde_json::Value) -> Result<serde_json::Value, NativeApiError> {
         match request.get("op").and_then(serde_json::Value::as_str) {
             Some("options") => {
                 let class = request
@@ -215,7 +254,7 @@ impl NativeApiSession {
                     .filter(|n| (1..=60).contains(n))
                     .ok_or("options needs level 1..60")?;
                 serde_json::to_value(get_options(level, class.parse::<OptionsClass>()?)?)
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| NativeApiError::from(e.to_string()))
             }
             Some("prepare") => {
                 // On refusal no earlier actor may accidentally be evaluated.
@@ -252,7 +291,7 @@ impl NativeApiSession {
                     .and_then(serde_json::Value::as_bool)
                     != Some(true)
                 {
-                    return Err("evaluate requires recover_at_end true".to_owned());
+                    return Err("evaluate requires recover_at_end true".into());
                 }
                 // This is the existing real two-dimensional gsim tick/ACK
                 // boundary and native Decisions terminal dual-resource rest.
@@ -261,7 +300,7 @@ impl NativeApiSession {
                 let report = native_two_world_targets_with_decisions_recovery(
                     prepared, targets, mode, 1.0, 1.0,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| NativeApiError::new("native_world_refused", e.to_string()))?;
                 Ok(serde_json::json!({
                     "engine": "forever-engine",
                     "source_sha256": prepared.request_sha256,
@@ -269,7 +308,7 @@ impl NativeApiSession {
                     "checkpoint_certified": false
                 }))
             }
-            _ => Err("unsupported API op (expected options, prepare or evaluate)".to_owned()),
+            _ => Err("unsupported API op (expected options, prepare or evaluate)".into()),
         }
     }
 }
@@ -288,11 +327,15 @@ fn run_native_api() -> Result<(), Failure> {
             return Ok(());
         }
         let response = match serde_json::from_str::<serde_json::Value>(&line)
-            .map_err(|e| format!("invalid API request: {e}"))
+            .map_err(|e| NativeApiError::new("invalid_api_request", format!("invalid API request: {e}")))
             .and_then(|request| session.dispatch(&request))
         {
             Ok(result) => serde_json::json!({"ok": true, "result": result}),
-            Err(error) => serde_json::json!({"ok": false, "error": error}),
+            Err(error) => serde_json::json!({
+                "ok": false,
+                "error": error.reason.clone(),
+                "refusal": {"code": error.code, "reason": error.reason}
+            }),
         };
         println!("{}", response);
         std::io::stdout().flush().map_err(|e| e.to_string())?;
@@ -301,7 +344,23 @@ fn run_native_api() -> Result<(), Failure> {
 
 #[cfg(test)]
 mod native_optimizer_api_tests {
-    use super::NativeApiSession;
+    use super::{NativeApiError, NativeApiSession, PrepareError};
+
+    #[test]
+    fn native_prepare_refusal_keeps_source_code_and_reason() {
+        let error = NativeApiError::from(PrepareError::Refused(
+            forever_engine::PrepareRefusal {
+                code: "source_item_refused",
+                reason: "unsupported candidate item".to_owned(),
+            },
+        ));
+        assert_eq!(error.code, "source_item_refused");
+        assert_eq!(error.reason, "unsupported candidate item");
+        let error = NativeApiError::from(PrepareError::Invalid("missing iterations".to_owned()));
+        assert_eq!(error.code, "invalid_prepare_request");
+        let error = NativeApiError::from(PrepareError::Fault("internal failure".to_owned()));
+        assert_eq!(error.code, "native_prepare_fault");
+    }
 
     #[test]
     fn sampled_actor_level_rejects_malformed_values_without_l60_fallback() {
@@ -348,6 +407,7 @@ mod native_optimizer_api_tests {
                 "rng_mode": "balanced", "recover_at_end": true
             }))
             .unwrap_err()
+            .reason
             .contains("preceding prepare"));
     }
 }
