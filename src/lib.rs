@@ -66,8 +66,22 @@ impl NativeWarlockWorldSession {
         targets: usize,
         continue_from_previous: bool,
     ) -> Result<serde_json::Value, String> {
+        self.evaluate_segment_with_recovery(targets, continue_from_previous, 1.0, 1.0)
+    }
+
+    /// The native retained actor owns rest, combat clocks and source rules.
+    /// Terminal full HP+mana recovery is independent of this between-pull choice.
+    pub fn evaluate_segment_with_recovery(
+        &mut self,
+        targets: usize,
+        continue_from_previous: bool,
+        health_fraction: f64,
+        mana_fraction: f64,
+    ) -> Result<serde_json::Value, String> {
         self.fight
-            .native_world_session_segment(targets, continue_from_previous)
+            .native_world_session_segment(
+                targets, continue_from_previous, health_fraction, mana_fraction,
+            )
             .map_err(str::to_string)
     }
 }

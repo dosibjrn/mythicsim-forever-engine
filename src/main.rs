@@ -226,6 +226,39 @@ fn native_api_actor_level(request: &serde_json::Value) -> Result<Option<i32>, St
         .ok_or_else(|| "actor_level must be an integer in 1..=60".to_owned())
 }
 
+/// Between-pull rest is a candidate policy, not the terminal full-resource
+/// requirement. Absent policy preserves the source's historical 100%/100%
+/// between-kill Decisions behavior for old optimizer inputs.
+fn native_api_between_pull_thresholds(
+    request: &serde_json::Value,
+) -> Result<(f64, f64), NativeApiError> {
+    let Some(policy) = request.get("between_pulls") else {
+        return Ok((1.0, 1.0));
+    };
+    let object = policy.as_object().ok_or_else(|| NativeApiError::new(
+        "invalid_between_pull_policy", "between_pulls must contain health_fraction and mana_fraction",
+    ))?;
+    if object.len() != 2 || !object.contains_key("health_fraction")
+        || !object.contains_key("mana_fraction")
+    {
+        return Err(NativeApiError::new(
+            "invalid_between_pull_policy",
+            "between_pulls requires exactly health_fraction and mana_fraction",
+        ));
+    }
+    let health = object["health_fraction"].as_f64();
+    let mana = object["mana_fraction"].as_f64();
+    match (health, mana) {
+        (Some(h), Some(m))
+            if h.is_finite() && m.is_finite()
+                && (0.0..=1.0).contains(&h) && (0.0..=1.0).contains(&m) => Ok((h, m)),
+        _ => Err(NativeApiError::new(
+            "invalid_between_pull_policy",
+            "between_pulls fractions must be finite numbers in 0..=1",
+        )),
+    }
+}
+
 /// Prepare directly from the exact source request. No raw-JSON/protobuf SHA
 /// comparison: the native PreparedV2 carries the engine's canonical identity.
 fn native_api_prepare(
@@ -363,6 +396,10 @@ impl NativeApiSession {
                     _ => return Err(NativeApiError::new(
                         "invalid_api_request", "retain_native_actor must be a boolean")),
                 };
+                // Validate candidate recovery policy before replacing any retained
+                // native state or spending a world tick on this request.
+                let (between_health, between_mana) =
+                    native_api_between_pull_thresholds(request)?;
                 if continued && (!retain || self.retained_world.is_none()) {
                     return Err(NativeApiError::new(
                         "native_combat_continuation_unsupported",
@@ -456,7 +493,9 @@ impl NativeApiSession {
                     // A failed native segment drops the potentially partial
                     // Fight rather than allowing an unACKed continuation.
                     let result = native_api_world_operation(|| {
-                        live.evaluate_segment(targets, continued)
+                        live.evaluate_segment_with_recovery(
+                            targets, continued, between_health, between_mana,
+                        )
                     });
                     if result.is_ok() {
                         self.retained_world = Some(live);
@@ -465,7 +504,7 @@ impl NativeApiSession {
                 } else {
                     native_api_world_operation(|| {
                         native_two_world_targets_with_decisions_recovery(
-                            prepared, targets, mode, 1.0, 1.0,
+                            prepared, targets, mode, between_health, between_mana,
                         )
                     })?
                 };
@@ -834,6 +873,56 @@ mod native_optimizer_api_tests {
                 forever_engine::RngMode::Balanced,
             )
             .unwrap_or_else(|err| panic!("Warlock L{level} native world binding refused: {err}"));
+        }
+    }
+
+    #[test]
+    fn between_pull_rest_policy_is_native_configurable_without_free_terminal_reset() {
+        use super::native_api_between_pull_thresholds;
+        assert_eq!(
+            native_api_between_pull_thresholds(&serde_json::json!({})).unwrap(),
+            (1.0, 1.0)
+        );
+        assert_eq!(
+            native_api_between_pull_thresholds(&serde_json::json!({
+                "between_pulls": {"health_fraction": 0.3, "mana_fraction": 0.3}
+            })).unwrap(),
+            (0.3, 0.3)
+        );
+        assert_eq!(
+            native_api_between_pull_thresholds(&serde_json::json!({
+                "between_pulls": {"health_fraction": 0.0, "mana_fraction": 1.0}
+            })).unwrap(),
+            (0.0, 1.0)
+        );
+        for invalid in [
+            serde_json::json!({"between_pulls": null}),
+            serde_json::json!({"between_pulls": [0.3, 0.3]}),
+            serde_json::json!({"between_pulls": {"health_fraction": 0.3}}),
+            serde_json::json!({"between_pulls": {
+                "health_fraction": "0.3", "mana_fraction": 0.3
+            }}),
+            serde_json::json!({"between_pulls": {
+                "health_fraction": -0.1, "mana_fraction": 0.3
+            }}),
+            serde_json::json!({"between_pulls": {
+                "health_fraction": 0.3, "mana_fraction": 1.1
+            }}),
+            serde_json::json!({"between_pulls": {
+                "health_fraction": 0.3, "mana_fraction": 0.3, "unsupported": true
+            }}),
+        ] {
+            assert_eq!(
+                native_api_between_pull_thresholds(&invalid).unwrap_err().code,
+                "invalid_between_pull_policy"
+            );
+            // A bad candidate never enters Rust's paid gsim world execution.
+            let mut session = NativeApiSession::default();
+            let refusal = session.dispatch(&serde_json::json!({
+                "op": "evaluate", "targets": 2, "rng_mode": "balanced",
+                "recover_at_end": true, "between_pulls": invalid["between_pulls"]
+            })).unwrap_err();
+            assert_eq!(refusal.code, "invalid_between_pull_policy");
         }
     }
 
