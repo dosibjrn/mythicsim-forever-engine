@@ -549,7 +549,22 @@ pub(crate) fn exchange(clock_ns: i64, duration_ns: i64, cumulative_damage: f64) 
     // an old target's DoT by subtracting its damage from a different mob.
     // Concurrent targets need separate gsim-produced, hash-bound HP ACKs.
     validate_native_target_damage_acks(&events, &ack, before_health, ack_before, ack_after);
-    validate_world_target_continuity(&mut bridge.native_world_target_vitals, &ack);
+    // The actual gsim receiver keeps its legacy scalar ACK for the first
+    // world mob and emits per-slot rows only after B has been acquired. Bind
+    // A from that already hash-bound scalar ACK and the selected gsim world
+    // identity, or the source APL's 50%-HP switch can never find slot zero.
+    // Do not weaken the separate per-slot validation once overlap begins.
+    if ack.get("native_target_health_acks").is_some() {
+        validate_world_target_continuity(&mut bridge.native_world_target_vitals, &ack);
+    } else {
+        assert!(bridge.source_apl_world_switch.is_none(),
+            "RUST_WORLD_MULTI_TARGET_LEDGER_DISAPPEARED");
+        validate_scalar_world_target_continuity(
+            &mut bridge.native_world_target_vitals,
+            string(&tick, "selected_target_id"), ack_before, ack_after,
+            number(&ack, "world_target_max_health"),
+        );
+    }
     record_overlap_ack_evidence(&mut bridge, &events, &ack);
     bridge.previous_ack_id = string(&ack, "world_after_sha256").to_owned();
     assert!(bridge.previous_ack_id.len() == 64, "RUST_WORLD_DAMAGE_ACK_HASH_INVALID");
@@ -656,6 +671,30 @@ fn validate_native_target_damage_acks(
     }
     assert_eq!(seen.len(), damage_by_target.len(),
         "RUST_WORLD_MULTI_TARGET_ACK_INCOMPLETE");
+}
+
+/// Before an early APL switch, gsim's real first world target is ACKed
+/// using the existing single-target scalar wire contract. Preserve that
+/// world identity and its actual HP rather than demanding a multi-target row
+/// which gsim emits only after acquiring the second mob.
+fn validate_scalar_world_target_continuity(
+    known: &mut std::collections::BTreeMap<u32, (String, f64, f64)>,
+    world_id: &str, before: f64, after: f64, maximum: f64,
+) {
+    assert!(!world_id.is_empty() && maximum.is_finite() && maximum > 0.0
+        && before.is_finite() && after.is_finite()
+        && (0.0..=maximum).contains(&before)
+        && (0.0..=maximum).contains(&after),
+        "RUST_WORLD_SCALAR_TARGET_ACK_INVALID");
+    assert!(known.keys().all(|index| *index == 0),
+        "RUST_WORLD_MULTI_TARGET_LEDGER_DISAPPEARED");
+    if let Some((old_id, old_health, old_max)) = known.get(&0) {
+        assert!(old_id == world_id, "RUST_WORLD_MULTI_TARGET_WORLD_ID_CHANGED");
+        assert!((old_health - before).abs() < 1e-6
+            && (old_max - maximum).abs() < 1e-6,
+            "RUST_WORLD_MULTI_TARGET_HP_NOT_CONTINUOUS");
+    }
+    known.insert(0, (world_id.to_owned(), after, maximum));
 }
 
 /// Bind each native target slot to one real gsim world mob across subsequent
@@ -867,6 +906,55 @@ mod world_overlap_acquisition_tests {
             previous_ack_id: "a".repeat(64), source_apl_world_switch: None, observed_two_live_targets: false, old_a_post_switch_dot_acks: 0, source_hash: "b".repeat(64),
             event_ordinal: 9, pending: Vec::new(), iteration_finished: false,
         }));
+    }
+
+    #[test]
+    fn real_scalar_first_target_ack_admits_native_apl_switch() {
+        // The live gsim receiver sends ONLY the selected scalar ACK until B
+        // is engaged; its per-native-slot rows start at the first B damage.
+        // A genuine hash-committed scalar A=45/100 must bind the identity
+        // needed by the source-APL changeTarget threshold.
+        acknowledged_first_target(45.0);
+        BRIDGE.with(|slot| {
+            let mut state = slot.borrow_mut();
+            let bridge = state.as_mut().unwrap();
+            bridge.native_world_target_vitals.clear();
+            super::validate_scalar_world_target_continuity(
+                &mut bridge.native_world_target_vitals,
+                "real-world-A", 100.0, 45.0, 100.0,
+            );
+            assert_eq!(bridge.native_world_target_vitals.get(&0).unwrap().1, 45.0);
+        });
+        assert_eq!(begin_overlapping_target(200, 0.5), Ok(()));
+        BRIDGE.with(|slot| {
+            let state = slot.borrow();
+            let bridge = state.as_ref().unwrap();
+            assert_eq!(bridge.iteration, 1);
+            assert_eq!(bridge.native_world_target_vitals.get(&0).unwrap().0, "real-world-A");
+            assert_eq!(bridge.source_apl_world_switch.as_ref().unwrap().prior_world_ack_id,
+                "a".repeat(64));
+        });
+        BRIDGE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_HP_NOT_CONTINUOUS")]
+    fn scalar_first_target_cannot_change_acked_hp_between_polls() {
+        let mut known = BTreeMap::new();
+        super::validate_scalar_world_target_continuity(
+            &mut known, "real-world-A", 100.0, 45.0, 100.0);
+        super::validate_scalar_world_target_continuity(
+            &mut known, "real-world-A", 46.0, 40.0, 100.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "RUST_WORLD_MULTI_TARGET_WORLD_ID_CHANGED")]
+    fn scalar_first_target_cannot_swap_world_identity() {
+        let mut known = BTreeMap::new();
+        super::validate_scalar_world_target_continuity(
+            &mut known, "real-world-A", 100.0, 45.0, 100.0);
+        super::validate_scalar_world_target_continuity(
+            &mut known, "wrong-world-B", 45.0, 40.0, 100.0);
     }
 
     #[test]
