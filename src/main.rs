@@ -235,10 +235,14 @@ fn native_api_between_pull_thresholds(
     let Some(policy) = request.get("between_pulls") else {
         return Ok((1.0, 1.0));
     };
-    let object = policy.as_object().ok_or_else(|| NativeApiError::new(
-        "invalid_between_pull_policy", "between_pulls must contain health_fraction and mana_fraction",
-    ))?;
-    if object.len() != 2 || !object.contains_key("health_fraction")
+    let object = policy.as_object().ok_or_else(|| {
+        NativeApiError::new(
+            "invalid_between_pull_policy",
+            "between_pulls must contain health_fraction and mana_fraction",
+        )
+    })?;
+    if object.len() != 2
+        || !object.contains_key("health_fraction")
         || !object.contains_key("mana_fraction")
     {
         return Err(NativeApiError::new(
@@ -250,8 +254,13 @@ fn native_api_between_pull_thresholds(
     let mana = object["mana_fraction"].as_f64();
     match (health, mana) {
         (Some(h), Some(m))
-            if h.is_finite() && m.is_finite()
-                && (0.0..=1.0).contains(&h) && (0.0..=1.0).contains(&m) => Ok((h, m)),
+            if h.is_finite()
+                && m.is_finite()
+                && (0.0..=1.0).contains(&h)
+                && (0.0..=1.0).contains(&m) =>
+        {
+            Ok((h, m))
+        }
         _ => Err(NativeApiError::new(
             "invalid_between_pull_policy",
             "between_pulls fractions must be finite numbers in 0..=1",
@@ -886,13 +895,15 @@ mod native_optimizer_api_tests {
         assert_eq!(
             native_api_between_pull_thresholds(&serde_json::json!({
                 "between_pulls": {"health_fraction": 0.3, "mana_fraction": 0.3}
-            })).unwrap(),
+            }))
+            .unwrap(),
             (0.3, 0.3)
         );
         assert_eq!(
             native_api_between_pull_thresholds(&serde_json::json!({
                 "between_pulls": {"health_fraction": 0.0, "mana_fraction": 1.0}
-            })).unwrap(),
+            }))
+            .unwrap(),
             (0.0, 1.0)
         );
         for invalid in [
@@ -913,15 +924,19 @@ mod native_optimizer_api_tests {
             }}),
         ] {
             assert_eq!(
-                native_api_between_pull_thresholds(&invalid).unwrap_err().code,
+                native_api_between_pull_thresholds(&invalid)
+                    .unwrap_err()
+                    .code,
                 "invalid_between_pull_policy"
             );
             // A bad candidate never enters Rust's paid gsim world execution.
             let mut session = NativeApiSession::default();
-            let refusal = session.dispatch(&serde_json::json!({
-                "op": "evaluate", "targets": 2, "rng_mode": "balanced",
-                "recover_at_end": true, "between_pulls": invalid["between_pulls"]
-            })).unwrap_err();
+            let refusal = session
+                .dispatch(&serde_json::json!({
+                    "op": "evaluate", "targets": 2, "rng_mode": "balanced",
+                    "recover_at_end": true, "between_pulls": invalid["between_pulls"]
+                }))
+                .unwrap_err();
             assert_eq!(refusal.code, "invalid_between_pull_policy");
         }
     }
