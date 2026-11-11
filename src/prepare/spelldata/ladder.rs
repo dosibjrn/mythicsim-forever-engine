@@ -130,6 +130,23 @@ impl Ladder {
         }
     }
 
+    /// The highest client-source rank available by a sampled actor's level.
+    /// No trainer or spell acquisition is guessed: a row without a positive
+    /// source spell level cannot establish a learned rank. Forever's excluded
+    /// AQ book ranks are skipped by the same canonical native rule.
+    pub(crate) fn highest_at_level(&self, level: i32, rules: Rules) -> &'static Spell {
+        self.ranks
+            .iter()
+            .rev()
+            .find(|spell| {
+                spell.spell_level > 0
+                    && i32::from(spell.spell_level) <= level
+                    && (rules != Rules::Forever || !book_ranks::is_book_rank(spell.id))
+            })
+            .copied()
+            .unwrap_or_else(nil)
+    }
+
     /// The rank with this spell id. Panics on an id the ladder does not carry, the way
     /// `must_find` does on a spell the store does not carry.
     pub(crate) fn by_id(&self, id: i32) -> &'static Spell {
@@ -315,6 +332,31 @@ mod tests {
         frostbolt.each(|rank, spell| seen.push((rank, spell.id)));
         assert_eq!(seen, [(1, 116), (2, 205), (3, 837)]);
         assert!(Ladder::default().highest().is_nil());
+    }
+
+    #[test]
+    fn sampled_warlock_ranks_are_level_bounded_in_native_spell_source() {
+        // The original sampled L20/L40 optimizer must not cast the same
+        // top-level Warlock spells at both levels merely because a ladder
+        // contains max-level client rows.
+        let shadow_bolt = Ladder::ranked(&[686, 695, 705, 1088, 1106, 7641, 11659, 11660, 11661, 25307]);
+        let agony = Ladder::ranked(&[980, 1014, 6217, 11711, 11712, 11713]);
+        for ladder in [&shadow_bolt, &agony] {
+            let l20 = ladder.highest_at_level(20, Rules::Forever);
+            let l40 = ladder.highest_at_level(40, Rules::Forever);
+            assert!(!l20.is_nil(), "Warlock L20 requires a source rank");
+            assert!(!l40.is_nil(), "Warlock L40 requires a source rank");
+            assert!(i32::from(l20.spell_level) <= 20);
+            assert!(i32::from(l40.spell_level) <= 40);
+            assert_ne!(l20.id, l40.id, "level-40 source rank must not inherit L20");
+            assert_eq!(
+                ladder.highest_at_level(60, Rules::Forever).id,
+                ladder.highest_for(Rules::Forever).id
+            );
+        }
+        assert!(Ladder::ranked(&[6353, 17924])
+            .highest_at_level(20, Rules::Forever)
+            .is_nil(), "Soul Fire has no source-learned L20 rank");
     }
 
     #[test]
