@@ -677,8 +677,9 @@ mod native_optimizer_api_tests {
             "native_level_transition_unsupported"
         );
         assert_eq!(
-            session.dispatch(&serde_json::json!({"op": "state"})).unwrap()
-                ["last_paid_world"],
+            session
+                .dispatch(&serde_json::json!({"op": "state"}))
+                .unwrap()["last_paid_world"],
             *paid
         );
     }
